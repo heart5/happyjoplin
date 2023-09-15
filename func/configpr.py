@@ -194,7 +194,7 @@ def getcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str):
 
 
 # %%
-is_log_details = getcfpoptionvalue('everinifromnote', 'everwork', 'logdetails')
+is_log_details = getcfpoptionvalue('happyjp', 'log', 'logdetails')
 
 # %% [markdown]
 # cfp, inifilepath = getcfp('everwork')
