@@ -207,6 +207,7 @@ if __name__ == '__main__':
     if not_IPython():
         log.info(f'运行文件\t{__file__}')
     # outgetstr = execcmd("uname -a")
+    print(execcmd("whoami"))
     outgetstr = execcmd("echo $PATH")
     print(outgetstr.strip("\n"))
     print(uuid3hexstr(outgetstr))
