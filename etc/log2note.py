@@ -36,7 +36,7 @@ with pathmagic.context():
     from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     from etc.getid import getdeviceid
-    from func.sysfunc import not_IPython, set_timeout, after_timeout
+    from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
 
 
 # %% [markdown]
@@ -120,11 +120,12 @@ def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
 def log2notes():
     namestr = 'happyjplog'
     device_id = getdeviceid()
+    loginname = execcmd("whoami")
 
     # token = getcfpoptionvalue('everwork', 'evernote', 'token')
     # log.info(token)
     if not (logid := getcfpoptionvalue(namestr, device_id, 'logid')):
-        logid = createnote(f'服务器_{device_id}_日志信息', "")
+        logid = createnote(f'服务器_{device_id}_{loginname}_日志信息', "")
 #         note_store = get_notestore()
 #         parentnotebook = note_store.getNotebook(
 #             '4524187f-c131-4d7d-b6cc-a1af20474a7f')
@@ -138,7 +139,7 @@ def log2notes():
         setcfpoptionvalue(namestr, device_id, 'logid', logid)
 
     if not (logcid := getcfpoptionvalue(namestr, device_id, 'logcid')):
-        logcid = createnote(f'服务器_{device_id}_严重错误日志信息', "")
+        logcid = createnote(f'服务器_{device_id}_{loginname}_严重错误日志信息', "")
         # note_store = get_notestore()
         # parentnotebook = note_store.getNotebook(
         #     '4524187f-c131-4d7d-b6cc-a1af20474a7f')
@@ -160,11 +161,11 @@ def log2notes():
         levelstrc = 'CRITICAL'
         # noteguidc = cfpeverwork.get('evernote', 'lognotecriticalguid')
         log2note(logcid, loglimitc, levelstrc,
-                 notetitle=f'服务器_{servername}_严重错误日志信息')
+                 notetitle=f'服务器_{servername}_{loginname}_严重错误日志信息')
 
     # noteguidn = cfpeverwork.get('evernote', 'lognoteguid')
     log2note(noteid=logid, loglimit=loglimitc,
-             notetitle=f'服务器_{servername}_日志信息')
+             notetitle=f'服务器_{servername}_{loginname}_日志信息')
 
     # locinfo = termux_location()
     # print(locinfo)
