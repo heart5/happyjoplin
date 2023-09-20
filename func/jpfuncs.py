@@ -37,7 +37,7 @@ with pathmagic.context():
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     # from etc.getid import getdeviceid
-    from func.sysfunc import not_IPython, set_timeout, after_timeout
+    from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
 
 
 # %% [markdown]
@@ -53,6 +53,26 @@ def joplincmd(cmd):
     """
     result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, shell=True)
     return result
+
+
+# %% [markdown]
+# ### joplinport()
+
+# %%
+def joplinport():
+    result = joplincmd("joplin config api.port").stdout
+    if result.find("=") == -1:
+        log.critical(f"登陆账户{execcmd('whoami')}貌似尚未运行joplin server！")
+        return
+    else:
+        portraw = result.split("=")[1].strip()
+        if portraw == "null":
+            port = 41184
+        else:
+            port = portraw
+
+    print(port)
+    return port
 
 
 # %% [markdown]
@@ -225,26 +245,29 @@ def getinivaluefromcloud(section, option):
 if __name__ == '__main__':
     if not_IPython():
         log.info(f'开始运行文件\t{__file__}')
+    joplinport()
+
     allnotes = getallnotes()[:6]
     # print(allnotes)
     myid = allnotes[-3].id
-    print(getnote(myid))
+    # print(getnote(myid))
     
     location_keys = ["longitude", "latitude", "altitude"]
     fields=",".join(["id,title,body,parent_id"] + location_keys)
-    getnoteswithfields(fields)
+    # getnoteswithfields(fields)
 
-    getinivaluefromcloud("hjlog", "loglimit")
+    print(getinivaluefromcloud("hjlog", "loglimit"))
 
     findnotes = searchnotes("title:配置*")
-    findnotes = searchnotes("title:文峰*")
+    # findnotes = searchnotes("title:文峰*")
 
     cmd = "joplin ls notebook"
     cmd = "joplin status"
     cmd = "joplin ls -l"
     # result = joplincmd(cmd)
     # print(result.stdout)
+    
+
     if not_IPython():
         log.info(f'Done.结束执行文件\t{__file__}')
-
 
