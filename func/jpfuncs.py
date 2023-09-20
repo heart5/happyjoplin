@@ -62,8 +62,8 @@ def joplincmd(cmd):
 def joplinport():
     result = joplincmd("joplin config api.port").stdout
     if result.find("=") == -1:
-        log.critical(f"登陆账户{execcmd('whoami')}貌似尚未运行joplin server！")
-        return
+        log.critical(f"登陆账户{execcmd('whoami')}貌似尚未运行joplin server！\n退出运行！！！")
+        exit(1)
     else:
         portraw = result.split("=")[1].strip()
         if portraw == "null":
@@ -76,6 +76,17 @@ def joplinport():
 
 
 # %% [markdown]
+# ### getapi()
+
+# %%
+def getapi():
+    url = f"http://localhost:{joplinport()}"
+    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"), url=url)
+
+    return api
+
+
+# %% [markdown]
 # ### def getallnotes()
 
 # %%
@@ -83,7 +94,7 @@ def getallnotes():
     """
     获取所有笔记；默认仅输出id、parent_id和title三项有效信息
     """
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"))
+    api = getapi()
 
     return api.get_all_notes()
 
@@ -93,7 +104,7 @@ def getallnotes():
 
 # %%
 def getnoteswithfields(fields, limit=10):
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"))
+    api = getapi()
     fields_ls = fields.split(",")
     allnotes = [note for note in api.get_all_notes(fields = fields)[:limit]]
     geonotes = [note for note in allnotes if note.altitude != 0 and note.longitude != 0]
@@ -119,7 +130,7 @@ def getnote(id):
     """
     通过id获取笔记的所有可能内容，NoteData
     """
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"))
+    api = getapi()
     # note = api.get_note(id, fields="id, parent_id, title, body, created_time, updated_time, is_conflict, latitude, longitude, altitude, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect")
     # 经过测试，fields中不能携带的属性值有：latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect
     note = api.get_note(id, fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id")
@@ -133,7 +144,7 @@ def getnote(id):
 
 # %%
 def createnote(title="Superman", body="Keep focus, man!", parent_id=None):
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"))
+    api = getapi()
     if parent_id:
         noteid = api.add_note(title=title, body=body, parent_id=parent_id)
     else:
@@ -147,21 +158,20 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None):
 
 # %%
 def updatenote_title(noteid, titlestr):
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"))
+    api = getapi()
     api.modify_note(noteid, title=titlestr)
     log.info(f"id为{noteid}的笔记的title被更新了。")
 
 
 
 # %% [markdown]
-# ### def updatenote(noteid, bodystr)
+# ### updatenote_body(noteid, bodystr)
 
 # %%
 def updatenote_body(noteid, bodystr):
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"))
+    api = getapi()
     api.modify_note(noteid, body=bodystr)
     log.info(f"id为{noteid}的笔记的body被更新了。")
-
 
 
 # %% [markdown]
@@ -172,7 +182,7 @@ def searchnotes(key):
     """
     传入关键字搜索并返回笔记列表，每个笔记中包含了所有可能提取field值
     """
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"))
+    api = getapi()
     # note = api.get_note(id, fields="id, parent_id, title, body, created_time, updated_time, is_conflict, latitude, longitude, altitude, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect")
     # 经过测试，fields中不能携带的属性值有：latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect
     # note = api.get_note(id, fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id")
@@ -245,7 +255,7 @@ def getinivaluefromcloud(section, option):
 if __name__ == '__main__':
     if not_IPython():
         log.info(f'开始运行文件\t{__file__}')
-    joplinport()
+    # joplinport()
 
     allnotes = getallnotes()[:6]
     # print(allnotes)
