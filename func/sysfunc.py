@@ -104,6 +104,9 @@ def convertframe2dic(frame):
 
 # %%
 def set_timeout(num, callback):
+    """
+    设定运行时间的装饰器
+    """
     def wrap(func):
         def handle(signum, frame):  # 收到信号 SIGALRM 后的回调函数，第一个参数是信号的数字，第二个参数是the interrupted stack frame.
             raise RuntimeError
@@ -171,11 +174,13 @@ def sha2hexstr(inputo: object):
 
 
 # %% [markdown]
-# ### def is_tool_valid(name)
+# ### is_tool_valid(name)
 
 # %%
 def is_tool_valid(name):
-    """Check whether `name` is on PATH and marked as executable."""
+    """
+    检查传入的命令是否在系统路径中并且是可执行状态
+    """
 
     # from whichcraft import which
     from shutil import which
@@ -187,8 +192,11 @@ def is_tool_valid(name):
 # ### execcmd(cmd)
 
 # %%
-@set_timeout(9, after_timeout)
+@set_timeout(29, after_timeout)
 def execcmd(cmd):
+    """
+    执行命令行命令并输出运行结果
+    """
     try:
         r = os.popen(cmd)
         text = r.read()
@@ -213,5 +221,6 @@ if __name__ == '__main__':
     print(uuid3hexstr(outgetstr))
     print(sha2hexstr(outgetstr))
     log.critical(outgetstr)
+    print(execcmd("joplin config api.port"))
     if not_IPython():
         log.info(f'文件\t{__file__}\t测试完毕。')
