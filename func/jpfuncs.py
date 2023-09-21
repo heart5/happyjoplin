@@ -51,42 +51,28 @@ def joplincmd(cmd):
     """
     运行joplin命令行并返回输出结果
     """
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, shell=True)
-    return result
+    # result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, shell=True)
+    return execcmd("cmd")
 
 
 # %% [markdown]
-# ### joplintoken()
+# ### joplintokenport()
 
 # %%
-def joplintoken():
-    result = joplincmd("joplin config api.token").stdout
-    if result.find("=") == -1:
+def joplintokenport():
+    tokenstr = execcmd("joplin config api.token")
+    portstr = execcmd("joplin config api.port")
+    if (tokenstr.find("=") == -1) | (portstr.find("=") == -1):
         log.critical(f"主机【{getdevicename()}】登陆账户（{execcmd('whoami')}）貌似尚未运行joplin server！\n退出运行！！！")
         exit(1)
+    token = tokenstr.split("=")[1].strip()
+    portraw = portstr.split("=")[1].strip()
+    if portraw == "null":
+        port = 41184
     else:
-        token = result.split("=")[1].strip()
+        port = portraw
 
-    return token
-
-
-# %% [markdown]
-# ### joplinport()
-
-# %%
-def joplinport():
-    result = joplincmd("joplin config api.port").stdout
-    if result.find("=") == -1:
-        log.critical(f"主机【{getdevicename()}】登陆账户（{execcmd('whoami')}）貌似尚未运行joplin server！\n退出运行！！！")
-        exit(1)
-    else:
-        portraw = result.split("=")[1].strip()
-        if portraw == "null":
-            port = 41184
-        else:
-            port = portraw
-
-    return port
+    return token, port
 
 
 # %% [markdown]
@@ -94,8 +80,9 @@ def joplinport():
 
 # %%
 def getapi():
-    url = f"http://localhost:{joplinport()}"
-    api = Api(token = joplintoken(), url=url)
+    token, port = joplintokenport()
+    url = f"http://localhost:{port}"
+    api = Api(token = token, url=url)
 
     return api
 
@@ -282,7 +269,7 @@ if __name__ == '__main__':
 
     print(getinivaluefromcloud("happyjplog", "loglimit"))
 
-    findnotes = searchnotes("title:配置*")
+    findnotes = searchnotes("title:健康*")
     # findnotes = searchnotes("title:文峰*")
 
     cmd = "joplin ls notebook"
