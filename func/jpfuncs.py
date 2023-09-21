@@ -36,7 +36,7 @@ with pathmagic.context():
     # from func.wrapfuncs import timethis, ift2phone
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
-    # from etc.getid import getdeviceid
+    from etc.getid import getdevicename
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
 
 
@@ -56,13 +56,28 @@ def joplincmd(cmd):
 
 
 # %% [markdown]
+# ### joplintoken()
+
+# %%
+def joplintoken():
+    result = joplincmd("joplin config api.token").stdout
+    if result.find("=") == -1:
+        log.critical(f"主机【{getdevicename()}】登陆账户（{execcmd('whoami')}）貌似尚未运行joplin server！\n退出运行！！！")
+        exit(1)
+    else:
+        token = result.split("=")[1].strip()
+
+    return token
+
+
+# %% [markdown]
 # ### joplinport()
 
 # %%
 def joplinport():
     result = joplincmd("joplin config api.port").stdout
     if result.find("=") == -1:
-        log.critical(f"登陆账户{execcmd('whoami')}貌似尚未运行joplin server！\n退出运行！！！")
+        log.critical(f"主机【{getdevicename()}】登陆账户（{execcmd('whoami')}）貌似尚未运行joplin server！\n退出运行！！！")
         exit(1)
     else:
         portraw = result.split("=")[1].strip()
@@ -71,7 +86,6 @@ def joplinport():
         else:
             port = portraw
 
-    print(port)
     return port
 
 
@@ -81,7 +95,7 @@ def joplinport():
 # %%
 def getapi():
     url = f"http://localhost:{joplinport()}"
-    api = Api(token = getcfpoptionvalue("happyjp", "joplin", "token"), url=url)
+    api = Api(token = joplintoken(), url=url)
 
     return api
 
@@ -266,7 +280,7 @@ if __name__ == '__main__':
     fields=",".join(["id,title,body,parent_id"] + location_keys)
     # getnoteswithfields(fields)
 
-    print(getinivaluefromcloud("hjlog", "loglimit"))
+    print(getinivaluefromcloud("happyjplog", "loglimit"))
 
     findnotes = searchnotes("title:配置*")
     # findnotes = searchnotes("title:文峰*")
