@@ -21,7 +21,6 @@
 import os
 import re
 import pandas as pd
-import evernote.edam.type.ttypes as ttypes
 from threading import Timer
 import pathmagic
 
@@ -33,7 +32,7 @@ with pathmagic.context():
     from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body, updatenote_title
     from func.logme import log
     from func.wrapfuncs import timethis, ift2phone
-    from func.termuxtools import termux_location, termux_telephony_deviceinfo
+    # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     from etc.getid import getdeviceid
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
