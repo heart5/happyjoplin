@@ -176,7 +176,7 @@ def updatenote_body(noteid, bodystr):
 
 
 # %% [markdown]
-# ### def searchnote(key)
+# ### searchnote(key)
 
 # %%
 def searchnotes(key):
