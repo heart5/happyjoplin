@@ -35,7 +35,7 @@ with pathmagic.context():
     from func.logme import log
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue, is_log_details
 #     from func.wrapfuncs import timethis, ift2phone
-    from func.jpfuncs import getinivaluefromcloud
+    # from func.jpfuncs import getinivaluefromcloud
     from func.termuxtools import termux_telephony_deviceinfo
     from func.sysfunc import execcmd, not_IPython
     try:
@@ -54,6 +54,7 @@ with pathmagic.context():
 
 # %%
 def set_devicename2ini(id, sysstr):
+    from func.jpfuncs import getinivaluefromcloud
     if (device_name := getcfpoptionvalue('happyjphard', id, 'device_name')) is None:
         if (device_name_fromcloud := getinivaluefromcloud('device', id)):
             setcfpoptionvalue('happyjphard', id, 'device_name', device_name_fromcloud)
