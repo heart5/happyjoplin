@@ -28,9 +28,12 @@ import time
 import datetime
 import uuid
 import re
+import subprocess
 from IPython import get_ipython
 from hashlib import sha256
 # import wmi_client_wrapper as wmi
+from matplotlib.font_manager import FontManager
+import matplotlib
 
 import pathmagic
 with pathmagic.context():
@@ -208,6 +211,26 @@ def execcmd(cmd):
 
 
 # %% [markdown]
+# ### showfonts()
+
+# %%
+def showfonts():
+    """
+    查询当前系统所有中文字体
+    """
+
+    fname = matplotlib.matplotlib_fname()
+    print(fname)
+    fclistzh = execcmd("fc-list :lang=zh family")
+    print(fclistzh)
+
+    mpl_fonts = set(f.name for f in FontManager().ttflist)
+    print('all font list get from matplotlib.font_manager:')
+    for f in sorted(mpl_fonts):
+        print('\t' + f)    
+
+
+# %% [markdown]
 # ## main主函数
 
 # %%
@@ -216,6 +239,7 @@ if __name__ == '__main__':
         log.info(f'运行文件\t{__file__}')
     # outgetstr = execcmd("uname -a")
     print(execcmd("whoami"))
+    showfonts()
     outgetstr = execcmd("echo $PATH")
     print(outgetstr.strip("\n"))
     print(uuid3hexstr(outgetstr))
