@@ -14,22 +14,18 @@
 # %% [markdown]
 # # 时间日期相关函数集
 
-# %%
-"""
-date time function related
-getstartdate
-gethumantimedelay
-"""
-
 # %% [markdown]
 # # 引入库
 
 # %%
+import re
 import arrow
 import time
 from datetime import datetime, timedelta
-from dateutil import tz
+from tzlocal import get_localzone
+# from dateutil import tz
 
+# %%
 import pathmagic
 with pathmagic.context():
     from func.logme import log
@@ -38,6 +34,19 @@ with pathmagic.context():
 
 # %% [markdown]
 # # 功能函数集
+
+# %% [markdown]
+# ## datecn2utc()
+
+# %%
+def datecn2utc(datestr):
+    # datestr = '2023年9月22日'
+    datestr = re.sub("[年月日]", "-", datestr).strip("-")
+    return arrow.get(datestr, tzinfo=get_localzone()).datetime
+
+
+# %% [markdown]
+# ## timestamp2str(timestamp)
 
 # %%
 def timestamp2str(timestamp):
@@ -96,7 +105,7 @@ def gethumantimedelay(inputlocaltime, intervalseconds=120):
 # %%
 def test_gethumantimedelay():
     hmtimetestlst = ["20210227 01:04:23", arrow.get("20210227 02:04:23",
-                                        tzinfo=tz.tzlocal()), "19761006"]
+                                        tzinfo=get_localzone()), "19761006"]
     for htt in hmtimetestlst:
         hmstr = gethumantimedelay(htt)
         print(hmstr)
@@ -115,5 +124,3 @@ if __name__ == '__main__':
     
     if not_IPython():
         log.info(f"文件\t{__file__}\t运行结束。")
-
-# %%
