@@ -23,8 +23,6 @@ from pathlib import Path
 
 # %%
 import pathmagic
-
-# %%
 with pathmagic.context():
     import func.fordirmainonly as fdmo
 
