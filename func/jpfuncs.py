@@ -18,13 +18,16 @@
 # ## 引入库
 
 # %%
+import os
 import re
 import requests
 import subprocess
 import arrow
 import joppy
 import datetime
-from joppy.api import Api, Resource
+from pathlib import Path
+from joppy.api import Api
+from joppy import tools
 from tzlocal import get_localzone
 # from dateutil import tz
 
@@ -78,7 +81,7 @@ def getapi():
     url = f"http://localhost:{port}"
     api = Api(token = token, url=url)
 
-    return api
+    return api, token, port
 
 
 # %% [markdown]
@@ -89,7 +92,7 @@ def getallnotes():
     """
     获取所有笔记；默认仅输出id、parent_id和title三项有效信息
     """
-    api = getapi()
+    api = getapi()[0]
 
     return api.get_all_notes()
 
@@ -99,7 +102,7 @@ def getallnotes():
 
 # %%
 def getnoteswithfields(fields, limit=10):
-    api = getapi()
+    api = getapi()[0]
     fields_ls = fields.split(",")
     allnotes = [note for note in api.get_all_notes(fields = fields)[:limit]]
     geonotes = [note for note in allnotes if note.altitude != 0 and note.longitude != 0]
@@ -125,7 +128,7 @@ def getnote(id):
     """
     通过id获取笔记的所有可能内容，NoteData
     """
-    api = getapi()
+    api = getapi()[0]
     # 所有可能的属性名称：
     # fields="id, parent_id, title, body, created_time, updated_time, is_conflict, latitude, longitude, altitude, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect")
     # 经过测试，fields中不能携带的属性值有：
@@ -141,7 +144,7 @@ def getnote(id):
 
 # %%
 def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None):
-    api = getapi()
+    api = getapi()[0]
     if imgdata64:
         noteid = api.add_note(title=title, image_data_url=f"data:image/png;base64,{imgdata64}")
         api.modify_note(noteid, body=f"{body}\n{getnote(noteid).body}")
@@ -158,7 +161,7 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
 
 # %%
 def updatenote_title(noteid, titlestr):
-    api = getapi()
+    api = getapi()[0]
     api.modify_note(noteid, title=titlestr)
     log.info(f"id为{noteid}的笔记的title被更新了。")
 
@@ -168,46 +171,109 @@ def updatenote_title(noteid, titlestr):
 
 # %%
 def updatenote_body(noteid, bodystr):
-    api = getapi()
+    api = getapi()[0]
     api.modify_note(noteid, body=bodystr)
     log.info(f"id为{noteid}的笔记的body被更新了。")
 
 
 # %% [markdown]
-# ### updatenote_imgdata(noteid, imgdata)
+# ### updatenote_imgdata(noteid, imgdata64, imgtitle=None)
 
 # %%
-def updatenote_imgdata(noteid, imgdata=None):
-    api = getapi()
+def updatenote_imgdata(noteid, imgdata64=None, imgtitle=None):
+    api = getapi()[0]
     note = getnote(noteid)
-    if note.body is None:
-        print(f"id为{noteid}的笔记内容为空")
+    origin_body = note.body
+    if (origin_body is None) or (len(origin_body) == 0):
+        log.critical(f"笔记《{note.title}》（id：{noteid}）的内容为空，没有包含待更新的资源文件信息。")
         return
-    print(f"id为{noteid}的笔记内容为：\t{note.body}")
-    if len(note.body) > 0:
-        matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", note.body)
-    else:
-        matches = []
-    log.info(f"id为{noteid}的笔记中包含了（{len(matches)}）个资源文件。")
-    if (len(matches) > 0) | (imgdata is not None):
-        # for resid in findresset:
-        #     try:
-        #         print(resid)
-        #         print(api.get_resource(resid))
-        #         api.delete_resource(resid)
-        #     except requests.exceptions.HTTPError as httpe:
-        #         log.critical(f"id为{noteid}的笔记中清空资源文件{resid}时出现错误：\t{httpe}")
-        # log.critical(f"id为{noteid}的笔记中包含了{len(findresset)}个资源文件，全部从系统中彻底删除！")
-        # api.modify_note(noteid, body="")
-        # log.critical(f"id为{noteid}的笔记内容被重置为空！")
+    print(f"id为{noteid}的笔记内容为：\t{origin_body}")
 
-        api.modify_resource(id_=matches[0], title="step in life")
-        api.modify_resource(id_=matches[0], data=f"data:image/png;base64,{imgdata}",)
-        log.critical(f"id为{noteid}的笔记更新了新的图片资源！")
+    matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", origin_body)
+    for resid in matches:
+        api.delete_resource(resid)
+    api.delete_note(noteid)
+    log.info(f"笔记《{note.title}》（id：{noteid}）中包含了（{len(matches)}）个资源文件，资源文件{matches}和该笔记都已从笔记系统中删除！")
+    
+    notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
+    log.info(f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件进入系统。")
+    notenew = getnote(notenew_id)
+    matchesnew = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", notenew.body)
+    res_id_lst = matchesnew
+    if not imgtitle:
+        imgtitle = f"happyjoplin {arrow.now()}"
+    api.modify_resource(id_=res_id_lst[0], title=f"{imgtitle}")
 
+    return notenew_id, res_id_lst
+
+
+# %% [markdown]
+# ### test_updatenote_imgdata()
 
 # %%
-# updatenote_imgdata('268bfc7fa79f46c1bc1f81fe0d533f9d')
+def test_updatenote_imgdata():
+    note_health_lst = searchnotes("title:健康动态日日升")
+    noteid = note_health_lst[0].id
+    print(noteid)
+    newfilename = os.path.abspath(f"{getdirmain() / 'data'}/QR.png")
+    print(newfilename)
+    image_data = tools.encode_base64(newfilename)
+    print(image_data)
+    notenew_id, res_id_lst = updatenote_imgdata(noteid=noteid, imgdata64=image_data, imgtitle="QR.png")
+    print(f"包含新资源文件的新笔记的id为：{notenew_id}")
+    resfile = api.get_resource_file(id_=res_id_lst[0])
+    print(resfile)
+
+
+# %% [markdown]
+# ### explore_resource(res_id)
+
+# %%
+def explore_resource(res_id):
+    api = getapi()[0]
+    # fields = ['encryption_blob_encrypted', 'share_id', 'mime', 'updated_time', 'master_key_id', 'is_shared', 'user_updated_time', 'encryption_applied', 'user_created_time', 'size', 'filename', 'file_extension', 'encryption_cipher_text', 'id', 'title', 'created_time']
+    # res4test = api.get_resource(res_id, fileds=fields)
+    resnew = api.get_resource(res_id)
+    log.info(f"id为{res_id}的资源标题为《{resnew.title}》")
+    res_file = api.get_resource_file(res_id)
+    log.info(f"id为{res_id}的资源文件大小为{len(res_file)}")
+
+
+# %% [markdown]
+# ### modify_resource(res_id, imgdata64=None)
+
+# %%
+def modify_resource(res_id, imgdata64=None):
+    """
+    试图更新data但是无法成功，暂存之
+    """
+    api, token, port = getapi()
+    res= api.get_resource(res_id)
+    log.info(f"id为{res_id}的资源标题为《{res.title}》")
+    res_file = api.get_resource_file(res_id)
+    log.info(f"id为{res_id}的资源文件大小为{len(res_file)}")
+    if not imgdata64:
+        oldtitle = res.title
+        newtitle = "This time is modify time for me."
+        api.modify_resource(id_=res_id, title=newtitle)
+        log.info(f"id为{res_id}的资源标题从《{oldtitle}》更改为《{newtitle}》")
+    else:
+        datastr = f"data:image/png;base64,{imgdata64}"
+        begin_str = f"curl -X PUT -F 'data=\"{datastr}\"'"
+        props_str = " -F 'props={\"title\":\"my modified title\"}'"
+        url_str =  f" http://localhost:{port}/resources/{res_id}?token={token}"
+        update_curl_str = begin_str + props_str + url_str
+        print(update_curl_str)
+        outstr = execcmd(update_curl_str)
+        log.info(f"{outstr}")
+        # api.modify_resource(id_=res_id, data=f"data:image/png;base64,{imgdata64}")
+    resnew = api.get_resource(res_id)
+    log.info(f"id为{res_id}的资源标题为《{resnew.title}》")
+    res_file = api.get_resource_file(res_id)
+    log.info(f"id为{res_id}的资源文件大小为{len(res_file)}")
+    
+    return res_file
+
 
 # %% [markdown]
 # ### searchnote(key)
@@ -217,7 +283,7 @@ def searchnotes(key):
     """
     传入关键字搜索并返回笔记列表，每个笔记中包含了所有可能提取field值
     """
-    api = getapi()
+    api = getapi()[0]
     # 经过测试，fields中不能携带的属性值有：latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect
     # note = api.get_note(id, fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id")
     # note = api.get_note(id, fields="id, latitude, longitude, altitude")
@@ -293,28 +359,28 @@ if __name__ == '__main__':
         log.info(f'开始运行文件\t{__file__}')
     # joplinport()
 
-    api = getapi()
-    log.info(f"ping服务器返回结果：\t{api.ping()}")
-    allnotes = getallnotes()[:6]
-    # print(allnotes)
-    myid = allnotes[-3].id
+    api , token, port= getapi()
+    test_updatenote_imgdata()
+    # test_modify_res()
+    # log.info(f"ping服务器返回结果：\t{api.ping()}")
+    # allnotes = getallnotes()[:6]
+    # # print(allnotes)
+    # myid = allnotes[-3].id
     # print(getnote(myid))
     
-    location_keys = ["longitude", "latitude", "altitude"]
-    fields=",".join(["id,title,body,parent_id"] + location_keys)
+    # location_keys = ["longitude", "latitude", "altitude"]
+    # fields=",".join(["id,title,body,parent_id"] + location_keys)
     # getnoteswithfields(fields)
 
-    print(getinivaluefromcloud("happyjplog", "loglimit"))
-
-    findnotes = searchnotes("title:健康*")
+    # print(getinivaluefromcloud("happyjplog", "loglimit"))
+    # findnotes = searchnotes("title:健康*")
     # findnotes = searchnotes("title:文峰*")
 
-    cmd = "joplin ls notebook"
-    cmd = "joplin status"
-    cmd = "joplin ls -l"
+    # cmd = "joplin ls notebook"
+    # cmd = "joplin status"
+    # cmd = "joplin ls -l"
     # result = joplincmd(cmd)
     # print(result.stdout)
-    
 
     if not_IPython():
         log.info(f'Done.结束执行文件\t{__file__}')
