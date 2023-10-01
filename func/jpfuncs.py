@@ -152,6 +152,8 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
         noteid = api.add_note(title=title, body=body)
     if parent_id:
         api.modify_note(noteid, parent_id=parent_id)
+    note = getnote(noteid)
+    log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
 
     return noteid
 
@@ -162,8 +164,10 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
 # %%
 def updatenote_title(noteid, titlestr):
     api = getapi()[0]
+    note = getnote(noteid)
+    titleold = note.title
     api.modify_note(noteid, title=titlestr)
-    log.info(f"id为{noteid}的笔记的title被更新了。")
+    log.info(f"笔记《{titleold}》的标题被更新为《{titlestr}》。")
 
 
 # %% [markdown]
@@ -172,8 +176,9 @@ def updatenote_title(noteid, titlestr):
 # %%
 def updatenote_body(noteid, bodystr):
     api = getapi()[0]
+    note = getnote(noteid)
     api.modify_note(noteid, body=bodystr)
-    log.info(f"id为{noteid}的笔记的body被更新了。")
+    log.info(f"笔记《{note.title}》（id：{noteid}）的body内容被更新了。")
 
 
 # %% [markdown]
@@ -181,19 +186,22 @@ def updatenote_body(noteid, bodystr):
 
 # %%
 def updatenote_imgdata(noteid, imgdata64=None, imgtitle=None):
+    """
+    用构新去旧的方式更新包含资源的笔记，返回新建笔记的id和资源id列表
+    """
     api = getapi()[0]
     note = getnote(noteid)
     origin_body = note.body
     if (origin_body is None) or (len(origin_body) == 0):
         log.critical(f"笔记《{note.title}》（id：{noteid}）的内容为空，没有包含待更新的资源文件信息。")
         return
-    print(f"id为{noteid}的笔记内容为：\t{origin_body}")
+    print(f"笔记《{note.title}》（id：{noteid}）的内容为：\t{origin_body}")
 
     matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", origin_body)
     for resid in matches:
         api.delete_resource(resid)
     api.delete_note(noteid)
-    log.info(f"笔记《{note.title}》（id：{noteid}）中包含了（{len(matches)}）个资源文件，资源文件{matches}和该笔记都已从笔记系统中删除！")
+    log.info(f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！")
     
     notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
     log.info(f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件进入系统。")
@@ -222,7 +230,7 @@ def test_updatenote_imgdata():
     notenew_id, res_id_lst = updatenote_imgdata(noteid=noteid, imgdata64=image_data, imgtitle="QR.png")
     print(f"包含新资源文件的新笔记的id为：{notenew_id}")
     resfile = api.get_resource_file(id_=res_id_lst[0])
-    print(resfile)
+    print(f"资源文件大小（二进制）为：{len(resfile)}字节。")
 
 
 # %% [markdown]
@@ -360,7 +368,8 @@ if __name__ == '__main__':
     # joplinport()
 
     api , token, port= getapi()
-    test_updatenote_imgdata()
+    createnote()
+    # test_updatenote_imgdata()
     # test_modify_res()
     # log.info(f"ping服务器返回结果：\t{api.ping()}")
     # allnotes = getallnotes()[:6]
