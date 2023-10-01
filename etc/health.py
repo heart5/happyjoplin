@@ -90,12 +90,12 @@ def hdf2imgbase64(hdf):
     plt.figure(figsize=(16, 20))
     ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=2)
     ax1.plot(hdf['步数'], lw=0.6, label=u'每天步数')
-    junhdf = hdf['步数'].resample("7D").mean()
-    ax1.plot(junhdf, lw=1, label=u'七天日均')
-    # 标注数据点
-    for i in range(len(junhdf.index)):
-        plt.annotate(f'({int(junhdf.iloc[i])})', (junhdf.index[i], junhdf.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center')
-    plt.legend(loc=1)
+    # junhdf = hdf['步数'].resample("7D").mean()
+    # ax1.plot(junhdf, lw=1, label=u'七天日均')
+    # # 标注数据点
+    # for i in range(len(junhdf.index)):
+    #     plt.annotate(f'({int(junhdf.iloc[i])})', (junhdf.index[i], junhdf.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center')
+    # plt.legend(loc=1)
     plt.title("步数动态图")
 
     # Convert the plot to a base64 encoded image
@@ -105,6 +105,7 @@ def hdf2imgbase64(hdf):
     image_base64 = base64.b64encode(buffer.read()).decode()
     # Now, 'image_base64' contains the base64 encoded image
     # Close the plot to free up resources
+    plt.show()
     plt.close()
 
     # from IPython.display import Image
@@ -131,26 +132,28 @@ def health2note():
         health_id = healthnote.id
         setcfpoptionvalue(namestr, section, 'health_cloud_id', f"{health_id}")
     # 在happyjp_life配置文件中查找health_cloud_updatetimestamp，找不到则表示首次运行，置零
-    if not (health_cloud_updatetimestamp := getcfpoptionvalue(namestr, section, 'health_cloud_updatetimestamp')):
-        health_cloud_updatetimestamp = 0
+    if not (health_cloud_update_ts := getcfpoptionvalue(namestr, section, 'health_cloud_updatetimestamp')):
+        health_cloud_update_ts = 0
     note = getnote(health_id)
     noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo=get_localzone())
-    if noteupdatetimewithzone.timestamp() == health_cloud_updatetimestamp:
+    # if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts) and False:
+    if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts):
         log.info(f'健康运动笔记无更新【最新更新时间为：{noteupdatetimewithzone}】，跳过本次轮询和相应动作。')
         return
 
     hdf = gethealthdatafromnote(note.id)
     image_base64 = hdf2imgbase64(hdf)
-    if not (healthstat_id := getcfpoptionvalue(namestr, section, 'healthstat_cloud_id')):
+    if not (healthstat_cloud_id := getcfpoptionvalue(namestr, section, 'healthstat_cloud_id')):
         healthnotefindlist = searchnotes("title:健康动态") 
         if (len(healthnotefindlist) == 0):
-            healthstat_note_id = createnote(title="健康动态新生活", imgdata64=image_base64)
+            healthstat_cloud_id = createnote(title="健康动态新生活", imgdata64=image_base64)
             log.info(f"新的健康动态笔记“{ealthstat_note_id}”新建成功！")
         else:
-            healthstat_note_id = healthnotefindlist[-1].id
-        setcfpoptionvalue(namestr, section, 'healthstat_cloud_id', f"{healthstat_id}")
+            healthstat_cloud_id = healthnotefindlist[-1].id
+        setcfpoptionvalue(namestr, section, 'healthstat_cloud_id', f"{healthstat_cloud_id}")
 
-    updatenote_imgdata(noteid=healthstat_note_id, imgdata=image_base64)
+    healthstat_cloud_id, res_lst = updatenote_imgdata(noteid=healthstat_cloud_id, imgdata64=image_base64)
+    setcfpoptionvalue(namestr, section, 'healthstat_cloud_id', f"{healthstat_cloud_id}")
     setcfpoptionvalue(namestr, section, 'health_cloud_updatetimestamp', str(noteupdatetimewithzone.timestamp()))
 
 
