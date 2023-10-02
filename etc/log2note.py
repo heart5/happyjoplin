@@ -28,12 +28,9 @@ import pathmagic
 with pathmagic.context():
     from func.first import getdirmain
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    # from func.evernttest import get_notestore, imglist2note, readinifromnote, evernoteapijiayi, makenote, getinivaluefromnote
     from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body, updatenote_title
     from func.logme import log
     from func.wrapfuncs import timethis, ift2phone
-    # from func.termuxtools import termux_location, termux_telephony_deviceinfo
-    # from func.nettools import ifttt_notify
     from etc.getid import getdeviceid
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
 
@@ -46,8 +43,6 @@ with pathmagic.context():
 
 # %%
 @timethis
-# @ift2phone()
-# @profile
 def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
     namestr = 'happyjplog'
 
@@ -90,19 +85,15 @@ def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
     print(f'日志的{levelstr4title}记录共有{len(loglines)}条，只取时间最近的{loglimit}条')
     if not (everlogc := getcfpoptionvalue(namestr, namestr, countnameinini)):
         everlogc = 0
-    # log.info(everlogc)
     if len(loglines) == everlogc:  # <=调整为==，用来应对log文件崩溃重建的情况
         print(f'暂无新的{levelstr4title}记录，不更新“happyjoplin的{levelstr}日志笔记”。')
     else:
         loglinesloglimit = loglines[(-1 * loglimit):]
         loglinestr = '\n'.join(loglinesloglimit[::-1])
-        # loglinestr = loglinestr.replace('<', '《').replace('>',
-        #                                                   '》').replace('=', '等于').replace('&', '并或')
-        # loglinestr = "<pre>" + loglinestr + "</pre>"
         log.info(f"日志字符串长度为：\t{len(loglinestr)}")
         # log.info(loglinestr[:100])
         try:
-            updatenote_title(noteid, notetitle)
+            # updatenote_title(noteid, notetitle)
             updatenote_body(noteid, loglinestr)
             setcfpoptionvalue(namestr, namestr, countnameinini, f'{len(loglines)}')
             print(f'新的log{levelstr4title}信息成功更新入笔记《{notetitle}》')
@@ -121,33 +112,12 @@ def log2notes():
     device_id = getdeviceid()
     loginname = execcmd("whoami")
 
-    # token = getcfpoptionvalue('everwork', 'evernote', 'token')
-    # log.info(token)
     if not (logid := getcfpoptionvalue(namestr, device_id, 'logid')):
         logid = createnote(f'服务器_{device_id}_{loginname}_日志信息', "")
-#         note_store = get_notestore()
-#         parentnotebook = note_store.getNotebook(
-#             '4524187f-c131-4d7d-b6cc-a1af20474a7f')
-#         evernoteapijiayi()
-#         note = ttypes.Note()
-#         note.title = f'服务器_{device_id}_日志信息'
-
-#         notelog = makenote(token, note_store, note.title,
-#                            notebody='', parentnotebook=parentnotebook)
-#         logguid = notelog.guid
         setcfpoptionvalue(namestr, device_id, 'logid', logid)
 
     if not (logcid := getcfpoptionvalue(namestr, device_id, 'logcid')):
         logcid = createnote(f'服务器_{device_id}_{loginname}_严重错误日志信息', "")
-        # note_store = get_notestore()
-        # parentnotebook = note_store.getNotebook(
-        #     '4524187f-c131-4d7d-b6cc-a1af20474a7f')
-        # evernoteapijiayi()
-        # note = ttypes.Note()
-        # note.title = f'服务器_{device_id}_严重错误日志信息'
-        # notelog = makenote(token, note_store, note.title,
-        #                    notebody='', parentnotebook=parentnotebook)
-        # logcguid = notelog.guid
         setcfpoptionvalue(namestr, device_id, 'logcid', logcid)
 
     if not (loglimitc := getinivaluefromcloud(namestr, 'loglimit')):
@@ -158,16 +128,11 @@ def log2notes():
 
     if getinivaluefromcloud(namestr, 'critical') == 1:
         levelstrc = 'CRITICAL'
-        # noteguidc = cfpeverwork.get('evernote', 'lognotecriticalguid')
         log2note(logcid, loglimitc, levelstrc,
                  notetitle=f'服务器_{servername}_{loginname}_严重错误日志信息')
 
-    # noteguidn = cfpeverwork.get('evernote', 'lognoteguid')
     log2note(noteid=logid, loglimit=loglimitc,
              notetitle=f'服务器_{servername}_{loginname}_日志信息')
-
-    # locinfo = termux_location()
-    # print(locinfo)
 
 
 # %% [markdown]
