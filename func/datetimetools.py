@@ -22,7 +22,7 @@ import re
 import arrow
 import time
 from datetime import datetime, timedelta
-from tzlocal import get_localzone
+# from tzlocal import get_localzone
 # from dateutil import tz
 
 # %%
@@ -42,7 +42,7 @@ with pathmagic.context():
 def datecn2utc(datestr):
     # datestr = '2023年9月22日'
     datestr = re.sub("[年月日]", "-", datestr).strip("-")
-    return arrow.get(datestr, tzinfo=get_localzone()).datetime
+    return arrow.get(datestr, tzinfo="local").datetime
 
 
 # %% [markdown]
@@ -105,7 +105,7 @@ def gethumantimedelay(inputlocaltime, intervalseconds=120):
 # %%
 def test_gethumantimedelay():
     hmtimetestlst = ["20210227 01:04:23", arrow.get("20210227 02:04:23",
-                                        tzinfo=get_localzone()), "19761006"]
+                                        tzinfo="local"), "19761006"]
     for htt in hmtimetestlst:
         hmstr = gethumantimedelay(htt)
         print(hmstr)
