@@ -28,19 +28,8 @@ import pandas as pd
 import matplotlib
 import base64
 import io
-from tzlocal import get_localzone
+# from tzlocal import get_localzone
 from threading import Timer
-
-# %% [markdown]
-# ### 中文显示预置
-
-# %%
-# from pylab import plt, FuncFormatter, mpl
-# 设置显示中文字体
-# mpl.rcParams["font.sans-serif"] = ["SimHei"]
-# mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
-import matplotlib.pyplot as plt
-plt.rcParams["font.family"] = "sans-serif"
 
 # %%
 import pathmagic
@@ -55,6 +44,17 @@ with pathmagic.context():
     # from func.nettools import ifttt_notify
     from etc.getid import getdeviceid
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
+
+# %% [markdown]
+# ### 中文显示预置
+
+# %%
+# from pylab import plt, FuncFormatter, mpl
+# 设置显示中文字体
+# mpl.rcParams["font.sans-serif"] = ["SimHei"]
+# mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = "sans-serif"
 
 
 # %% [markdown]
@@ -147,7 +147,7 @@ def health2note():
     if not (health_cloud_update_ts := getcfpoptionvalue(namestr, section, 'health_cloud_updatetimestamp')):
         health_cloud_update_ts = 0
     note = getnote(health_id)
-    noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo=get_localzone())
+    noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo="local")
     # if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts) and False:
     if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts):
         log.info(f'健康运动笔记无更新【最新更新时间为：{noteupdatetimewithzone}】，跳过本次轮询和相应动作。')
@@ -170,6 +170,7 @@ def health2note():
         healthstat_cloud_id, res_lst = updatenote_imgdata(noteid=healthstat_cloud_id, imgdata64=image_base64)
     setcfpoptionvalue(namestr, section, 'healthstat_cloud_id', f"{healthstat_cloud_id}")
     setcfpoptionvalue(namestr, section, 'health_cloud_updatetimestamp', str(noteupdatetimewithzone.timestamp()))
+    log.info(f'健康运动笔记【更新时间：{arrow.get(health_cloud_update_ts, tzinfo="local")}-》{noteupdatetimewithzone}】。')
 
 
 # %% [markdown]
