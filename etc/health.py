@@ -17,6 +17,9 @@
 # %% [markdown]
 # ## 引入库
 
+# %% [markdown]
+# ### 核心库
+
 # %%
 import os
 import re
@@ -28,10 +31,16 @@ import io
 from tzlocal import get_localzone
 from threading import Timer
 
-from pylab import plt, FuncFormatter, mpl
+# %% [markdown]
+# ### 中文显示预置
+
+# %%
+# from pylab import plt, FuncFormatter, mpl
 # 设置显示中文字体
 # mpl.rcParams["font.sans-serif"] = ["SimHei"]
-mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
+# mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
+import matplotlib.pyplot as plt
+plt.rcParams["font.family"] = "sans-serif"
 
 # %%
 import pathmagic
