@@ -140,11 +140,39 @@ def getnote(id):
 
 
 # %% [markdown]
-# ### createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdata64)
+# ### noteid_used(target_id)
+
+# %%
+def noteid_used(targetid):
+    api, token, port = getapi()
+    try:
+        note = getnote(targetid)
+        return True
+    except Exception as e:
+        log.info(f"id为{targetid}的笔记不存在，id号可用。")
+        return False
+
+
+# %% [markdown]
+# ### resid_used(target_id)
+
+# %%
+def resid_used(targetid):
+    api, token, port = getapi()
+    try:
+        res = api.get_resource(id_=targetid)
+        return True
+    except Exception as e:
+        log.info(f"id为{targetid}的资源文件不存在，id号可用。")
+        return False
+
+
+# %% [markdown]
+# ### createnote(title="Superman", body="Keep focus, man!", noteid_spec=None, parent_id=None, imgdata64=None)
 
 # %%
 def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None):
-    api = getapi()[0]
+    api, token, port = getapi()
     if imgdata64:
         noteid = api.add_note(title=title, image_data_url=f"data:image/png;base64,{imgdata64}")
         api.modify_note(noteid, body=f"{body}\n{getnote(noteid).body}")
@@ -153,7 +181,11 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
     if parent_id:
         api.modify_note(noteid, parent_id=parent_id)
     note = getnote(noteid)
-    log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
+    matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", note.body)
+    if len(matches) > 0:
+        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。")
+    else:
+        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
 
     return noteid
 
@@ -199,18 +231,24 @@ def updatenote_imgdata(noteid, imgdata64=None, imgtitle=None):
 
     matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", origin_body)
     for resid in matches:
-        api.delete_resource(resid)
+        if resid_used(resid):
+            api.delete_resource(resid)
+            log.critical(f"资源文件（id：{resid}）成功删除。")
+        else:
+            log.critical(f"资源文件（id：{resid}）不存在，无法删除，跳过。")
     api.delete_note(noteid)
     log.info(f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！")
     
-    notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
-    log.info(f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件进入系统。")
+    # notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
+    notenew_id = createnote(title=note.title, imgdata64=imgdata64)
     notenew = getnote(notenew_id)
     matchesnew = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", notenew.body)
     res_id_lst = matchesnew
     if not imgtitle:
         imgtitle = f"happyjoplin {arrow.now()}"
     api.modify_resource(id_=res_id_lst[0], title=f"{imgtitle}")
+    log.info(f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件{matchesnew}进入笔记系统。")
+    print(f"笔记《{notenew.title}》（id：{notenew_id}）的内容为：\t{notenew.body}")
 
     return notenew_id, res_id_lst
 
@@ -368,8 +406,8 @@ if __name__ == '__main__':
     # joplinport()
 
     api , token, port= getapi()
-    createnote()
-    # test_updatenote_imgdata()
+    # createnote(title="重生的笔记", body="some things happen", noteid_spec="3ffccc7c48fc4b25bcd7cf3841421ce5")
+    test_updatenote_imgdata()
     # test_modify_res()
     # log.info(f"ping服务器返回结果：\t{api.ping()}")
     # allnotes = getallnotes()[:6]
