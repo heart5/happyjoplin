@@ -28,7 +28,7 @@ import datetime
 from pathlib import Path
 from joppy.api import Api
 from joppy import tools
-from tzlocal import get_localzone
+# from tzlocal import get_localzone
 # from dateutil import tz
 
 # %%
@@ -340,7 +340,7 @@ def searchnotes(key):
     log.info(f"搜索“{key}”，找到{len(results.items)}条笔记")
     for notedata in results.items:
         print()
-        print(notedata.title, notedata.id, arrow.get(notedata.updated_time, tzinfo=get_localzone()), "\n" + notedata.body[:30])
+        print(notedata.title, notedata.id, arrow.get(notedata.updated_time, tzinfo="local"), "\n" + notedata.body[:30])
     
     return results.items
 
@@ -368,7 +368,7 @@ def readinifromcloud():
     # print(noteid_inifromcloud)
 
     note = getnote(noteid_inifromcloud)
-    noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo=get_localzone())
+    noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo="local")
     # print(arrow.get(ini_cloud_updatetimestamp, tzinfo=get_localzone()), note.updated_time, noteupdatetimewithzone)
     if noteupdatetimewithzone.timestamp() == ini_cloud_updatetimestamp:
         # print(f'配置笔记无更新【最新更新时间为：{noteupdatetimewithzone}】，不对本地化的ini配置文件做更新。')
@@ -383,7 +383,7 @@ def readinifromcloud():
     fileobj.close()
 
     setcfpoptionvalue('happyjpsys', 'joplin', 'ini_cloud_updatetimestamp', str(noteupdatetimewithzone.timestamp()))
-    log.info(f'云端配置笔记有更新【（{noteupdatetimewithzone}）->（{arrow.get(ini_cloud_updatetimestamp, tzinfo=get_localzone())}）】，更新本地化的ini配置文件。')
+    log.info(f'云端配置笔记有更新【（{noteupdatetimewithzone}）->（{arrow.get(ini_cloud_updatetimestamp, tzinfo="local")}）】，更新本地化的ini配置文件。')
 
 
 # %% [markdown]
