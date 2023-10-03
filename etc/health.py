@@ -99,12 +99,12 @@ def hdf2imgbase64(hdf):
     plt.figure(figsize=(16, 20))
     ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=2)
     ax1.plot(hdf['步数'], lw=0.6, label=u'每天步数')
-    # junhdf = hdf['步数'].resample("7D").mean()
-    # ax1.plot(junhdf, lw=1, label=u'七天日均')
-    # # 标注数据点
-    # for i in range(len(junhdf.index)):
-    #     plt.annotate(f'({int(junhdf.iloc[i])})', (junhdf.index[i], junhdf.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center')
-    # plt.legend(loc=1)
+    junhdf = hdf['步数'].resample("7D").mean()
+    ax1.plot(junhdf, lw=1, label=u'七天日均')
+    # 标注数据点
+    for i in range(len(junhdf.index)):
+        plt.annotate(f'({int(junhdf.iloc[i])})', (junhdf.index[i], junhdf.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center')
+    plt.legend(loc=1)
     plt.title("步数动态图")
 
     # Convert the plot to a base64 encoded image
@@ -148,7 +148,7 @@ def health2note():
         health_cloud_update_ts = 0
     note = getnote(health_id)
     noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo="local")
-    # if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts) and False:
+    # if (noteupdatetimewithzone.timestamp() != health_cloud_update_ts):
     if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts):
         log.info(f'健康运动笔记无更新【最新更新时间为：{noteupdatetimewithzone}】，跳过本次轮询和相应动作。')
         return
