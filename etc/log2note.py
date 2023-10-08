@@ -44,6 +44,7 @@ with pathmagic.context():
 # %%
 @timethis
 def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
+
     namestr = 'happyjplog'
 
     if levelstr == 'CRITICAL':
@@ -93,7 +94,7 @@ def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
         log.info(f"日志字符串长度为：\t{len(loglinestr)}")
         # log.info(loglinestr[:100])
         try:
-            # updatenote_title(noteid, notetitle)
+            updatenote_title(noteid, notetitle)
             updatenote_body(noteid, loglinestr)
             setcfpoptionvalue(namestr, namestr, countnameinini, f'{len(loglines)}')
             print(f'新的log{levelstr4title}信息成功更新入笔记《{notetitle}》')
@@ -108,6 +109,7 @@ def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
 # %%
 @set_timeout(360, after_timeout)
 def log2notes():
+
     namestr = 'happyjplog'
     device_id = getdeviceid()
     loginname = execcmd("whoami")
@@ -142,6 +144,8 @@ def log2notes():
 if __name__ == '__main__':
     if not_IPython():
         log.info(f'开始运行文件\t{__file__}')
+
     log2notes()
+
     if not_IPython():
         log.info(f'Done.结束执行文件\t{__file__}')

@@ -26,6 +26,7 @@ import sys
 
 # %%
 class context:
+
     def __enter__(self):
         sys.path.extend(['..', '.'])
 
@@ -39,6 +40,8 @@ class context:
 # %%
 if __name__ == '__main__':
     print(f'运行文件\t{__file__}')
+
     for pp in sys.path:
         print(pp)
+
     print('Done.完毕。')
