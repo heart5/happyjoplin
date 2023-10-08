@@ -54,8 +54,7 @@ with pathmagic.context():
 # mpl.rcParams["font.sans-serif"] = ["SimHei"]
 # mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei"]
 import matplotlib.pyplot as plt
-plt.rcParams["font.family"] = "sans-serif"
-
+# plt.rcParams["font.family"] = "sans-serif"
 
 # %% [markdown]
 # ## 功能函数集
@@ -78,7 +77,7 @@ def gethealthdatafromnote(noteid):
             log.critical(f"时长字符串“{timestr}”格式有误，默认返回时长值为零")
             return 0
         else:
-            return int(lst[0]) * int(lst[1])
+            return int(lst[0]) * 60 + int(lst[1])
 
     itemslist = [[datecn2utc(item[0]), int(item[1]), timestr2minutes(item[2]), item[3]] for item in itemslist0]
 
@@ -97,6 +96,7 @@ def gethealthdatafromnote(noteid):
 # %%
 def hdf2imgbase64(hdf):
     plt.figure(figsize=(16, 20))
+
     ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=2)
     ax1.plot(hdf['步数'], lw=0.6, label=u'每天步数')
     junhdf = hdf['步数'].resample("7D").mean()
@@ -104,8 +104,20 @@ def hdf2imgbase64(hdf):
     # 标注数据点
     for i in range(len(junhdf.index)):
         plt.annotate(f'({int(junhdf.iloc[i])})', (junhdf.index[i], junhdf.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center')
-    plt.legend(loc=1)
-    plt.title("步数动态图")
+    ax1.legend(loc=1)
+    ax1.set_title("步数动态图")
+
+    ax2 = plt.subplot2grid((4, 2), (2, 0), colspan=2, rowspan=2)
+    ax2.plot(hdf['睡眠时长'], lw=0.6, label=u'睡眠时长')
+    sleepjundf = hdf['睡眠时长'].resample("7D").mean()
+    ax2.plot(sleepjundf, lw=1, label=u'七天平均')
+    # 标注数据点
+    for i in range(len(sleepjundf.index)):
+        plt.annotate(f'({int(sleepjundf.iloc[i] / 60)}钟{int(sleepjundf.iloc[i] % 60)}分)', (sleepjundf.index[i], sleepjundf.iloc[i]), textcoords="offset points", xytext=(0,10), ha='center')
+    ax2.legend(loc=1)
+    ax2.set_title("睡眠时长动态图")
+
+    # plt.title("管住嘴迈开腿，声名大和谐")
 
     # Convert the plot to a base64 encoded image
     buffer = io.BytesIO()
@@ -148,7 +160,7 @@ def health2note():
         health_cloud_update_ts = 0
     note = getnote(health_id)
     noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo="local")
-    # if (noteupdatetimewithzone.timestamp() != health_cloud_update_ts):
+    # if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts) and False:
     if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts):
         log.info(f'健康运动笔记无更新【最新更新时间为：{noteupdatetimewithzone}】，跳过本次轮询和相应动作。')
         return
@@ -180,7 +192,6 @@ def health2note():
 if __name__ == '__main__':
     if not_IPython():
         log.info(f'开始运行文件\t{__file__}')
-    # log2notes()
     
     health2note()
     if not_IPython():
