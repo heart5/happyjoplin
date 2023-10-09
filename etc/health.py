@@ -67,7 +67,7 @@ def gethealthdatafromnote(noteid):
     healthnote = getnote(noteid)
     content = healthnote.body
 
-    ptn = re.compile("(?###\s+)(\d{4}年\d{,2}月\d{,2}日)\n+(\d+)[,，](.+)\n*([^#]+)")
+    ptn = re.compile(r"(?###\s+)(\d{4}年\d{,2}月\d{,2}日)\n+(\d+)[,，](.+)\n*([^#]+)")
     itemslist = re.findall(ptn, content)
     itemslist0 = [[x.strip("\n") for x in item] for item in itemslist]
 
@@ -104,7 +104,10 @@ def hdf2imgbase64(hdf):
     ax1.plot(junhdf, lw=1, label=u'七天日均')
     # 标注数据点
     for i in range(len(junhdf.index)):
-        plt.annotate(f'({int(junhdf.iloc[i])})', (junhdf.index[i], junhdf.iloc[i]), textcoords="offset points", xytext=(0, 10), ha='center')
+        plt.annotate(f'({int(junhdf.iloc[i])})',
+                     (junhdf.index[i], junhdf.iloc[i]),
+                     textcoords="offset points",
+                     xytext=(0, 10), ha='center')
     ax1.legend(loc=1)
     ax1.set_title("步数动态图")
 
@@ -114,7 +117,10 @@ def hdf2imgbase64(hdf):
     ax2.plot(sleepjundf, lw=1, label=u'七天平均')
     # 标注数据点
     for i in range(len(sleepjundf.index)):
-        plt.annotate(f'({int(sleepjundf.iloc[i] / 60)}钟{int(sleepjundf.iloc[i] % 60)}分)', (sleepjundf.index[i], sleepjundf.iloc[i]), textcoords="offset points", xytext=(0, 10), ha='center')
+        plt.annotate(f'({int(sleepjundf.iloc[i] / 60)}钟{int(sleepjundf.iloc[i] % 60)}分)',
+                     (sleepjundf.index[i], sleepjundf.iloc[i]),
+                     textcoords="offset points",
+                     xytext=(0, 10), ha='center')
     ax2.legend(loc=1)
     ax2.set_title("睡眠时长动态图")
 

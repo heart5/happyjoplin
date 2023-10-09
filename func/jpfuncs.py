@@ -20,12 +20,12 @@
 # %%
 import os
 import re
-import requests
-import subprocess
+# import requests
+# import subprocess
 import arrow
-import joppy
-import datetime
-from pathlib import Path
+# import joppy
+# import datetime
+# from pathlib import Path
 from joppy.api import Api
 from joppy import tools
 # from tzlocal import get_localzone
@@ -36,7 +36,6 @@ import pathmagic
 with pathmagic.context():
     from func.first import getdirmain
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    # from func.evernttest import get_notestore, imglist2note, readinifromnote, evernoteapijiayi, makenote, getinivaluefromnote
     from func.logme import log
     # from func.wrapfuncs import timethis, ift2phone
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
@@ -79,7 +78,7 @@ def getapi():
     port = 41184 if portraw == "null" else portraw
 
     url = f"http://localhost:{port}"
-    api = Api(token = token, url=url)
+    api = Api(token=token, url=url)
 
     return api, token, port
 
@@ -104,9 +103,9 @@ def getallnotes():
 def getnoteswithfields(fields, limit=10):
     api = getapi()[0]
     fields_ls = fields.split(",")
-    allnotes = [note for note in api.get_all_notes(fields = fields)[:limit]]
+    allnotes = [note for note in api.get_all_notes(fields=fields)[:limit]]
     geonotes = [note for note in allnotes if note.altitude != 0 and note.longitude != 0]
-    print(len(allnotes),len(geonotes))
+    print(len(allnotes), len(geonotes))
     for note in geonotes:
         # print(getattr(note, "id"))
         neededfls = [getattr(note, key) for key in fields_ls]
@@ -135,7 +134,7 @@ def getnote(id):
     # latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect
     fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id"
     note = api.get_note(id, fields=fields)
-    
+
     return note
 
 
@@ -146,10 +145,10 @@ def getnote(id):
 def noteid_used(targetid):
     api, token, port = getapi()
     try:
-        note = getnote(targetid)
+        getnote(targetid)
         return True
     except Exception as e:
-        log.info(f"id为{targetid}的笔记不存在，id号可用。")
+        log.info(f"id为{targetid}的笔记不存在，id号可用。{e}")
         return False
 
 
@@ -238,7 +237,7 @@ def updatenote_imgdata(noteid, imgdata64=None, imgtitle=None):
             log.critical(f"资源文件（id：{resid}）不存在，无法删除，跳过。")
     api.delete_note(noteid)
     log.info(f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！")
-    
+
     # notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
     notenew_id = createnote(title=note.title, imgdata64=imgdata64)
     notenew = getnote(notenew_id)
@@ -294,7 +293,7 @@ def modify_resource(res_id, imgdata64=None):
     试图更新data但是无法成功，暂存之
     """
     api, token, port = getapi()
-    res= api.get_resource(res_id)
+    res = api.get_resource(res_id)
     log.info(f"id为{res_id}的资源标题为《{res.title}》")
     res_file = api.get_resource_file(res_id)
     log.info(f"id为{res_id}的资源文件大小为{len(res_file)}")
@@ -307,7 +306,7 @@ def modify_resource(res_id, imgdata64=None):
         datastr = f"data:image/png;base64,{imgdata64}"
         begin_str = f"curl -X PUT -F 'data=\"{datastr}\"'"
         props_str = " -F 'props={\"title\":\"my modified title\"}'"
-        url_str =  f" http://localhost:{port}/resources/{res_id}?token={token}"
+        url_str = f" http://localhost:{port}/resources/{res_id}?token={token}"
         update_curl_str = begin_str + props_str + url_str
         print(update_curl_str)
         outstr = execcmd(update_curl_str)
@@ -317,7 +316,7 @@ def modify_resource(res_id, imgdata64=None):
     log.info(f"id为{res_id}的资源标题为《{resnew.title}》")
     res_file = api.get_resource_file(res_id)
     log.info(f"id为{res_id}的资源文件大小为{len(res_file)}")
-    
+
     return res_file
 
 
@@ -336,12 +335,12 @@ def searchnotes(key):
     fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id"
     # fields="id, parent_id, title, body, created_time, updated_time, author, source_url, source, source_application, application_data, order, markup_language, is_shared, share_id, image_data_url"
     # fields="id, parent_id, title, body, created_time, updated_time, author, source_url, source, source_application, application_data, order, markup_language, is_shared, share_id"
-    results = api.search(query=key,fields=fields)
+    results = api.search(query=key, fields=fields)
     log.info(f"搜索“{key}”，找到{len(results.items)}条笔记")
     for notedata in results.items:
         print()
         print(notedata.title, notedata.id, arrow.get(notedata.updated_time, tzinfo="local"), "\n" + notedata.body[:30])
-    
+
     return results.items
 
 
@@ -376,8 +375,7 @@ def readinifromcloud():
 
     items = note.body.split("\n")
     # print(items)
-    fileobj = open(str(getdirmain() / 'data' / 'happyjpinifromcloud.ini'), 'w',
-                   encoding='utf-8')
+    fileobj = open(str(getdirmain() / 'data' / 'happyjpinifromcloud.ini'), 'w', encoding='utf-8')
     for item in items:
         fileobj.write(item + '\n')
     fileobj.close()
@@ -405,7 +403,7 @@ if __name__ == '__main__':
         log.info(f'开始运行文件\t{__file__}')
     # joplinport()
 
-    api , token, port= getapi()
+    api, token, port = getapi()
     # createnote(title="重生的笔记", body="some things happen", noteid_spec="3ffccc7c48fc4b25bcd7cf3841421ce5")
     test_updatenote_imgdata()
     # test_modify_res()
@@ -414,7 +412,7 @@ if __name__ == '__main__':
     # # print(allnotes)
     # myid = allnotes[-3].id
     # print(getnote(myid))
-    
+
     # location_keys = ["longitude", "latitude", "altitude"]
     # fields=",".join(["id,title,body,parent_id"] + location_keys)
     # getnoteswithfields(fields)

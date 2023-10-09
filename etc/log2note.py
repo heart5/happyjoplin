@@ -21,7 +21,7 @@
 import os
 import re
 import pandas as pd
-from threading import Timer
+# from threading import Timer
 import pathmagic
 
 # %%
@@ -30,7 +30,7 @@ with pathmagic.context():
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body, updatenote_title
     from func.logme import log
-    from func.wrapfuncs import timethis, ift2phone
+    from func.wrapfuncs import timethis
     from etc.getid import getdeviceid
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
 
@@ -66,13 +66,12 @@ def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
             log.warning(f'文件《{fname}》不是合法的日志文件，跳过。')
             continue
         with open(pathlog / fname, 'r', encoding='utf-8') as flog:
-            charsnum2showinline = getinivaluefromcloud(namestr,
-                                                      'charsnum2showinline')
+            charsnum2showinline = getinivaluefromcloud(namestr, 'charsnum2showinline')
             # print(f"log行最大显示字符数量为：\t{charsnum2showinline}")
             loglines = loglines + [line.strip()[:charsnum2showinline]
                                    for line in flog if line.find(levelstrinner) >= 0]
 
-    ptn = re.compile('\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}')
+    ptn = re.compile(r'\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}')
     tmlst = [pd.to_datetime(re.match(ptn, x).group())
              for x in loglines if re.match(ptn, x)]
     loglines = [x for x in loglines if re.match(ptn, x)]
