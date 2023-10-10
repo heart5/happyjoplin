@@ -53,6 +53,9 @@ def timestamp2str(timestamp):
     return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
 
 
+# %% [markdown]
+# ## getstartdate(period, thedatetime)
+
 # %%
 def getstartdate(period, thedatetime):
     """
@@ -79,6 +82,9 @@ def getstartdate(period, thedatetime):
     return zuijindatestart
 
 
+# %% [markdown]
+# ## test_getstartdate()
+
 # %%
 def test_getstartdate():
     periodlst = ['日', '周', '旬', '月', '年', '全部']
@@ -87,6 +93,9 @@ def test_getstartdate():
         print(f"{datetime.now()}\t{pr}:\t{tned}\t{type(tned)}")
 
 
+# %% [markdown]
+# ## gethumantimedelay(inputlocaltime, intervalseconds=120)
+
 # %%
 def gethumantimedelay(inputlocaltime, intervalseconds=120):
     """
@@ -94,13 +103,16 @@ def gethumantimedelay(inputlocaltime, intervalseconds=120):
     默认对超过120秒（两分钟）的差值有效，否则返回False
     """
     # 默认用当地时间运算
-    intime = arrow.get(inputlocaltime, tzinfo=tz.tzlocal())
+    intime = arrow.get(inputlocaltime, tzinfo="local")
     if (elasptime := arrow.now() - intime) and (elasptime.seconds > intervalseconds):
         # print(elasptime, elasptime.seconds)
         return intime.humanize(locale='zh_cn')
     else:
         return False
 
+
+# %% [markdown]
+# ## test_gethumantimedelay()
 
 # %%
 def test_gethumantimedelay():
