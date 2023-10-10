@@ -61,9 +61,13 @@ import matplotlib.pyplot as plt
 
 # %% [markdown]
 # ### gethealthdatafromnote(noteid)
+#
 
 # %%
 def gethealthdatafromnote(noteid):
+    """
+    从指定id的运动笔记获取数据，处理，并输出标准DataFrame
+    """
     healthnote = getnote(noteid)
     content = healthnote.body
 
@@ -95,34 +99,59 @@ def gethealthdatafromnote(noteid):
 
 # %%
 def hdf2imgbase64(hdf):
+    """
+    根据传入包含运动数据的DataFrame作图，并输出图形的bytes
+    """
 
-    plt.figure(figsize=(16, 20))
+    plt.figure(figsize=(16, 40))
 
-    ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=2)
+    ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=1)
     ax1.plot(hdf['步数'], lw=0.6, label=u'每天步数')
     junhdf = hdf['步数'].resample("7D").mean()
     ax1.plot(junhdf, lw=1, label=u'七天日均')
     # 标注数据点
     for i in range(len(junhdf.index)):
-        plt.annotate(f'({int(junhdf.iloc[i])})',
+        ax1.annotate(f'({int(junhdf.iloc[i])})',
                      (junhdf.index[i], junhdf.iloc[i]),
                      textcoords="offset points",
                      xytext=(0, 10), ha='center')
     ax1.legend(loc=1)
     ax1.set_title("步数动态图")
 
-    ax2 = plt.subplot2grid((4, 2), (2, 0), colspan=2, rowspan=2)
-    ax2.plot(hdf['睡眠时长'], lw=0.6, label=u'睡眠时长')
+    ax2 = plt.subplot2grid((4, 2), (1, 0), colspan=2, rowspan=1)
+    monthhdf = hdf['步数'].resample('m').sum()
+    axsub = monthhdf.plot(kind='bar')
+    # 标注数据点
+    for i, v in enumerate(monthhdf):
+        axsub.text(i, v + 1, str(v), ha='center', va='bottom')
+    # 设置横轴刻度显示
+    axsub.set_xticklabels([x.strftime("%Y-%m") for x in monthhdf.index], rotation=20)
+    ax2.legend(loc=1)
+    ax2.set_title("月度步数图")
+
+    ax3 = plt.subplot2grid((4, 2), (2, 0), colspan=2, rowspan=1)
+    ax3.plot(hdf['睡眠时长'], lw=0.6, label=u'睡眠时长')
     sleepjundf = hdf['睡眠时长'].resample("7D").mean()
-    ax2.plot(sleepjundf, lw=1, label=u'七天平均')
+    ax3.plot(sleepjundf, lw=1, label=u'七天平均')
     # 标注数据点
     for i in range(len(sleepjundf.index)):
         plt.annotate(f'({int(sleepjundf.iloc[i] / 60)}钟{int(sleepjundf.iloc[i] % 60)}分)',
                      (sleepjundf.index[i], sleepjundf.iloc[i]),
                      textcoords="offset points",
                      xytext=(0, 10), ha='center')
-    ax2.legend(loc=1)
-    ax2.set_title("睡眠时长动态图")
+    ax3.legend(loc=1)
+    ax3.set_title("睡眠时长动态图")
+
+    ax4 = plt.subplot2grid((4, 2), (3, 0), colspan=2, rowspan=1)
+    monthhdf = hdf['睡眠时长'].resample('m').sum()
+    axsub = monthhdf.plot(kind='bar')
+    # 标注数据点
+    for i, v in enumerate(monthhdf):
+        axsub.text(i, v + 1, str(v), ha='center', va='bottom')
+    # 设置横轴刻度显示
+    axsub.set_xticklabels([x.strftime("%Y-%m") for x in monthhdf.index], rotation=20)
+    ax4.legend(loc=1)
+    ax4.set_title("月度睡眠时长图")
 
     # plt.title("管住嘴迈开腿，声名大和谐")
 
@@ -150,6 +179,9 @@ def hdf2imgbase64(hdf):
 # %%
 @timethis
 def health2note():
+    """
+    综合输出健康动态图并更新至笔记
+    """
 
     login_user = execcmd("whoami")
     namestr = "happyjp_life"
