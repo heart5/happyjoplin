@@ -1,5 +1,6 @@
 # for happyjoplin
 itchat.pkl
+img/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
