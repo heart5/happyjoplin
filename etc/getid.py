@@ -152,7 +152,7 @@ def getdeviceid():
 def getdevicename():
     id = getdeviceid()
     set_devicename2ini(id, 'Linux')
-    
+
     return get_devicenamefromini(id)
 
 
@@ -163,7 +163,8 @@ def getdevicename():
 if __name__ == '__main__':
     if not_IPython() and is_log_details:
         log.info(f'运行文件\t{__file__}')
-#     id = getdeviceid()
+    deviceid = getdeviceid()
+    print(deviceid)
 #     set_devicename2ini(id, 'Linux')
 #     devicename = get_devicenamefromini(id)
     devicename = getdevicename()
