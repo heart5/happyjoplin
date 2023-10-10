@@ -171,6 +171,10 @@ def resid_used(targetid):
 
 # %%
 def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None):
+    """
+    按照传入的参数值构建笔记并返回id
+    """
+
     api, token, port = getapi()
     if imgdata64:
         noteid = api.add_note(title=title, image_data_url=f"data:image/png;base64,{imgdata64}")
