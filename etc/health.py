@@ -83,7 +83,8 @@ def gethealthdatafromnote(noteid):
         else:
             return int(lst[0]) * 60 + int(lst[1])
 
-    itemslist = [[datecn2utc(item[0]), int(item[1]), timestr2minutes(item[2]), item[3]] for item in itemslist0]
+    itemslist = [[datecn2utc(item[0]), int(item[1]), timestr2minutes(item[2]),
+                  item[3]] for item in itemslist0]
 
     columns = ["date", "step", "sleep", "memo"]
     columns = ["日期", "步数", "睡眠时长", "随记"]
