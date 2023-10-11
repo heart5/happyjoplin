@@ -33,8 +33,10 @@ from IPython import get_ipython
 from hashlib import sha256
 # import wmi_client_wrapper as wmi
 from matplotlib.font_manager import FontManager
+from collections import deque
 import matplotlib
 
+# %%
 import pathmagic
 with pathmagic.context():
     from func.logme import log
@@ -231,6 +233,28 @@ def showfonts():
 
 
 # %% [markdown]
+# ### testdeque()
+
+# %%
+def testdeque():
+    myque = deque(maxlen=4)
+    msgcontainer = {}
+    numstr = ['one', 'two', 'three', 'four', 'five', 'six', 'seven']
+    for i in range(len(numstr)):
+        msgcontainer[i] = {i+1:numstr[i]}
+        myque.append(msgcontainer[i])
+    print(msgcontainer)
+    print(myque)
+    myque.append(msgcontainer[5])
+    print(myque)
+    print(list(myque))
+    mydict = {}
+    for item in myque:
+        mydict.update(item)
+    print(mydict)
+
+
+# %% [markdown]
 # ## main主函数
 
 # %%
@@ -238,13 +262,14 @@ if __name__ == '__main__':
     if not_IPython():
         log.info(f'运行文件\t{__file__}')
     # outgetstr = execcmd("uname -a")
-    print(execcmd("whoami"))
-    showfonts()
-    outgetstr = execcmd("echo $PATH")
-    print(outgetstr.strip("\n"))
-    print(uuid3hexstr(outgetstr))
-    print(sha2hexstr(outgetstr))
-    log.critical(outgetstr)
-    print(execcmd("joplin config api.port"))
+    testdeque()
+    # print(execcmd("whoami"))
+    # # showfonts()
+    # outgetstr = execcmd("echo $PATH")
+    # print(outgetstr.strip("\n"))
+    # print(uuid3hexstr(outgetstr))
+    # print(sha2hexstr(outgetstr))
+    # log.critical(outgetstr)
+    # print(execcmd("joplin config api.port"))
     if not_IPython():
         log.info(f'文件\t{__file__}\t测试完毕。')
