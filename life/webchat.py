@@ -25,14 +25,16 @@
 # %%
 import time
 import datetime
-import arrow
+# import arrow
 import re
 import os
 import sys
 import math
 import itchat
+from collections import deque
 import itchat.storage
 from itchat.content import CARD, FRIENDS, NOTE, TEXT, MAP, PICTURE, RECORDING, ATTACHMENT, VIDEO, SHARING
+# from itchat.content import *
 from bs4 import BeautifulSoup
 
 # %%
@@ -43,42 +45,23 @@ with pathmagic.context():
     from func.logme import log
     from func.nettools import trycounttimes2
     from func.sysfunc import uuid3hexstr, not_IPython
-    # from func.evernttest import get_notestore, makenote, imglist2note, \
-    #     evernoteapijiayi, getinivaluefromnote
     from func.datatools import readfromtxt, write2txt
     from func.datetimetools import gethumantimedelay
     from func.termuxtools import termux_sms_send
     # from work.weixinzhang import showjinzhang, showshoukuan
-    import evernote.edam.type.ttypes as ttypes
+    # import evernote.edam.type.ttypes as ttypes
     # from work.zymessage import searchcustomer, searchqiankuan, searchpinxiang
     from etc.getid import getdeviceid, getdevicename
-    # from muse.majjianghuojie import updateurllst, splitmjurlfromtext, zhanjidesc, showzhanjiimg, geturlcontentwrite2excel
     from life.wcdelay import inserttimeitem2db, showdelayimg
     # from life.wccontact import updatectdf, getctdf, showwcsimply
     # from life.phonecontact import showphoneinfoimg
     # from etc.battery_manage import showbattinfoimg
-    from func.pdtools import db2img, lststr2img
+    from func.pdtools import db2img
     from func.jpfuncs import createnote, getinivaluefromcloud, updatenote_title, updatenote_body
 
 
 # %% [markdown]
 # ## 功能函数
-
-# %% [markdown]
-# ### newchatnote()
-
-# %%
-def newchatnote():
-    """
-    构建新的聊天记录笔记并返回笔记id
-    """
-
-    notetitle = f"微信（{getowner()['User']['NickName']}）记录:" \
-                 f"{time.strftime('%Y-%m-%d_%H:%M:%S', time.localtime(time.time()))}"
-    noteid = createnote(title=notetitle)
-
-    return noteid
-
 
 # %% [markdown]
 # ### get_response(msg)
@@ -155,7 +138,7 @@ def formatmsg(msg):
         showname = msg['User']['userName']
     else:
         showname = ""
-        log.warning(f"NickName或者UserName或者userName键值不存在哦")
+        log.warning("NickName或者UserName或者userName键值不存在哦")
         showmsgexpanddictetc(msg)
 
     # 过滤掉已经研究过属性公众号信息，对于尚未研究过的显示详细信息
@@ -189,16 +172,34 @@ def formatmsg(msg):
 
 
 # %% [markdown]
+# ### deque2dict()
+
+# %%
+def deque2dict(inputdeque):
+    sondict = {}
+    for item in inputdeque:
+        sondict.update(item)
+    return sondict
+
+
+# %% [markdown]
 # ### def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
 
 # %%
 def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     """
-    把格式化好的微信聊天记录写入文件，并根据笔记ini设定更新相应账号的聊天笔记
+    把格式化好的微信聊天记录写入文件，并根据云端ini设定更新相应账号的聊天笔记
     """
+    # 把聊天记录以dict的格式缓存入队列，fmId提取出来做key
+    global recentmsg_deque
+    onedict = {}
+    onedict[inputformatmsg['fmId']] = {item: inputformatmsg[item] for item in inputformatmsg if item != 'fmId'}
+    recentmsg_deque.append(onedict)
+    if (recentnum := len(recentmsg_deque)) != 30:
+        print(f"缓存聊天记录数量为：\t{recentnum}，fmId号列表\t{list(deque2dict(recentmsg_deque))}")
     # 判断是否延时并增加提示到条目内容中
     if (humantimestr := gethumantimedelay(inputformatmsg['fmTime'])):
-        inputformatmsg['fmText'] = f"[{humantimestr}]" + inputformatmsg['fmText'] 
+        inputformatmsg['fmText'] = f"[{humantimestr}]" + inputformatmsg['fmText']
     msgcontent = ""
     for item in inputformatmsg:
         if item == "fmId":
@@ -209,8 +210,7 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     print(f"{msgcontent}")
 
     men_wc = getcfpoptionvalue('happyjpwebchat', get_host_uuid(), 'host_nickname')
-    chattxtfilename = str(getdirmain() / 'data' / 'webchat' /
-                          f'chatitems({men_wc}).txt')
+    chattxtfilename = str(getdirmain() / 'data' / 'webchat' / f'chatitems({men_wc}).txt')
     chatitems = readfromtxt(chattxtfilename)
     # 倒叙插入，最新的显示在最上面
     chatitems.insert(0, msgcontent)
@@ -222,13 +222,12 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     # if inputformatmsg['fmText'].startswith('微信支付收款'):
     # showshoukuan()
 
-    # readinifromnote()
-    # cfpfromnote, cfpfromnotepath = getcfp('everinifromnote')
     if (men_wc is None) or (len(men_wc) == 0):
         log.critical(f"登录名{men_wc}为空！！！")
         return
+    notetitle = f'微信记录（{getdevicename}_{men_wc}）'
     if (chatnoteid := getinivaluefromcloud('webchat', men_wc + f"_{getdeviceid()}")) is None:
-        chatnoteid = createnote(title=f'{getdevicename}_{men_wc}')
+        chatnoteid = createnote(title=notetitle)
     updatefre = getinivaluefromcloud('webchat', 'updatefre')
     showitemscount = getinivaluefromcloud('webchat', 'showitems')
     # print(f"{type(showitemscount)}\t{showitemscount}")
@@ -237,11 +236,8 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     #     .replace('=', '等于').replace('&', '并或')
     # global note_store
     if (len(chatitems) % updatefre) == 0:
+        updatenote_title(noteid=chatnoteid, titlestr=notetitle)
         updatenote_body(noteid=chatnoteid, bodystr=neirong)
-        # neirongplain = "<pre>" + neirongplain + "</pre>"
-        # imglist2note(note_store, [], chatnoteid, f"微信（{men_wc}）_（{getinivaluefromnote('device', getdeviceid())}）记录更新笔记",
-        #              neirongplain)
-    # print(webchats)
 
 
 # %%
@@ -285,8 +281,41 @@ def note_reply(msg):
     """
     处理note类型信息，对微信转账记录深入处置
     """
+    global recentmsg_deque
     # showmsgexpanddictetc(msg)
     innermsg = formatmsg(msg)
+    if "撤回了一条消息" in msg['Content']:
+        old_msg_id = re.search(r"\<msgid\>(.*?)\<\/msgid\>", msg['Content']).group(1)
+        msg_information = deque2dict(recentmsg_deque)
+        old_msg = msg_information.get(old_msg_id)
+
+        print(old_msg)
+
+        msg_body = "告诉你一个秘密~" + "\n" \
+                        + old_msg.get('fmSender') + " 撤回了 " + old_msg.get("fmType") + " 消息" + "\n" \
+                        + old_msg.get('fmTime') + "\n" \
+                        + "撤回了什么 ⇣" + "\n" \
+                        + r"" + old_msg.get('fmText')
+
+        if old_msg['fmType'] == "Sharing":
+            msg_body += "\n就是这个链接➣ " + old_msg.get('fmText')
+
+        itchat.send_msg(msg_body, toUserName='filehelper')
+
+        if old_msg["fmType"] == "Picture" \
+            or old_msg["fmType"] == "Recording" \
+            or old_msg["fmType"] == "Video" \
+            or old_msg["fmTtype"] == "Attachment":
+            file = '@fil@%s' % (old_msg['fmText'])
+            itchat.send(msg=file, toUserName='filehelper')
+
+        log.critical(f"登记了撤回的消息：{old_msg}")
+        msg_information.pop(old_msg_id)
+        recentmsg_deque.clear()
+        for k, v in msg_information.items():
+            recentmsg_deque.append({k: v})
+        print(f"处理撤回记录后缓存聊天记录数量为：\t{len(recentmsg_deque)}，fmId号列表\t{list(deque2dict(recentmsg_deque))}")
+
     if msg["FileName"] == "微信转账":
         ptn = re.compile("<pay_memo><!\\[CDATA\\[(.*)\\]\\]></pay_memo>")
         pay = re.search(ptn, msg["Content"])[1]
@@ -354,6 +383,7 @@ def soupclean2item(msgcontent):
 @itchat.msg_register([SHARING], isFriendChat=True, isGroupChat=True, isMpChat=True)
 def sharing_reply(msg):
     sendernick = getsendernick(msg)
+    print(sendernick)
     innermsg = formatmsg(msg)
 
     # showmsgexpanddictetc(msg)
@@ -451,8 +481,7 @@ def makemsg2write(innermsg, inputtext=''):
                  'fmTime': nowdatetime.strftime("%Y-%m-%d %H:%M:%S"),
                  'fmSend': True, 'fmSender': innermsg['fmSender'],
                  'fmType': 'Text',
-                 'fmText': f"{inputtext}"
-                }
+                 'fmText': f"{inputtext}"}
     writefmmsg2txtandmaybeevernotetoo(finnalmsg)
 
 
@@ -481,7 +510,7 @@ def text_reply(msg):
 
     # 特定指令则退出
     if msg['Text'] == '退出小元宝系统':
-        log.info(f"根据指令退出小元宝系统")
+        log.info("根据指令退出小元宝系统")
         itchat.logout()
 
     # 处理火界麻将战绩网页
@@ -580,7 +609,7 @@ def text_reply(msg):
                 # 延时图发送记录备档
                 return
             elif diyihang[1] == '电量图':
-                delaydbname = touchfilepath2depth(getdirmain() / "data" / "db" / f"batteryinfo.db")
+                delaydbname = touchfilepath2depth(getdirmain() / "data" / "db" / "batteryinfo.db")
                 imgbattinfo = showbattinfoimg(delaydbname)
                 imgbattinforel = os.path.relpath(imgbattinfo)
                 itchat.send_image(imgbattinforel, toUserName=msg['FromUserName'])
@@ -621,7 +650,7 @@ def text_reply(msg):
                 # rstfile必须是绝对路径，并且不能包含中文字符
                 itchat.send_file(rstfile, toUserName=msg['FromUserName'])
                 # 发给自己一份存档
-                makemsg2write(innermsg,rstfile.replace(os.path.abspath(dirmainpath), ""))
+                makemsg2write(innermsg, rstfile.replace(os.path.abspath(dirmainpath), ""))
                 itchat.send_file(rstfile)
                 infostr = f"成功发送查询结果文件：{os.path.split(rstfile)[1]}给{innermsg['fmSender']}"
                 itchat.send_msg(infostr)
@@ -660,7 +689,7 @@ def add_friend(msg):
     thisid = getdeviceid()
     houseid = getinivaluefromcloud('webchat', 'datahouse')
     mainaccount = getinivaluefromcloud('webchat', 'mainaccount')
-    helloword1 = getinivaluefromcloudl('webchat', 'helloword1')
+    helloword1 = getinivaluefromcloud('webchat', 'helloword1')
     helloword2 = getinivaluefromcloud('webchat', 'helloword2')
     men_wc = getcfpoptionvalue('happyjpwebchat', get_host_uuid(), 'host_nickname')
     if (thisid != str(houseid) or (men_wc != mainaccount)):
@@ -714,7 +743,7 @@ def keepliverun():
     status4login = itchat.check_login()
     log.critical(f"微信登录状态为：\t{status4login}")
     if status4login == '200':
-        log.info(f'已处于成功登录状态')
+        log.info('已处于成功登录状态')
         return
     itchat.auto_login(hotReload=True, loginCallback=after_login, exitCallback=after_logout)
     # itchat.auto_login(hotReload=True)
@@ -752,7 +781,6 @@ def keepliverun():
     else:
         log.critical(f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}")
 
-    # notechat = newchatnote()
     # listchatrooms()
     # listfriends()
     itchat.run()
@@ -767,7 +795,8 @@ if __name__ == '__main__':
     if not_IPython():
         log.info(f'运行文件\t{__file__}')
 
-    # note_store = get_notestore()
+    recentmsg_deque = deque(maxlen=30)
+    # face_bug=None  #针对表情包的内容
     keepliverun()
 
     if not_IPython():
