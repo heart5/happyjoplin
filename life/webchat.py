@@ -52,7 +52,7 @@ with pathmagic.context():
     # import evernote.edam.type.ttypes as ttypes
     # from work.zymessage import searchcustomer, searchqiankuan, searchpinxiang
     from etc.getid import getdeviceid, getdevicename
-    from life.wcdelay import inserttimeitem2db, showdelayimg
+    from life.wcdelay import inserttimeitem2db, showdelayimg, delayimg2note
     # from life.wccontact import updatectdf, getctdf, showwcsimply
     # from life.phonecontact import showphoneinfoimg
     # from etc.battery_manage import showbattinfoimg
@@ -225,7 +225,7 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     if (men_wc is None) or (len(men_wc) == 0):
         log.critical(f"登录名{men_wc}为空！！！")
         return
-    notetitle = f'微信记录（{getdevicename}_{men_wc}）'
+    notetitle = f'微信记录（{getdevicename()}_{men_wc}）'
     if (chatnoteid := getinivaluefromcloud('webchat', men_wc + f"_{getdeviceid()}")) is None:
         chatnoteid = createnote(title=notetitle)
     updatefre = getinivaluefromcloud('webchat', 'updatefre')
@@ -284,28 +284,24 @@ def note_reply(msg):
     global recentmsg_deque
     # showmsgexpanddictetc(msg)
     innermsg = formatmsg(msg)
-    if "撤回了一条消息" in msg['Content']:
+    if ("撤回了一条消息" in msg['Content']) or ("recalled a message" in msg['Content']):
         old_msg_id = re.search(r"\<msgid\>(.*?)\<\/msgid\>", msg['Content']).group(1)
         msg_information = deque2dict(recentmsg_deque)
         old_msg = msg_information.get(old_msg_id)
 
         print(old_msg)
 
-        msg_body = "告诉你一个秘密~" + "\n" \
-                        + old_msg.get('fmSender') + " 撤回了 " + old_msg.get("fmType") + " 消息" + "\n" \
-                        + old_msg.get('fmTime') + "\n" \
-                        + "撤回了什么 ⇣" + "\n" \
-                        + r"" + old_msg.get('fmText')
+        msg_body = f"告诉你一个秘密~\n{old_msg.get('fmSender')}撤回了\
+            {old_msg.get('fmType')} 消息\n{old_msg.get('fmTime')}\
+            \n撤回了什么 ⇣\n{old_msg.get('fmText')}"
 
         if old_msg['fmType'] == "Sharing":
             msg_body += "\n就是这个链接➣ " + old_msg.get('fmText')
 
         itchat.send_msg(msg_body, toUserName='filehelper')
 
-        if old_msg["fmType"] == "Picture" \
-            or old_msg["fmType"] == "Recording" \
-            or old_msg["fmType"] == "Video" \
-            or old_msg["fmTtype"] == "Attachment":
+        if (old_msg["fmType"] == "Picture" or old_msg["fmType"] == "Recording"
+                or old_msg["fmType"] == "Video" or old_msg["fmType"] == "Attachment"):
             file = '@fil@%s' % (old_msg['fmText'])
             itchat.send(msg=file, toUserName='filehelper')
 
@@ -351,7 +347,8 @@ def fileetc_reply(msg):
     filepath = getdirmain() / "img" / "webchat" / createtimestr
     filepath = filepath / f"{innermsg['fmSender']}_{msg['FileName']}"
     touchfilepath2depth(filepath)
-    log.info(f"保存{innermsg['fmType']}类型文件：\t{str(filepath)}")
+    # log.info(f"保存文件（{innermsg['fmType']}）：\t{str(filepath)}")
+    print(f"保存文件（{innermsg['fmType']}）：\t{str(filepath)}")
     msg['Text'](str(filepath))
     innermsg['fmText'] = str(filepath)
 
@@ -433,10 +430,10 @@ def sharing_reply(msg):
             innermsg['fmText'] = innermsg['fmText'] + f"[{soup.des.string}\n[{userfre}]]"
         # elif innermsg["fmText"].endswith("微信支付凭证"):
         # innermsg['fmText'] = innermsg['fmText']+f"[{soup.des.string}]"
-        elif cleansender == '微信运动' and innermsg["fmText"].endswith("刚刚赞了你"):
+        elif cleansender == '微信运动' and (innermsg["fmText"].endswith("刚刚赞了你") or innermsg["fmText"].endswith("just liked your ranking")):
             innermsg['fmText'] = innermsg['fmText'] + \
                                  f"[{soup.rankid.string}\t{soup.displayusername.string}]"
-        elif cleansender == '微信运动' and innermsg["fmText"].endswith("排行榜冠军"):
+        elif cleansender == '微信运动' and (innermsg["fmText"].endswith("排行榜冠军") or innermsg["fmText"].startswith("Champion on")):
             ydlst = []
             mni = soup.messagenodeinfo
             minestr = f"heart57479\t{mni.rankinfo.rankid.string}\t{mni.rankinfo.rank.rankdisplay.string}"
@@ -602,9 +599,10 @@ def text_reply(msg):
                     rstfile, rst = searchcustomer(qrystr.split())
             elif diyihang[1] == '延时图':
                 delaydbname = getdirmain() / 'data' / 'db' / f"wcdelay_{men_wc}.db"
-                imgwcdelay = showdelayimg(delaydbname)
+                imgwcdelay, image_base64 = showdelayimg(delaydbname)
                 imgwcdelayrel = os.path.relpath(imgwcdelay)
                 itchat.send_image(imgwcdelayrel, toUserName=msg['FromUserName'])
+                delayimg2note(men_wc)
                 makemsg2write(innermsg, imgwcdelayrel)
                 # 延时图发送记录备档
                 return
