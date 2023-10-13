@@ -156,13 +156,13 @@ def hdf2imgbase64(hdf):
 
     # plt.title("管住嘴迈开腿，声名大和谐")
 
-    # Convert the plot to a base64 encoded image
+    # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
     plt.savefig(buffer, format='png')
     buffer.seek(0)
     image_base64 = base64.b64encode(buffer.read()).decode()
-    # Now, 'image_base64' contains the base64 encoded image
-    # Close the plot to free up resources
+    # now, 'image_base64' contains the base64 encoded image
+    # close the plot to free up resources
     plt.show()
     plt.close()
 
