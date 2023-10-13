@@ -15,7 +15,6 @@
 # # 微信聊天信息延迟管理
 
 # %%
-# %%
 """
 微信延迟管理文件
 """
@@ -24,9 +23,10 @@
 # ## 引入重要库
 
 # %%
-# %%
 import os
+import io
 import time
+import base64
 # import datetime
 import sqlite3 as lite
 import pandas as pd
@@ -41,6 +41,7 @@ with pathmagic.context():
     from func.litetools import ifnotcreate
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.sysfunc import not_IPython
+    from func.jpfuncs import createnote, updatenote_imgdata
 
 
 # %% [markdown]
@@ -49,7 +50,6 @@ with pathmagic.context():
 # %% [markdown]
 # ### def checkdelaytable(dbname, tablename)
 
-# %%
 # %%
 def checkwcdelaytable(dbname: str, tablename: str):
     """
@@ -69,7 +69,6 @@ def checkwcdelaytable(dbname: str, tablename: str):
 # %% [markdown]
 # ### def inserttimeitem2db(dbname, timestampinput)
 
-# %%
 # %%
 def inserttimeitem2db(dbname: str, timestampinput: int):
     '''
@@ -102,7 +101,6 @@ def inserttimeitem2db(dbname: str, timestampinput: int):
 # ### def getdelaydb(dbname, tablename)
 
 # %%
-# %%
 def getdelaydb(dbname: str, tablename="wcdelaynew"):
     """
     从延时数据表提取数据（DataFrame），返回最近延时值和df
@@ -118,11 +116,12 @@ def getdelaydb(dbname: str, tablename="wcdelaynew"):
 
     tmpdf = pd.DataFrame(table)
     if len(tmpdf.columns) == 3:
-        timedf = pd.DataFrame(table, columns=["id", "time", "delay"], index='id')
+        timedf = pd.DataFrame(table, columns=["id", "time", "delay"])
+        timedf = timedf.set_index('id')
         timedf["time"] = timedf["time"].apply(
             lambda x: pd.to_datetime(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(x)))
         )
-        timdfgrp = timedf.groupby('time').sum()
+        timedfgrp = timedf.groupby('time').sum()
     #     timedf.set_index("time", inplace=True)
     elif len(tmpdf.columns) == 2:
         timedf = pd.DataFrame(table, columns=["time", "delay"])
@@ -134,13 +133,13 @@ def getdelaydb(dbname: str, tablename="wcdelaynew"):
         return 0, tmpdf
 
     if (tdfsize := timedfgrp.shape[0]) != 0:
-        print(f"延时记录共有{tdfsize}条")
+        print(f"延时记录{type(timedfgrp)}共有{tdfsize}条")
         # 增加当前时间，延时值引用最近一次的值，用于做图形展示的右边栏
         #         nowtimestamp = time.ctime()
         #         timedf = timedf.append(pd.DataFrame([timedf.iloc[-1]],
                                         # index=[pd.to_datetime(time.ctime())]))
-        timedfgrp = timedfgrp.append(
-            pd.DataFrame([timedfgrp.iloc[-1]], index=[pd.to_datetime(time.ctime())])
+        timedfgrp = pd.concat([timedfgrp,
+            pd.DataFrame([timedfgrp.iloc[-1]], index=[pd.to_datetime(time.ctime())])]
         )
         jujinmins = int((timedfgrp.index[-1] - timedfgrp.index[-2]).total_seconds() / 60)
     else:
@@ -158,7 +157,6 @@ def getdelaydb(dbname: str, tablename="wcdelaynew"):
 # %% [markdown]
 # ### def showdelayimg(dbname, jingdu)
 
-# %%
 # %%
 def showdelayimg(dbname: str, jingdu: int = 300):
     '''
@@ -198,33 +196,57 @@ def showdelayimg(dbname: str, jingdu: int = 300):
     drawdelayimg(212, timedf, "信息频率和延时（分钟，全部）")
     fig1 = plt.gcf()
 
-    plt.show()
+    # convert the plot to a base64 encoded image
+    buffer = io.BytesIO()
+    plt.savefig(buffer, format='png', dpi=jingdu)
+    buffer.seek(0)
+    image_base64 = base64.b64encode(buffer.read()).decode()
+    # now, 'image_base64' contains the base64 encoded image
+    # close the plot to free up resources
 
-    imgwcdelaypath = touchfilepath2depth(
-        getdirmain() / "img" / "webchat" / "wcdelay.png"
-    )
+    # plt.show()
+    plt.close()
 
-    fig1.savefig(imgwcdelaypath, dpi=jingdu)
+    imgwcdelaypath = touchfilepath2depth(getdirmain() / "img" / "webchat" / "wcdelay.png")
+
+    with open(imgwcdelaypath, "wb") as f:
+        f.write(buffer.read())
+    # fig1.savefig(imgwcdelaypath, dpi=jingdu)
     print(os.path.relpath(imgwcdelaypath))
 
-    return imgwcdelaypath
+    return imgwcdelaypath, image_base64
+
+
+# %% [markdown]
+# ### delayimg2note(image_base64)
+
+# %%
+def delayimg2note(owner):
+    dbnameouter = touchfilepath2depth(getdirmain() / "data" / "db" / f"wcdelay_{owner}.db")
+    imgpath, image_base64 = showdelayimg(dbnameouter)
+    if (delayid := getcfpoptionvalue("happyjpwebchat", 'delay', 'noteid')) is None:
+        delayid = createnote(title=f"微信信息延迟动态图（{owner}）", imgdata64=image_base64)
+        setcfpoptionvalue("happyjpwebchat", 'delay', 'noteid', str(delayid))
+        return
+    noteid, residlst = updatenote_imgdata(noteid=delayid, imgdata64=image_base64)
+    setcfpoptionvalue("happyjpwebchat", 'delay', 'noteid', str(noteid))
 
 
 # %% [markdown]
 # ## 主函数main
 
 # %%
-# %%
 if __name__ == "__main__":
     if not_IPython():
-        logstrouter = "运行文件\t%s" %__file__
+        logstrouter = "运行文件\t%s" % __file__
         log.info(logstrouter)
     # owner = 'heart5'
     owner = '白晔峰'
-    dbnameouter = touchfilepath2depth(getdirmain() / "data" / "db" / f"wcdelay_{owner}.db")
-    xinxian, tdf = getdelaydb(dbnameouter)
-    print(xinxian)
-    print(tdf.sort_index(ascending=False))
+    # dbnameouter = touchfilepath2depth(getdirmain() / "data" / "db" / f"wcdelay_{owner}.db")
+    # xinxian, tdf = getdelaydb(dbnameouter)
+    # print(tdf.sort_index(ascending=False))
+    # imgpath, image_base64 = showdelayimg(dbnameouter)
+    delayimg2note(owner)
     if not_IPython():
-        logstrouter = "文件%s运行结束" %(__file__)
+        logstrouter = "文件%s运行结束" % __file__
         log.info(logstrouter)
