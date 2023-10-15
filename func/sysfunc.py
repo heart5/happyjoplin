@@ -28,6 +28,7 @@ import time
 import datetime
 import uuid
 import re
+import logging
 import subprocess
 from IPython import get_ipython
 from hashlib import sha256
@@ -245,6 +246,18 @@ def testdeque():
         myque.append(msgcontainer[i])
     print(msgcontainer)
     print(myque)
+
+
+    from func.nettools import get_host_ip
+    try:
+        testerror = 5 / 0
+        print(testerror)
+    except Exception:
+        extra_d = {"hostip":f"{get_host_ip()}", "user":f"{execcmd('whoami')}"}
+        print(extra_d)
+        # log.critical('测试stack_info参数 %s', "with extra info", stack_info=True)
+        log.critical("出错拉，这里->", exc_info=True)
+
     myque.append(msgcontainer[5])
     print(myque)
     print(list(myque))
@@ -255,6 +268,33 @@ def testdeque():
 
 
 # %% [markdown]
+# ### listallloghandler()
+
+# %%
+def listallloghander():
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    # print(all_loggers.get('hjer'))
+
+    # 列出所有现有的日志记录器
+    all_loggers = logging.Logger.manager.loggerDict
+    all_loggers.get('hjer').addHandler(console)
+    for k, v in all_loggers.items():
+        try:
+            if hasattr(v, "handlers"):
+                print(f"{k}\t{v}\t{v.handlers}")
+            else:
+                print(f"{k}\t{v}")
+                continue
+        except AttributeError as e:
+            log.critical(e, exc_info=True)
+    # 打印所有现有的日志记录器
+    # for logger_name in all_loggers:
+    #     logger_inner = logging.getLogger(logger_name)
+    #     print(f"{logger_inner}\t{list(logger_inner.handlers)}")
+
+
+# %% [markdown]
 # ## main主函数
 
 # %%
@@ -262,6 +302,7 @@ if __name__ == '__main__':
     if not_IPython():
         log.info(f'运行文件\t{__file__}')
     # outgetstr = execcmd("uname -a")
+    # listallloghander()
     testdeque()
     # print(execcmd("whoami"))
     # # showfonts()
