@@ -210,6 +210,7 @@ def showdelayimg(dbname: str, jingdu: int = 300):
     imgwcdelaypath = touchfilepath2depth(getdirmain() / "img" / "webchat" / "wcdelay.png")
 
     with open(imgwcdelaypath, "wb") as f:
+        buffer.seek(0)
         f.write(buffer.read())
     # fig1.savefig(imgwcdelaypath, dpi=jingdu)
     print(os.path.relpath(imgwcdelaypath))
