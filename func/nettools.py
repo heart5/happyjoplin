@@ -256,7 +256,7 @@ def trycounttimes2(servname='服务器', maxtimes=100, maxsecs=50):
                         # exit(1)
                         # raise eee
                         break
-            
+
                     # 暂歇开始前终端输出，看看而已
                     print(extract_traceback4exception(tbtuple, 'trycounttimes2', sleeptime=sleeptime))
                     time.sleep(sleeptime)
@@ -266,6 +266,9 @@ def trycounttimes2(servname='服务器', maxtimes=100, maxsecs=50):
     return decorate
 
 
+# %% [markdown]
+# ## ifttt_notify(content="content", funcname="funcname")
+
 # %%
 @trycounttimes2("ifttt服务器")
 def ifttt_notify(content="content", funcname="funcname"):
@@ -274,6 +277,9 @@ def ifttt_notify(content="content", funcname="funcname"):
     ifttt.notify(f'{pu.machine}_{pu.node}', content, funcname)
     log.critical(f'{pu.machine}_{pu.node}\t{content}\t{funcname}')
 
+
+# %% [markdown]
+# ## tst4trycounttimes2()
 
 # %%
 def tst4trycounttimes2():
@@ -306,6 +312,9 @@ def tst4trycounttimes2():
         print(f'{name},{url}')
 
 
+# %% [markdown]
+# # 主函数main()
+
 # %%
 if __name__ == '__main__':
     if not_IPython():
@@ -316,7 +325,7 @@ if __name__ == '__main__':
 #     print(pklpath)
 #     isitchat(pklpath)
     print(get_ip4alleth())
-#     print(get_host_ip())
+    print(get_host_ip())
 #     tst4trycounttimes2()
     if not_IPython():
         log.info(f'文件\t{__file__}\t测试完毕。')
