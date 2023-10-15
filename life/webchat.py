@@ -30,6 +30,7 @@ import re
 import os
 import sys
 import math
+import logging
 import itchat
 from collections import deque
 import itchat.storage
@@ -44,7 +45,7 @@ with pathmagic.context():
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.logme import log
     from func.nettools import trycounttimes2
-    from func.sysfunc import uuid3hexstr, not_IPython
+    from func.sysfunc import uuid3hexstr, not_IPython, execcmd, listallloghander
     from func.datatools import readfromtxt, write2txt
     from func.datetimetools import gethumantimedelay
     from func.termuxtools import termux_sms_send
@@ -225,7 +226,7 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     if (men_wc is None) or (len(men_wc) == 0):
         log.critical(f"登录名{men_wc}为空！！！")
         return
-    notetitle = f'微信记录（{getdevicename()}_{men_wc}）'
+    notetitle = f"微信记录【{men_wc}】 -（{getdevicename()}-{execcmd('whoami')}））"
     if (chatnoteid := getinivaluefromcloud('webchat', men_wc + f"_{getdeviceid()}")) is None:
         chatnoteid = createnote(title=notetitle)
     updatefre = getinivaluefromcloud('webchat', 'updatefre')
@@ -288,35 +289,35 @@ def note_reply(msg):
         old_msg_id = re.search(r"\<msgid\>(.*?)\<\/msgid\>", msg['Content']).group(1)
         msg_information = deque2dict(recentmsg_deque)
         old_msg = msg_information.get(old_msg_id)
-
         print(old_msg)
 
-        msg_body = f"告诉你一个秘密~\n{old_msg.get('fmSender')}撤回了\
-            {old_msg.get('fmType')} 消息\n{old_msg.get('fmTime')}\
-            \n撤回了什么 ⇣\n{old_msg.get('fmText')}"
+        msg_body = f"{old_msg.get('fmSender')}撤回了 {old_msg.get('fmType')} 消息\n{old_msg.get('fmTime')}\
+            \n ⇣ \n{old_msg.get('fmText')}"
 
-        if old_msg['fmType'] == "Sharing":
-            msg_body += "\n就是这个链接➣ " + old_msg.get('fmText')
-
+        # if old_msg['fmType'] == "Sharing":
+        #     msg_body += "\n就是这个链接➣ " + old_msg.get('fmText')
         itchat.send_msg(msg_body, toUserName='filehelper')
 
         if (old_msg["fmType"] == "Picture" or old_msg["fmType"] == "Recording"
                 or old_msg["fmType"] == "Video" or old_msg["fmType"] == "Attachment"):
-            file = '@fil@%s' % (old_msg['fmText'])
-            itchat.send(msg=file, toUserName='filehelper')
-
-        log.critical(f"登记了撤回的消息：{old_msg}")
+            fileabspath = os.path.abspath(getdirmain() / f"{old_msg['fmText']}")
+            fileprefix = 'img' if old_msg['fmType'] == 'Picture' else 'fil'
+            fileprefix = 'vid' if old_msg['fmType'] == 'Video' else 'fil'
+            file = '@%s@%s' % (fileprefix, fileabspath)
+            itchat.send(file, toUserName='filehelper')
+            log.critical(f"撤回的文件【{fileprefix}\t{fileabspath}】发送给文件助手")
+        log.critical(f"处理了撤回的消息：{old_msg}")
         msg_information.pop(old_msg_id)
         recentmsg_deque.clear()
         for k, v in msg_information.items():
             recentmsg_deque.append({k: v})
-        print(f"处理撤回记录后缓存聊天记录数量为：\t{len(recentmsg_deque)}，fmId号列表\t{list(deque2dict(recentmsg_deque))}")
+        print(f"处理该撤回记录后缓存记录数量为：\t{len(recentmsg_deque)}，fmId列表\t{list(deque2dict(recentmsg_deque))}")
 
     if msg["FileName"] == "微信转账":
         ptn = re.compile("<pay_memo><!\\[CDATA\\[(.*)\\]\\]></pay_memo>")
         pay = re.search(ptn, msg["Content"])[1]
-        innermsg['fmText'] = innermsg['fmText'] + f"[{pay}]"
-    if msg["FileName"].find('红包') >= 0:
+        innermsg['fmText'] += f"[{pay}]"
+    if msg["FileName"].find("红包") >= 0:
         showmsgexpanddictetc(msg)
     writefmmsg2txtandmaybeevernotetoo(innermsg)
 
@@ -422,18 +423,18 @@ def sharing_reply(msg):
 
     cleansender = re.split("\\(群\\)", innermsg['fmSender'])[0]
 
+    inmtxt = innermsg["fmText"]
     if cleansender in impimlst:
-        if cleansender == '微信支付' and innermsg["fmText"].endswith("转账收款汇总通知"):
+        if cleansender == '微信支付' and inmtxt.endswith("转账收款汇总通知"):
             itms = soup.opitems.find_all('opitem')
             userfre = [f'{x.weapp_username.string}\t{x.hint_word.string}' for x in itms if x.word.string.find(
                 '收款记录') >= 0][0]
-            innermsg['fmText'] = innermsg['fmText'] + f"[{soup.des.string}\n[{userfre}]]"
+            innermsg['fmText'] += f"[{soup.des.string}\n[{userfre}]]"
         # elif innermsg["fmText"].endswith("微信支付凭证"):
         # innermsg['fmText'] = innermsg['fmText']+f"[{soup.des.string}]"
-        elif cleansender == '微信运动' and (innermsg["fmText"].endswith("刚刚赞了你") or innermsg["fmText"].endswith("just liked your ranking")):
-            innermsg['fmText'] = innermsg['fmText'] + \
-                                 f"[{soup.rankid.string}\t{soup.displayusername.string}]"
-        elif cleansender == '微信运动' and (innermsg["fmText"].endswith("排行榜冠军") or innermsg["fmText"].startswith("Champion on")):
+        elif cleansender == '微信运动' and (inmtxt.endswith("刚刚赞了你") or inmtxt.endswith("just liked your ranking")):
+            innermsg['fmText'] += f"[{soup.rankid.string}\t{soup.displayusername.string}]"
+        elif cleansender == '微信运动' and (inmtxt.endswith("排行榜冠军") or inmtxt.startswith("Champion on")):
             ydlst = []
             mni = soup.messagenodeinfo
             minestr = f"heart57479\t{mni.rankinfo.rankid.string}\t{mni.rankinfo.rank.rankdisplay.string}"
@@ -442,11 +443,11 @@ def sharing_reply(msg):
             for item in ril:
                 istr = f"{item.username.string}\t{item.rank.rankdisplay.string}\t{item.score.scoredisplay.string}"
                 ydlst.append(istr)
-            pay = "\n".join(ydlst)
-            innermsg['fmText'] = innermsg['fmText'] + f"[{pay}]"
+            yundong = "\n".join(ydlst)
+            innermsg['fmText'] += f"[{yundong}]"
         elif soup.des or soup.digest:
             valuepart = soup.des or soup.digest
-            innermsg['fmText'] = innermsg['fmText'] + f"[{valuepart.string}]"
+            innermsg['fmText'] += f"[{valuepart.string}]"
         else:
             showmsgexpanddictetc(msg)
     elif len(items) > 0:
@@ -456,7 +457,7 @@ def sharing_reply(msg):
                 itemstr += titlestr + '\n'
         # 去掉尾行的回车
         itemstr = itemstr[:-1]
-        innermsg['fmText'] = innermsg['fmText'] + itemstr
+        innermsg['fmText'] += itemstr
     elif type(msg['User']) == itchat.storage.MassivePlatform:
         log.info(f"公众号信息\t{msg['User']}")
         showmsgexpanddictetc(msg)
@@ -600,10 +601,11 @@ def text_reply(msg):
             elif diyihang[1] == '延时图':
                 delaydbname = getdirmain() / 'data' / 'db' / f"wcdelay_{men_wc}.db"
                 imgwcdelay, image_base64 = showdelayimg(delaydbname)
-                imgwcdelayrel = os.path.relpath(imgwcdelay)
-                itchat.send_image(imgwcdelayrel, toUserName=msg['FromUserName'])
+                # imgwcdelayrel = os.path.relpath(imgwcdelay)
+                imgwcdelay = os.path.abspath(imgwcdelay)
+                itchat.send_image(imgwcdelay, toUserName=msg['FromUserName'])
                 delayimg2note(men_wc)
-                makemsg2write(innermsg, imgwcdelayrel)
+                makemsg2write(innermsg, imgwcdelay)
                 # 延时图发送记录备档
                 return
             elif diyihang[1] == '电量图':
@@ -718,6 +720,7 @@ def after_logout():
         termux_sms_send(f"微信({men_wc})登录已退出，如有必要请重新启动")
     except Exception as e:
         log.critical(f"尝试发送退出提醒短信失败。{e}")
+        log.error("", exc_info=True)
     log.critical(f'退出微信({men_wc})登录')
 
 
@@ -792,6 +795,13 @@ def keepliverun():
 if __name__ == '__main__':
     if not_IPython():
         log.info(f'运行文件\t{__file__}')
+
+    # listallloghander()
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    itloger = logging.getLogger('itchat')
+    itloger.addHandler(console)
+    print(itloger)
 
     recentmsg_deque = deque(maxlen=30)
     # face_bug=None  #针对表情包的内容
