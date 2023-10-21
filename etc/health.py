@@ -28,6 +28,7 @@ import pandas as pd
 # import matplotlib
 import base64
 import io
+import calendar
 # from tzlocal import get_localzone
 # from threading import Timer
 
@@ -96,6 +97,37 @@ def gethealthdatafromnote(noteid):
 
 
 # %% [markdown]
+# ### calds2ds(sds)
+
+# %%
+def calds2ds(sds):
+    """
+    根据输入的ds，按月合计并估算数据未满月的月份的整月值
+    返回：月度合计ds、头尾估算合计ds
+    """
+    sdsm_actual = sds.resample("m").sum()
+
+    dmin = sds.index.min()
+    year = dmin.year
+    month = dmin.month
+    __, monthend = calendar.monthrange(year, month)
+    estimatemin = int(sdsm_actual.iloc[0] / (monthend + 1 - dmin.day) * monthend)
+    print(year, month, monthend, dmin.day, sdsm_actual.iloc[0], estimatemin)
+
+    dmax = sds.index.max()
+    year = dmax.year
+    month = dmax.month
+    __, monthend = calendar.monthrange(year, month)
+    estimatemax = int(sdsm_actual.iloc[-1] / (dmax.day) * monthend)
+    print(year, month, monthend, dmax.day, sdsm_actual.iloc[-1], estimatemax)
+
+    estds = pd.Series([estimatemin, estimatemax], index=[dmin, dmax])
+
+    estds_resample_full = estds.resample("m").sum()
+    return sdsm_actual, estds_resample_full
+
+
+# %% [markdown]
 # ### hdf2imgbase64(hdf)
 
 # %%
@@ -120,13 +152,16 @@ def hdf2imgbase64(hdf):
     ax1.set_title("步数动态图")
 
     ax2 = plt.subplot2grid((4, 2), (1, 0), colspan=2, rowspan=1)
-    monthhdf = hdf['步数'].resample('m').sum()
-    axsub = monthhdf.plot(kind='bar')
+    sdsm_actual, sdsm_estimate_full = calds2ds(hdf["步数"])
+    axsub = sdsm_actual.plot(kind='bar')
+    sdsm_estimate_full.plot(kind="bar", linestyle="-.", edgecolor="green", fill=False, ax=axsub)
     # 标注数据点
-    for i, v in enumerate(monthhdf):
-        axsub.text(i, v + 1, str(v), ha='center', va='bottom')
+    for i, v in enumerate(sdsm_actual):
+        axsub.text(i, v, str(v), ha='center', va='bottom')
+        if (val := sdsm_estimate_full.iloc[i]) != 0:
+            axsub.text(i, val, str(val), ha='center', va='bottom')
     # 设置横轴刻度显示
-    axsub.set_xticklabels([x.strftime("%Y-%m") for x in monthhdf.index], rotation=20)
+    axsub.set_xticklabels([x.strftime("%Y-%m") for x in sdsm_actual.index], rotation=20)
     ax2.legend(loc=1)
     ax2.set_title("月度步数图")
 
@@ -144,13 +179,16 @@ def hdf2imgbase64(hdf):
     ax3.set_title("睡眠时长动态图")
 
     ax4 = plt.subplot2grid((4, 2), (3, 0), colspan=2, rowspan=1)
-    monthhdf = hdf['睡眠时长'].resample('m').sum()
-    axsub = monthhdf.plot(kind='bar')
+    sdsm_actual, sdsm_estimate_full = calds2ds(hdf["睡眠时长"])
+    axsub = sdsm_actual.plot(kind='bar')
+    sdsm_estimate_full.plot(kind="bar", linestyle="-.", edgecolor="green", fill=False, ax=axsub)
     # 标注数据点
-    for i, v in enumerate(monthhdf):
+    for i, v in enumerate(sdsm_actual):
         axsub.text(i, v + 1, str(v), ha='center', va='bottom')
+        if (val := sdsm_estimate_full.iloc[i]) != 0:
+            axsub.text(i, val, str(val), ha='center', va='bottom')
     # 设置横轴刻度显示
-    axsub.set_xticklabels([x.strftime("%Y-%m") for x in monthhdf.index], rotation=20)
+    axsub.set_xticklabels([x.strftime("%Y-%m") for x in sdsm_actual.index], rotation=20)
     ax4.legend(loc=1)
     ax4.set_title("月度睡眠时长图")
 
