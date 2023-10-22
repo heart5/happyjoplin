@@ -1,5 +1,8 @@
 # for happyjoplin
+QR.png
 itchat.pkl
+log/
+data/
 img/
 # Byte-compiled / optimized / DLL files
 __pycache__/
