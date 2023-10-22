@@ -136,7 +136,7 @@ def hdf2imgbase64(hdf):
     根据传入包含运动数据的DataFrame作图，并输出图形的bytes
     """
 
-    plt.figure(figsize=(16, 40))
+    plt.figure(figsize=(16, 40), dpi=300)
 
     ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=1)
     ax1.plot(hdf['步数'], lw=0.6, label=u'每天步数')
@@ -148,7 +148,8 @@ def hdf2imgbase64(hdf):
                      (junhdf.index[i], junhdf.iloc[i]),
                      textcoords="offset points",
                      xytext=(0, 10), ha='center')
-    ax1.legend(loc=1)
+    # ax1.legend(loc=1)
+    ax1.legend()
     ax1.set_title("步数动态图")
 
     ax2 = plt.subplot2grid((4, 2), (1, 0), colspan=2, rowspan=1)
@@ -162,7 +163,8 @@ def hdf2imgbase64(hdf):
             axsub.text(i, val, str(val), ha='center', va='bottom')
     # 设置横轴刻度显示
     axsub.set_xticklabels([x.strftime("%Y-%m") for x in sdsm_actual.index], rotation=20)
-    ax2.legend(loc=1)
+    # ax2.legend(loc=1)
+    ax2.legend(["步数", "满月估算"])
     ax2.set_title("月度步数图")
 
     ax3 = plt.subplot2grid((4, 2), (2, 0), colspan=2, rowspan=1)
@@ -175,7 +177,8 @@ def hdf2imgbase64(hdf):
                      (sleepjundf.index[i], sleepjundf.iloc[i]),
                      textcoords="offset points",
                      xytext=(0, 10), ha='center')
-    ax3.legend(loc=1)
+    # ax3.legend(loc=1)
+    ax3.legend()
     ax3.set_title("睡眠时长动态图")
 
     ax4 = plt.subplot2grid((4, 2), (3, 0), colspan=2, rowspan=1)
@@ -184,15 +187,14 @@ def hdf2imgbase64(hdf):
     sdsm_estimate_full.plot(kind="bar", linestyle="-.", edgecolor="green", fill=False, ax=axsub)
     # 标注数据点
     for i, v in enumerate(sdsm_actual):
-        axsub.text(i, v + 1, str(v), ha='center', va='bottom')
+        axsub.text(i, v, str(v), ha='center', va='bottom')
         if (val := sdsm_estimate_full.iloc[i]) != 0:
             axsub.text(i, val, str(val), ha='center', va='bottom')
     # 设置横轴刻度显示
     axsub.set_xticklabels([x.strftime("%Y-%m") for x in sdsm_actual.index], rotation=20)
-    ax4.legend(loc=1)
+    # ax4.legend(loc=1)
+    ax4.legend(["睡眠时长", "满月估算"])
     ax4.set_title("月度睡眠时长图")
-
-    # plt.title("管住嘴迈开腿，声名大和谐")
 
     # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
@@ -239,8 +241,8 @@ def health2note():
         health_cloud_update_ts = 0
     note = getnote(health_id)
     noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo="local")
-    # if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts) and False:
-    if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts):
+    # IPyton环境无视对比判断，强行执行后续操作；非IPython环境则正常逻辑推进
+    if (noteupdatetimewithzone.timestamp() == health_cloud_update_ts) and (not_IPython()):
         log.info(f'健康运动笔记无更新【最新更新时间为：{noteupdatetimewithzone}】，跳过本次轮询和相应动作。')
         return
 
