@@ -21,29 +21,22 @@
 # ### 核心库
 
 # %%
-# import os
 import re
 import arrow
 import pandas as pd
-# import matplotlib
 import base64
 import io
 import calendar
-# from tzlocal import get_localzone
-# from threading import Timer
 
 # %%
 import pathmagic
 with pathmagic.context():
-    # from func.first import getdirmain
     from func.datetimetools import datecn2utc
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.jpfuncs import searchnotes, getnote, createnote, updatenote_imgdata, noteid_used
+    from func.jpfuncs import searchnotes, getnote, createnote, updatenote_imgdata, \
+        noteid_used, searchnotebook
     from func.logme import log
     from func.wrapfuncs import timethis
-    # from func.termuxtools import termux_location, termux_telephony_deviceinfo
-    # from func.nettools import ifttt_notify
-    # from etc.getid import getdeviceid
     from func.sysfunc import not_IPython, execcmd
 
 # %% [markdown]
@@ -248,19 +241,23 @@ def health2note():
 
     hdf = gethealthdatafromnote(note.id)
     image_base64 = hdf2imgbase64(hdf)
+    nbid = searchnotebook("康健")
     if not (healthstat_cloud_id := getcfpoptionvalue(namestr, section, 'healthstat_cloud_id')):
         healthnotefindlist = searchnotes(f"title:{notestat_title}")
         if (len(healthnotefindlist) == 0):
-            healthstat_cloud_id = createnote(title=notestat_title, imgdata64=image_base64)
+            healthstat_cloud_id = createnote(title=notestat_title, parent_id=nbid,
+                                             imgdata64=image_base64)
             log.info(f"新的健康动态笔记“{healthstat_cloud_id}”新建成功！")
         else:
             healthstat_cloud_id = healthnotefindlist[-1].id
         setcfpoptionvalue(namestr, section, 'healthstat_cloud_id', f"{healthstat_cloud_id}")
 
     if not noteid_used(healthstat_cloud_id):
-        healthstat_cloud_id = createnote(title=notestat_title, imgdata64=image_base64)
+        healthstat_cloud_id = createnote(title=notestat_title, parent_id=nbid,
+                                         imgdata64=image_base64)
     else:
-        healthstat_cloud_id, res_lst = updatenote_imgdata(noteid=healthstat_cloud_id, imgdata64=image_base64)
+        healthstat_cloud_id, res_lst = updatenote_imgdata(noteid=healthstat_cloud_id,
+                                                          parent_id=nbid, imgdata64=image_base64)
     setcfpoptionvalue(namestr, section, 'healthstat_cloud_id', f"{healthstat_cloud_id}")
     setcfpoptionvalue(namestr, section, 'health_cloud_updatetimestamp', str(noteupdatetimewithzone.timestamp()))
     log.info(f'健康运动笔记【更新时间：{arrow.get(health_cloud_update_ts, tzinfo="local")}-》{noteupdatetimewithzone}】。')
