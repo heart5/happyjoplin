@@ -237,6 +237,8 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     #     .replace('=', '等于').replace('&', '并或')
     # global note_store
     if (len(chatitems) % updatefre) == 0:
+        # init_info = itchat.web_init()
+        # print(f"每{updatefre}条信息，再次初始化一次，返回值为：\t{init_info.keys()}")
         updatenote_title(noteid=chatnoteid, titlestr=notetitle)
         updatenote_body(noteid=chatnoteid, bodystr=neirong)
 
@@ -298,13 +300,12 @@ def note_reply(msg):
         #     msg_body += "\n就是这个链接➣ " + old_msg.get('fmText')
         itchat.send_msg(msg_body, toUserName='filehelper')
 
-        if (old_msg["fmType"] == "Picture" or old_msg["fmType"] == "Recording"
-                or old_msg["fmType"] == "Video" or old_msg["fmType"] == "Attachment"):
+        tpdict = {"Picture": "img", "Video": "vid", "Recording": "fil", "Attachment": "fil"}
+        if (fileprefix := tpdict.get(old_msg["fmType"])) is not None:
             fileabspath = os.path.abspath(getdirmain() / f"{old_msg['fmText']}")
-            fileprefix = 'img' if old_msg['fmType'] == 'Picture' else 'fil'
-            fileprefix = 'vid' if old_msg['fmType'] == 'Video' else 'fil'
             file = '@%s@%s' % (fileprefix, fileabspath)
-            itchat.send(file, toUserName='filehelper')
+            response_send = itchat.send(file, toUserName='filehelper')
+            log.critical(f"发送文件的返回值:\t{response_send}")
             log.critical(f"撤回的文件【{fileprefix}\t{fileabspath}】发送给文件助手")
         log.critical(f"处理了撤回的消息：{old_msg}")
         msg_information.pop(old_msg_id)
@@ -801,7 +802,7 @@ if __name__ == '__main__':
     console.setLevel(logging.DEBUG)
     itloger = logging.getLogger('itchat')
     itloger.addHandler(console)
-    print(itloger)
+    print(itloger, itloger.handlers)
 
     recentmsg_deque = deque(maxlen=30)
     # face_bug=None  #针对表情包的内容
@@ -809,3 +810,34 @@ if __name__ == '__main__':
 
     if not_IPython():
         log.info(f'{__file__}\t运行结束！')
+
+
+# %% [markdown]
+# ### tst4itchat
+
+# %%
+def tst4itchat():
+    itchat.auto_login(hotReload=True, statusStorageDir='../itchat.pkl')
+
+    itchat_web_init_dict = itchat.web_init()
+
+    print(itchat_web_init_dict.keys())
+
+    wcfriends = itchat.get_friends()
+
+    print(wcfriends[:3])
+
+    fileprefix = "img"
+    fpath = "img/webchat/20231019/（多神家园）MS五群(群).INFP_231019-120419.gif"
+    fileabspath = os.path.abspath(getdirmain() / fpath)
+    print(fileabspath)
+
+    file = '@%s@%s' % (fileprefix, fileabspath)
+    print(file)
+    re_info = itchat.send(file, toUserName='filehelper')
+    return re_info
+
+
+# %%
+if (not not_IPython()) and False:
+    tst4itchat()
