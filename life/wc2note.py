@@ -44,10 +44,6 @@ with pathmagic.context():
     from func.jpfuncs import getapi, getinivaluefromcloud, searchnotes, \
         searchnotebook, createnote, getreslst, updatenote_body, updatenote_title, \
         getnote
-    # from func.evernttest import getinivaluefromnote, getnoteresource, \
-    #     gettoken, get_notestore, getnotecontent, updatereslst2note, \
-    #     createnotebook, makenote2, findnotebookfromevernote, \
-    #     findnotefromnotebook, imglist2note
     from filedatafunc import getfilemtime as getfltime
 
 
@@ -87,12 +83,13 @@ def items2df(fl):
 
 
 # %% [markdown]
-# ### getaccountowner()
+# ### getaccountowner(fn)
 
 # %%
 def getownerfromfilename(fn):
     """
     从文件名中获取账号
+    文件名称示例：chatitems(heart5).txt.1
     """
     ptn = re.compile("\((\w*)\)")
     ac = ac if (ac := re.search(ptn, fn).groups()[0]) not in ['', 'None'] else '白晔峰'
@@ -100,7 +97,7 @@ def getownerfromfilename(fn):
 
 
 # %% [markdown]
-# ### txtfiles2dfdict(wcdatapath)
+# ### txtfiles2dfdict(wcdatapath, newfileonly=False)
 
 # %%
 @timethis
