@@ -15,7 +15,6 @@
 # # sqlite3数据库相关函数
 
 # %%
-# %%
 """
 sqlite数据库相关应用函数
 """
@@ -23,7 +22,6 @@ sqlite数据库相关应用函数
 # %% [markdown]
 # ## 引入重要库
 
-# %%
 # %%
 import sqlite3 as lite
 import os
@@ -46,7 +44,6 @@ with pathmagic.context():
 # ### def get_filesize(filepath)
 
 # %%
-# %%
 def get_filesize(filepath):
     fsize = os.path.getsize(filepath)
     fsize = fsize / float(1024 * 1024)
@@ -56,7 +53,6 @@ def get_filesize(filepath):
 # %% [markdown]
 # ### def istableindb(tablein, dbname)
 
-# %%
 # %%
 def istableindb(tablenin: str, dbname: str):
     result = False
@@ -81,7 +77,6 @@ def istableindb(tablenin: str, dbname: str):
 # %% [markdown]
 # ### def ifnotcreate(tablein, createsql, dbn)
 
-# %%
 # %%
 def ifnotcreate(tablen: str, createsql: str, dbn: str):
     """
@@ -112,7 +107,6 @@ def ifnotcreate(tablen: str, createsql: str, dbn: str):
 # %% [markdown]
 # ### def ifclexists(dbin, tb, cl)
 
-# %%
 # %%
 def ifclexists(dbin, tb, cl):
     conn = lite.connect(dbin)
