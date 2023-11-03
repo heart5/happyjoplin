@@ -270,7 +270,7 @@ def updatenote_body(noteid, bodystr):
 # ### updatenote_imgdata(noteid, imgdata64, imgtitle=None)
 
 # %%
-def updatenote_imgdata(noteid, imgdata64=None, imgtitle=None):
+def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
     """
     用构新去旧的方式更新包含资源的笔记，返回新建笔记的id和资源id列表
     """
@@ -294,6 +294,11 @@ def updatenote_imgdata(noteid, imgdata64=None, imgtitle=None):
 
     # notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
     notenew_id = createnote(title=note.title, imgdata64=imgdata64)
+    if (parent_id is not None) and (parent_id != note.parent_id):
+        api.modify_note(notenew_id, parent_id=parent_id)
+        nb_title = api.get_notebook(parent_id).title
+        nb_old_title = api.get_notebook(note.parent_id).title
+        log.critical(f"笔记《{note.title}》从笔记本《{nb_old_title}》调整到《{nb_title}》中！")
     notenew = getnote(notenew_id)
     matchesnew = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", notenew.body)
     res_id_lst = matchesnew
