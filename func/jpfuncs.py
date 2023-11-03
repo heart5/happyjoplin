@@ -84,6 +84,25 @@ def getapi():
 
 
 # %% [markdown]
+# ### searchnotebook(query)
+
+# %%
+def searchnotebook(title):
+    """
+    查找指定title（全名）的笔记本并返回id，如果不存在，则新建一个返回id
+    """
+    api, token, port = getapi()
+    result = api.search(query=title, type="folder")
+    if len(result.items) == 0:
+        nbid = api.add_notebook(title=title)
+        log.critical(f"新建笔记本《{title}》，id为：\t{nbid}")
+    else:
+        nbid = result.items[0].id
+
+    return nbid
+
+
+# %% [markdown]
 # ### def getallnotes()
 
 # %%
@@ -194,6 +213,35 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
 
 
 # %% [markdown]
+# ### createnote(title="Superman", body="Keep focus, man!", noteid_spec=None, parent_id=None, imgdata64=None)
+
+# %%
+def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None, filepath=None):
+    """
+    按照传入的参数值构建笔记并返回id
+    """
+
+    api, token, port = getapi()
+    if filepath:
+        note_id = api.add_note(title=title)
+        resource_id = api.add_resource(filename=filepath, title=filepath.split("/")[-1])
+        api.add_resource_to_note(resource_id=resource_id, note_id=note_id)
+        api.modify_note(note_id, body=f"{api.get_note(note_id).body}\n{body}")
+    else:
+        note_id = api.add_note(title=title, body=body)
+    if parent_id:
+        api.modify_note(noteid, parent_id=parent_id)
+    note = getnote(note_id)
+    matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", note.body)
+    if len(matches) > 0:
+        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。")
+    else:
+        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
+
+    return noteid
+
+
+# %% [markdown]
 # ### updatenote_title(noteid, titlestr)
 
 # %%
@@ -201,6 +249,8 @@ def updatenote_title(noteid, titlestr):
     api = getapi()[0]
     note = getnote(noteid)
     titleold = note.title
+    if titlestr == titleold:
+        return
     api.modify_note(noteid, title=titlestr)
     log.info(f"笔记《{titleold}》的标题被更新为《{titlestr}》。")
 
@@ -325,10 +375,32 @@ def modify_resource(res_id, imgdata64=None):
 
 
 # %% [markdown]
-# ### searchnote(key)
+# ### getreslst(noteid)
 
 # %%
-def searchnotes(key):
+def getreslst(noteid):
+    """
+    以字典列表的形式返回输入id笔记包含的资源文件，包含id、title和contentb
+    """
+    api, token, port = getapi()
+    dLst = api.get_resources(note_id=noteid)
+    # print(type(dLst), dLst)
+    reslst = []
+    for res in dLst.items:
+        sond = dict()
+        sond["id"] = res.id
+        sond["title"] = res.title
+        sond["contentb"] = api.get_resource_file(res.id)
+        reslst.append(sond)
+    # print(reslst[0])
+    return reslst
+
+
+# %% [markdown]
+# ### searchnotes(key, parent_id=None)
+
+# %%
+def searchnotes(key, parent_id=None):
     """
     传入关键字搜索并返回笔记列表，每个笔记中包含了所有可能提取field值
     """
@@ -337,15 +409,14 @@ def searchnotes(key):
     # note = api.get_note(id, fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id")
     # note = api.get_note(id, fields="id, latitude, longitude, altitude")
     fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id"
-    # fields="id, parent_id, title, body, created_time, updated_time, author, source_url, source, source_application, application_data, order, markup_language, is_shared, share_id, image_data_url"
-    # fields="id, parent_id, title, body, created_time, updated_time, author, source_url, source, source_application, application_data, order, markup_language, is_shared, share_id"
-    results = api.search(query=key, fields=fields)
-    log.info(f"搜索“{key}”，找到{len(results.items)}条笔记")
-    for notedata in results.items:
-        print()
-        print(notedata.title, notedata.id, arrow.get(notedata.updated_time, tzinfo="local"), "\n" + notedata.body[:30])
+    results = api.search(query=key, fields=fields).items
+    log.info(f"搜索“{key}”，找到{len(results)}条笔记")
+    if parent_id:
+        nb= api.get_notebook(parent_id)
+        results = [note for note in results if note.parent_id == parent_id]
+        log.info(f"限定笔记本《{nb.title}》后，搜索结果有{len(results)}条笔记")
 
-    return results.items
+    return results
 
 
 # %% [markdown]
