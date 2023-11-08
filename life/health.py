@@ -157,7 +157,7 @@ def hdf2imgbase64(hdf):
     # 设置横轴刻度显示
     axsub.set_xticklabels([x.strftime("%Y-%m") for x in sdsm_actual.index], rotation=20)
     # ax2.legend(loc=1)
-    ax2.legend(["步数", "满月估算"])
+    ax2.legend(["步数", "整月估算"])
     ax2.set_title("月度步数图")
 
     ax3 = plt.subplot2grid((4, 2), (2, 0), colspan=2, rowspan=1)
@@ -172,7 +172,7 @@ def hdf2imgbase64(hdf):
                      xytext=(0, 10), ha='center')
     # ax3.legend(loc=1)
     ax3.legend()
-    ax3.set_title("睡眠时长动态图")
+    ax3.set_title("睡眠时长动态图（分钟）")
 
     ax4 = plt.subplot2grid((4, 2), (3, 0), colspan=2, rowspan=1)
     sdsm_actual, sdsm_estimate_full = calds2ds(hdf["睡眠时长"])
@@ -186,8 +186,8 @@ def hdf2imgbase64(hdf):
     # 设置横轴刻度显示
     axsub.set_xticklabels([x.strftime("%Y-%m") for x in sdsm_actual.index], rotation=20)
     # ax4.legend(loc=1)
-    ax4.legend(["睡眠时长", "满月估算"])
-    ax4.set_title("月度睡眠时长图")
+    ax4.legend(["睡眠时长", "整月估算"])
+    ax4.set_title("月度睡眠时长图（分钟）")
 
     # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
