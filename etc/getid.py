@@ -30,6 +30,9 @@ import uuid
 # import wmi_client_wrapper as wmi
 
 # %%
+platform.system()
+
+# %%
 import pathmagic
 with pathmagic.context():
     from func.logme import log
@@ -118,11 +121,11 @@ def getdeviceid():
     elif sysstr == 'Linux':
         try:
             outputdict = termux_telephony_deviceinfo()
-            id = outputdict["device_id"].strip()
+            id = hex(hash(uuid.uuid3(uuid.NAMESPACE_URL, str(outputdict))))
         except Exception as e:
             print(f"运行termux专用库出错{e}\n下面尝试用主机名代替")
             try:
-                idstr = execcmd("uname -n")
+                idstr = execcmd("uname -a")
                 print(idstr)
                 uid = uuid.uuid3(uuid.NAMESPACE_URL, idstr)
                 # print(uid)
