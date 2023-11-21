@@ -75,8 +75,9 @@ def items2df(fl):
     df2 = pd.DataFrame(itemlst4pd1, columns=['time', 'send', 'sender', 'type', 'content'])
     df2['time'] = pd.to_datetime(df2['time'])
     df2['send'] = df2['send'].apply(lambda x : True if x == 'True' else False)
-    df2['content'] = df2['content'].apply(lambda x: re.sub("(\[\w+前\])?", "", x))
-    dfout = df2.drop_duplicates().sort_values('time', ascending=False)
+    df2['content'] = df2['content'].apply(lambda x: re.sub("(\[\w+前\]|\[刚才\])?", "", x))
+    dfout = df2.drop_duplicates().sort_values('time', ascending=True)
+    print(dfout.dtypes)
     # print(dfout)
 
     return dfout
