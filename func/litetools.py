@@ -144,7 +144,6 @@ def ifclexists(dbin, tb, cl):
 # ### def shwotableindb(dbname)
 
 # %%
-# %%
 def showtablesindb(dbname: str):
     conn = lite.connect(dbname)
     cursor = conn.cursor()
@@ -167,7 +166,6 @@ def showtablesindb(dbname: str):
 # ### def droptablefromdb(dbname, tablename, confirm=False)
 
 # %%
-# %%
 def droptablefromdb(dbname: str, tablename: str, confirm=False):
     if not confirm:
         logstr = f"【警告】：数据表{tablename}将从{dbname}中删除，请确认！！！"
@@ -187,7 +185,6 @@ def droptablefromdb(dbname: str, tablename: str, confirm=False):
 # %% [markdown]
 # ### def checktableindb(ininame, dbpath, tablename, creattablesql, confirm=False)
 
-# %%
 # %%
 def checktableindb(ininame: str, dbpath: str, tablename: str, creattablesql: str, confirm=False):
     """
@@ -210,7 +207,6 @@ def checktableindb(ininame: str, dbpath: str, tablename: str, creattablesql: str
 # ### def compact_sqlite3_db(dbpath)
 
 # %%
-# %%
 @timethis
 def compact_sqlite3_db(dbpath):
     sizebefore = get_filesize(dbpath)
@@ -223,7 +219,6 @@ def compact_sqlite3_db(dbpath):
 # %% [markdown]
 # ## 主函数main
 
-# %%
 # %%
 if __name__ == "__main__":
     if not_IPython():
