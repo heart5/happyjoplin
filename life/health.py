@@ -129,7 +129,7 @@ def hdf2imgbase64(hdf):
     根据传入包含运动数据的DataFrame作图，并输出图形的bytes
     """
 
-    plt.figure(figsize=(16, 40), dpi=300)
+    plt.figure(figsize=(16, 40), dpi=600)
 
     ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=1)
     ax1.plot(hdf['步数'], lw=0.6, label=u'每天步数')
