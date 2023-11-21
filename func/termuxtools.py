@@ -26,7 +26,7 @@ import pathmagic
 with pathmagic.context():
     from func.common import utils
     from func.logme import log
-    from func.sysfunc import set_timeout, after_timeout, not_IPython, is_tool_valid
+    from func.sysfunc import set_timeout, after_timeout, not_IPython, is_tool_valid, execcmd
 
 
 # %% [markdown]
@@ -75,9 +75,8 @@ def info2dict(info):
 # %%
 @set_timeout(60, after_timeout)
 def battery_status():
-    out, rc, err = utils.execute('termux-battery-status')
-    if rc:
-        raise Exception(err)
+    # out, rc, err = utils.execute('termux-battery-status')
+    out = execcmd('termux-battery-status')
     return evaloutput(out)
 
 
@@ -208,17 +207,18 @@ def termux_infrared_transmit():
 # %%
 @set_timeout(90, after_timeout)
 def termux_location():
-    out, rc, err = utils.execute('termux-location')
-    if rc:
-        raise Exception(err)
-    if len(out) == 0:
-        out, rc, err = utils.execute(['termux-location', '-p', 'network'])
-        if rc:
-            raise Exception(err)
-    if len(out) == 0:
-        out, rc, err = utils.execute(['termux-location', '-p', 'passive'])
-        if rc:
-            raise Exception(err)
+    # out, rc, err = utils.execute('termux-location')
+    # if rc:
+    #     raise Exception(err)
+    # if len(out) == 0:
+    #     out, rc, err = utils.execute(['termux-location', '-p', 'network'])
+    #     if rc:
+    #         raise Exception(err)
+    # if len(out) == 0:
+    #     out, rc, err = utils.execute(['termux-location', '-p', 'passive'])
+    #     if rc:
+    #         raise Exception(err)
+    out = execcmd("termux-location")
     return evaloutput(out)
 
 
@@ -483,9 +483,3 @@ if __name__ == '__main__':
     print(termux_location())
     if not_IPython():
         log.info(f'文件\t{__file__}\t测试完毕。')
-
-# %%
-info = termux_info()
-
-# %%
-info
