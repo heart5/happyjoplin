@@ -30,9 +30,6 @@ import uuid
 # import wmi_client_wrapper as wmi
 
 # %%
-platform.system()
-
-# %%
 import pathmagic
 with pathmagic.context():
     from func.logme import log
