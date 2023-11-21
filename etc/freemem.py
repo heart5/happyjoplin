@@ -2,6 +2,7 @@
 # jupyter:
 #   jupytext:
 #     cell_metadata_filter: -all
+#     formats: ipynb,py:percent
 #     notebook_metadata_filter: jupytext,-kernelspec,-jupytext.text_representation.jupytext_version
 #     text_representation:
 #       extension: .py
@@ -16,8 +17,8 @@
 # ## 引入重要库
 
 # %%
-# import re
-# import os
+import re
+import os
 import base64
 import io
 import pandas as pd
@@ -60,8 +61,17 @@ def getmemdf():
     """
     从指定路径获取空闲内存并处理数据，生成DataFrame返回
     """
-    homepath = execcmd("echo $HOME")
+    # 根据不同的系统复制家目录
+    if re.search("Android", sysinfo) is None:
+        homepath = execcmd("echo ~")
+        log.info(f"It's Linux[{gethostuser()}]. Home is {homepath}")
+    else:
+        homepath = execcmd("echo $HOME")
+        log.info(f"It's Android[{gethostuser()}]. Home is {homepath}")
     dpath = Path(homepath) / "sbase/zshscripts/data/freeinfo.txt"
+    if not os.path.exists(dpath):
+        log.critical(f"空闲内存数据文件（{dpath}）不存在，退出运行！！！")
+        exit(1)
     with open(dpath, "r") as f:
         content = f.read()
     # 分行获取总内存(文件首行)和时间点空闲内存记录列表
@@ -104,24 +114,34 @@ def gap2img():
         gaplst.append(f"{ix}\t{memdfdone['time'].loc[ix]}\t{tm_gap[ix]}")
     log.info(f"{gethostuser()}的空闲内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}")
 
-    last_gap = memdfdone.loc[list(tm_gap.index)[-1]:].set_index(['time'])['freepercent']
+    # 处理无断点的情况
+    if len(gaplst) == 0:
+        last_gap = memdfdone.set_index(['time'])['freepercent']
+    else:
+        last_gap = memdfdone.loc[list(tm_gap.index)[-1]:].set_index(['time'])['freepercent']
 
     plt.figure(figsize=(16, 40), dpi=300)
 
     ax1 = plt.subplot2grid((2, 1), (0, 0), colspan=1, rowspan=1)
     plt.ylim(0, 100)
     ax1.plot(last_gap)
+    plt.title(f"最新周期空闲内存动态图[{gethostuser()}]")
 
     ax2 = plt.subplot2grid((2, 1), (1, 0), colspan=1, rowspan=1)
     plt.ylim(0, 100)
-    gaplst = list(tm_gap.index)
-    gaplst.insert(0, 0)
-    gaplst.append(memdfdone.index.max() + 1)
-    print(gaplst)
-    for i in range(len(gaplst) - 1):
-        tmpdf = memdfdone.loc[gaplst[i]:gaplst[i + 1] - 1].set_index(['time'])['freepercent']
-        log.info(f"切片数据集最新日期为{tmpdf.index.max()}，最早日期为{tmpdf.index.min()}，数据项目数量为{tmpdf.shape[0]}")
-        ax2.plot(tmpdf)
+    # 处理无断点的情况
+    if len(gaplst) == 0:
+        ax2.plot(last_gap)
+    else:
+        gaplst = list(tm_gap.index)
+        gaplst.insert(0, 0)
+        gaplst.append(memdfdone.index.max() + 1)
+        print(gaplst)
+        for i in range(len(gaplst) - 1):
+            tmpdf = memdfdone.loc[gaplst[i]:gaplst[i + 1] - 1].set_index(['time'])['freepercent']
+            log.info(f"切片数据集最新日期为{tmpdf.index.max()}，最早日期为{tmpdf.index.min()}，数据项目数量为{tmpdf.shape[0]}")
+            ax2.plot(tmpdf)
+    plt.title(f"全部周期空闲内存动态图[{gethostuser()}]")
 
     # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
