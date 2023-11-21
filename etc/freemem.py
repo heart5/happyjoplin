@@ -62,6 +62,7 @@ def getmemdf():
     从指定路径获取空闲内存并处理数据，生成DataFrame返回
     """
     # 根据不同的系统复制家目录
+    sysinfo = execcmd("uname -a")
     if re.search("Android", sysinfo) is None:
         homepath = execcmd("echo ~")
         log.info(f"It's Linux[{gethostuser()}]. Home is {homepath}")
