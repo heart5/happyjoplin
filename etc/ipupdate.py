@@ -59,7 +59,10 @@ def getipwifi():
         ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
         ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
         wifi = termux_wifi_connectioninfo().get('ssid')
-        wifiid = termux_wifi_connectioninfo().get('bssid')
+        if wifi != "<unknown ssid>":
+            wifiid = termux_wifi_connectioninfo().get('bssid')
+        else:
+            wifi = wifiid = ""
     elif re.findall("Linux", sys_platform_str):
         ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
         ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
