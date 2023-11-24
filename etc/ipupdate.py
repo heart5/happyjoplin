@@ -125,8 +125,8 @@ def showiprecords():
     noteip_title = f"ip动态_【{gethostuser()}】"
 
     ip_local, ip_public, wifi, wifiid = getipwifi()
-    if ip_local is None:
-        logstr = '无效ip，可能是没有处于联网状态'
+    if (ip_local is None) and (ip_public is None):
+        logstr = '无效ip(local and public)，可能是没有处于联网状态'
         log.critical(logstr)
         sys.exit(1)
     print(f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}')
