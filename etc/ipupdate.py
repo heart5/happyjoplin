@@ -169,10 +169,6 @@ def showiprecords():
             f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}']
         itemnew.extend(itemnewr)
 #         print(itemnew)
-        readinifromnote()
-        device_name = getcfpoptionvalue('everinifromnote', 'device', section)
-        if not device_name:
-            device_name = section
         setcfpoptionvalue(namestr, section, 'ip_local_r', ip_local)
         setcfpoptionvalue(namestr, section, 'ip_public_r', str(ip_public))
         setcfpoptionvalue(namestr, section, 'wifi_r', str(wifi))
