@@ -24,8 +24,6 @@ import sys
 import re
 import datetime
 import platform
-# import urllib2
-# import evernote.edam.type.ttypes as ttypes
 import pathmagic
 
 # %%
@@ -65,8 +63,13 @@ def getipwifi():
     elif re.findall("Linux", sys_platform_str):
         ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
         ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
-        wifi = execcmd("nmcli dev wifi")
-        wifiid = ""
+        nmcli_str = execcmd("nmcli dev wifi")
+        if len(nmcli_str) != 0:
+            wifi = re.findall("\*.+", nmcli_str)[0].split()[1]
+            nmclilst_str = execcmd("nmcli device wifi list")
+            wifiid = re.findall(f"{wifi}.+", nmclilst_str)[0].split()[-1]
+        else:
+            wifi = wifiid = ""
     elif platform.system == "Windows":
         ipconfig_str = execcmd("ipconfig")
         ip_local = [line.split(":")[-1] for line in re.findall("IPv4.*", ipconfig_str)
@@ -84,8 +87,11 @@ def getipwifi():
         wifiid = wifidict.get("BSSID")
     else:
         # 未知操作系统，变量全部赋值为None
-        ip_local, ip_public, wifi, wifiid = None
-    return ip_local, ip_public, wifi, wifiid
+        ip_local = ip_public = wifi = wifiid = ""
+    lst = [ip_local, ip_public, wifi, wifiid]
+    print(lst)
+    resultlst = [None if len(x)==0 else x for x in lst]
+    return tuple(resultlst)
 
 
 # %% [markdown]
@@ -122,14 +128,14 @@ def showiprecords():
         sys.exit(1)
     print(f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}')
     nbid = searchnotebook("ewmobile")
-    if not (guid := getcfpoptionvalue(namestr, section, 'guid')):
+    if not (ip_cloud_id := getcfpoptionvalue(namestr, section, "ip_cloud_id")):
         ipnotefindlist = searchnotes(f"title:{noteip_title}")
         if (len(ipnotefindlist) == 0):
-            freestat_cloud_id = createnote(title=noteip_title, parent_id=nbid)
-            log.info(f"新的ip动态图笔记“{freestat_cloud_id}”新建成功！")
+            ip_cloud_id = createnote(title=noteip_title, parent_id=nbid)
+            log.info(f"新的ip动态图笔记“{ip_cloud_id}”新建成功！")
         else:
-            freestat_cloud_id = ipnotefindlist[-1].id
-        setcfpoptionvalue(namestr, section, 'freestat_cloud_id', f"{freestat_cloud_id}")
+            ip_cloud_id = ipnotefindlist[-1].id
+        setcfpoptionvalue(namestr, section, 'ip_cloud_id', f"{ip_cloud_id}")
 
     if getcfpoptionvalue(namestr, section, 'ip_local_r'):
         ip_local_r = evalnone(getcfpoptionvalue(namestr, section, 'ip_local_r'))
@@ -138,7 +144,7 @@ def showiprecords():
         wifiid_r = evalnone(getcfpoptionvalue(namestr, section, 'wifiid_r'))
         start_r = getcfpoptionvalue(namestr, section, 'start_r')
     else:
-        setcfpoptionvalue(namestr, section, 'ip_local_r', ip_local)
+        setcfpoptionvalue(namestr, section, 'ip_local_r', str(ip_local))
         ip_local_r = ip_local
         setcfpoptionvalue(namestr, section, 'ip_public_r', str(ip_public))
         ip_public_r = ip_public
@@ -158,26 +164,27 @@ def showiprecords():
         itemread = readfromtxt(txtfilename)
         itemclean = [x for x in itemread if 'unknown' not in x]
         itempolluted = [x for x in itemread if 'unknown' in x]
-        logstr = f"不合法记录列表：\t{itempolluted}"
-        log.info(logstr)
+        if len(itempolluted) > 0:
+            logstr = f"不合法记录列表：\t{itempolluted}"
+            log.info(logstr)
         itemnewr = [
             f'{ip_local_r}\t{ip_public_r}\t{wifi_r}\t{wifiid_r}\t{start_r}\t{nowstr}']
         itemnewr.extend(itemclean)
-#         print(itemnewr)
+        print(itemnewr)
         write2txt(txtfilename, itemnewr)
         itemnew = [
             f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}']
         itemnew.extend(itemnewr)
-#         print(itemnew)
-        setcfpoptionvalue(namestr, section, 'ip_local_r', ip_local)
+        print(itemnew)
+        setcfpoptionvalue(namestr, section, 'ip_local_r', str(ip_local))
         setcfpoptionvalue(namestr, section, 'ip_public_r', str(ip_public))
         setcfpoptionvalue(namestr, section, 'wifi_r', str(wifi))
         setcfpoptionvalue(namestr, section, 'wifiid_r', str(wifiid))
         start = datetime.datetime.now().strftime('%F %T')
         setcfpoptionvalue(namestr, section, 'start_r', start)
         # 把笔记输出放到最后，避免更新不成功退出影响数据逻辑
-        updatenote_title(guid, noteip_title)
-        updatenote_body(guid, "\n".join(itemnew))
+        updatenote_title(ip_cloud_id, noteip_title)
+        updatenote_body(ip_cloud_id, "\n".join(itemnew))
 
 
 # %% [markdown]
