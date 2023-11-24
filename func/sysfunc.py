@@ -47,6 +47,17 @@ with pathmagic.context():
 # ## 功能函数集
 
 # %% [markdown]
+# ### nooutput2false(output)
+
+# %%
+def nooutput2false(output):
+    if (output is None) or (output == 'null') or (len(output) == 0):
+        return False
+    else:
+        return output
+
+
+# %% [markdown]
 # ### extract_traceback4exception(tbtuple, func_name, sleeptime=None)
 
 # %%
