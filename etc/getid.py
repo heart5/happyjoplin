@@ -157,6 +157,16 @@ def getdevicename():
 
 
 # %% [markdown]
+# ### gethostuser()
+
+# %%
+def gethostuser():
+    hostuser = getdevicename() + "(" + execcmd("whoami") + ")"
+
+    return hostuser
+
+
+# %% [markdown]
 # ## 主函数
 
 # %%

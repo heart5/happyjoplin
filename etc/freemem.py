@@ -31,7 +31,7 @@ import pathmagic
 with pathmagic.context():
     # from func.first import getdirmain
     from func.logme import log
-    from etc.getid import getdevicename
+    from etc.getid import getdevicename, gethostuser
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue, is_log_details
     from func.jpfuncs import searchnotes, createnote, updatenote_imgdata, \
         noteid_used, searchnotebook
@@ -42,16 +42,6 @@ with pathmagic.context():
 
 # %% [markdown]
 # ## 功能函数
-
-# %% [markdown]
-# ### gethostuser()
-
-# %%
-def gethostuser():
-    hostuser = getdevicename() + "(" + execcmd("whoami") + ")"
-
-    return hostuser
-
 
 # %% [markdown]
 # ### getmemdf()
