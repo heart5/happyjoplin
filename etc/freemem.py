@@ -47,6 +47,7 @@ with pathmagic.context():
 # ### getmemdf()
 
 # %%
+@timethis
 def getmemdf():
     """
     从指定路径获取内存情况并处理数据，生成DataFrame返回
@@ -90,6 +91,7 @@ def getmemdf():
 # ### gap2img()
 
 # %%
+@timethis
 def gap2img():
     """
     把内存记录按照间隔（30分钟）拆离，并生成最近的动图和所有数据集的总图
