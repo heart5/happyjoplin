@@ -37,7 +37,7 @@ with pathmagic.context():
     from func.first import getdirmain
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.logme import log
-    # from func.wrapfuncs import timethis, ift2phone
+    from func.wrapfuncs import timethis
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     from etc.getid import getdevicename
@@ -63,6 +63,7 @@ def joplincmd(cmd):
 # ### getapi()
 
 # %%
+@timethis
 def getapi():
     """
     获取api方便调用，自适应不同的joplin server端口；通过命令行joplin获取相关配置参数值
@@ -87,6 +88,7 @@ def getapi():
 # ### searchnotebook(query)
 
 # %%
+@timethis
 def searchnotebook(title):
     """
     查找指定title（全名）的笔记本并返回id，如果不存在，则新建一个返回id
@@ -142,6 +144,7 @@ def getnoteswithfields(fields, limit=10):
 # ### getnote(id)
 
 # %%
+@timethis
 def getnote(id):
     """
     通过id获取笔记的所有可能内容，NoteData
@@ -189,6 +192,7 @@ def resid_used(targetid):
 # ### createnote(title="Superman", body="Keep focus, man!", noteid_spec=None, parent_id=None, imgdata64=None)
 
 # %%
+@timethis
 def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None):
     """
     按照传入的参数值构建笔记并返回id
@@ -216,6 +220,7 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
 # ### createnote(title="Superman", body="Keep focus, man!", noteid_spec=None, parent_id=None, imgdata64=None)
 
 # %%
+@timethis
 def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None, filepath=None):
     """
     按照传入的参数值构建笔记并返回id
@@ -245,6 +250,7 @@ def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None
 # ### updatenote_title(noteid, titlestr)
 
 # %%
+@timethis
 def updatenote_title(noteid, titlestr):
     api = getapi()[0]
     note = getnote(noteid)
@@ -259,6 +265,7 @@ def updatenote_title(noteid, titlestr):
 # ### updatenote_body(noteid, bodystr)
 
 # %%
+@timethis
 def updatenote_body(noteid, bodystr):
     api = getapi()[0]
     note = getnote(noteid)
@@ -270,6 +277,7 @@ def updatenote_body(noteid, bodystr):
 # ### updatenote_imgdata(noteid, imgdata64, imgtitle=None)
 
 # %%
+@timethis
 def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
     """
     用构新去旧的方式更新包含资源的笔记，返回新建笔记的id和资源id列表
@@ -319,7 +327,7 @@ def test_updatenote_imgdata():
     note_health_lst = searchnotes("title:健康动态日日升")
     noteid = note_health_lst[0].id
     print(noteid)
-    newfilename = os.path.abspath(f"{getdirmain() / 'data'}/QR.png")
+    newfilename = os.path.abspath(f"{getdirmain()} / QR.png")
     print(newfilename)
     image_data = tools.encode_base64(newfilename)
     print(image_data)
@@ -347,6 +355,7 @@ def explore_resource(res_id):
 # ### modify_resource(res_id, imgdata64=None)
 
 # %%
+@timethis
 def modify_resource(res_id, imgdata64=None):
     """
     试图更新data但是无法成功，暂存之
@@ -405,6 +414,7 @@ def getreslst(noteid):
 # ### searchnotes(key, parent_id=None)
 
 # %%
+@timethis
 def searchnotes(key, parent_id=None):
     """
     传入关键字搜索并返回笔记列表，每个笔记中包含了所有可能提取field值
@@ -468,6 +478,7 @@ def readinifromcloud():
 # ### getinivaluefromcloud(section, option)
 
 # %%
+@timethis
 def getinivaluefromcloud(section, option):
     readinifromcloud()
 
