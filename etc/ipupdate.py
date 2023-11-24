@@ -50,6 +50,10 @@ with pathmagic.context():
 
 # %%
 def getipwifi():
+    """
+    根据不同操作系统，调用命令行工具获取ip（本地、外部）和wifi信息
+    返回ip_local, ip_public, wifi, wifiid。如果为空，则替换为None
+    """
     if not is_tool_valid("neofetch"):
         log.critical("Please install neofetch tool for system. Maybe run: 'pkg install neofetch' in your terminal.")
         exit(1)
@@ -162,7 +166,7 @@ def showiprecords():
     if (ip_local != ip_local_r) or (wifi != wifi_r) or (ip_public != ip_public_r) or (wifiid != wifiid_r):
         txtfilename = str(dirmainpath / 'data' / 'ifttt' /
                           f'ip_{section}.txt')
-        print(txtfilename)
+        print(os.path.abspath(txtfilename))
         nowstr = datetime.datetime.now().strftime('%F %T')
         itemread = readfromtxt(txtfilename)
         itemclean = [x for x in itemread if 'unknown' not in x]
@@ -173,12 +177,12 @@ def showiprecords():
         itemnewr = [
             f'{ip_local_r}\t{ip_public_r}\t{wifi_r}\t{wifiid_r}\t{start_r}\t{nowstr}']
         itemnewr.extend(itemclean)
-        print(itemnewr)
+        print(itemnewr[:5])
         write2txt(txtfilename, itemnewr)
         itemnew = [
             f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}']
         itemnew.extend(itemnewr)
-        print(itemnew)
+        print(itemnew[:4])
         setcfpoptionvalue(namestr, section, 'ip_local_r', str(ip_local))
         setcfpoptionvalue(namestr, section, 'ip_public_r', str(ip_public))
         setcfpoptionvalue(namestr, section, 'wifi_r', str(wifi))
