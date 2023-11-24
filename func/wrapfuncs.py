@@ -15,7 +15,6 @@
 # # 装饰器功能函数集
 
 # %%
-# %%
 """
 装饰器函数集，ift2phone、timethis, logit
 """
@@ -23,7 +22,6 @@
 # %% [markdown]
 # ## 引入重要库
 
-# %%
 # %%
 import time
 from functools import wraps
@@ -34,7 +32,7 @@ import pathmagic
 with pathmagic.context():
     from func.logme import log
     from func.nettools import ifttt_notify
-    from func.jpfuncs import getinivaluefromcloud
+    # from func.jpfuncs import getinivaluefromcloud
     from func.sysfunc import not_IPython
 
 
@@ -45,7 +43,6 @@ with pathmagic.context():
 # ### def logit(func)
 
 # %%
-# %%
 def logit(func):
     """
     函数具体调用信息写入日志或print至控制台
@@ -54,7 +51,7 @@ def logit(func):
     """
     @wraps(func)
     def with_logging(*args, **kwargs):
-        if getinivaluefromcloud('happyjoplin', 'logdetails'):
+        if not_IPython():
             log.info(f'{func.__name__}函数被调用，参数列表：{args}')
         else:
             print(f'{func.__name__}函数被调用，参数列表：{args}')
@@ -66,7 +63,6 @@ def logit(func):
 # %% [markdown]
 # ### def ift2phone(msg=None)
 
-# %%
 # %%
 def ift2phone(msg=None):
     """
@@ -95,7 +91,6 @@ def ift2phone(msg=None):
 # ### def timethis(func) 
 
 # %%
-# %%
 def timethis(func):
     """
     装饰执行时间（tida）
@@ -116,7 +111,7 @@ def timethis(func):
             timelenstr = f'{int(timelen / 60)}分钟{timelen % 60:.2f}秒'
         else:
             timelenstr = f'{timelen % 60:.2f}秒'
-        if getinivaluefromcloud('happyjoplin', 'logdetails'):
+        if not_IPython():
             log.info(f"{func.__name__}\t{timelenstr}")
         else:
             print(f"{func.__name__}\t{timelenstr}")
