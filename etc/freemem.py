@@ -49,7 +49,7 @@ with pathmagic.context():
 # %%
 def getmemdf():
     """
-    从指定路径获取空闲内存并处理数据，生成DataFrame返回
+    从指定路径获取内存情况并处理数据，生成DataFrame返回
     """
     # 根据不同的系统复制家目录
     sysinfo = execcmd("uname -a")
@@ -61,7 +61,7 @@ def getmemdf():
         log.info(f"It's Android[{gethostuser()}]. Home is {homepath}")
     dpath = Path(homepath) / "sbase/zshscripts/data/freeinfo.txt"
     if not os.path.exists(dpath):
-        log.critical(f"空闲内存数据文件（{dpath}）不存在，退出运行！！！")
+        log.critical(f"内存数据文件（{dpath}）不存在，退出运行！！！")
         exit(1)
     with open(dpath, "r") as f:
         content = f.read()
@@ -78,8 +78,8 @@ def getmemdf():
     print(memdf.dtypes)
     num_all = memdf.shape[0]
     memdf.drop_duplicates(['time'], inplace=True)
-    log.info(f"{gethostuser()}空闲内存记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条")
-    log.info(f"{gethostuser()}空闲内存记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}")
+    log.info(f"{gethostuser()}内存占用记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条")
+    log.info(f"{gethostuser()}内存占用记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}")
     # 重置索引，使其为连续的整数，方便后面精准切片
     memdfdone = memdf.reset_index()
 
@@ -103,7 +103,7 @@ def gap2img():
     gaplst = list()
     for ix in tm_gap.index:
         gaplst.append(f"{ix}\t{memdfdone['time'].loc[ix]}\t{tm_gap[ix]}")
-    log.info(f"{gethostuser()}的空闲内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}")
+    log.info(f"{gethostuser()}的内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}")
 
     # 处理无断点的情况
     if len(gaplst) == 0:
@@ -116,7 +116,7 @@ def gap2img():
     ax1 = plt.subplot2grid((2, 1), (0, 0), colspan=1, rowspan=1)
     plt.ylim(0, 100)
     ax1.plot(last_gap)
-    plt.title(f"最新周期空闲内存动态图[{gethostuser()}]")
+    plt.title(f"最新周期内存占用动态图[{gethostuser()}]")
 
     ax2 = plt.subplot2grid((2, 1), (1, 0), colspan=1, rowspan=1)
     plt.ylim(0, 100)
@@ -132,7 +132,7 @@ def gap2img():
             tmpdf = memdfdone.loc[gaplst[i]:gaplst[i + 1] - 1].set_index(['time'])['freepercent']
             log.info(f"切片数据集最新日期为{tmpdf.index.max()}，最早日期为{tmpdf.index.min()}，数据项目数量为{tmpdf.shape[0]}")
             ax2.plot(tmpdf)
-    plt.title(f"全部周期空闲内存动态图[{gethostuser()}]")
+    plt.title(f"全部周期内存占用动态图[{gethostuser()}]")
 
     # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
@@ -155,13 +155,13 @@ def gap2img():
 @timethis
 def freemem2note():
     """
-    综合输出空闲内存动态图并更新至笔记
+    综合输出内存动态图并更新至笔记
     """
 
     login_user = execcmd("whoami")
     namestr = "happyjp_life"
     section = f"health_{login_user}"
-    notestat_title = f"空闲内存动态图【{gethostuser()}】"
+    notestat_title = f"内存动态图【{gethostuser()}】"
 
     image_base64 = gap2img()
     nbid = searchnotebook("ewmobile")
@@ -170,7 +170,7 @@ def freemem2note():
         if (len(freenotefindlist) == 0):
             freestat_cloud_id = createnote(title=notestat_title, parent_id=nbid,
                                              imgdata64=image_base64)
-            log.info(f"新的空闲内存动态图笔记“{freestat_cloud_id}”新建成功！")
+            log.info(f"新的内存动态图笔记“{freestat_cloud_id}”新建成功！")
         else:
             freestat_cloud_id = freenotefindlist[-1].id
         setcfpoptionvalue(namestr, section, 'freestat_cloud_id', f"{freestat_cloud_id}")
