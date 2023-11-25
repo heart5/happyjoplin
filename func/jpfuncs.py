@@ -74,14 +74,10 @@ def getapi():
         logstr = f"主机【{gethostuser()}】貌似尚未运行joplin server！\n退出运行！！！"
         log.critical(f"{logstr}")
         exit(1)
-    # 元素摊平
-    splitlst = [son.strip() for line in re.findall(".+=.*", jpcmdstr) for son in line.split("=")]
+    splitlst = [line.split("=") for line in re.findall(".+=.*", jpcmdstr)]
     # 简化api.token为token，port类似，同时把默认的port替换为41184
-    vlkylst = [x.split(".")[-1] if x.split(".")[-1] != "null" else 41184 for x in splitlst]
-    vllst = [vlkylst[i] for i in range(len(vlkylst)) if i % 2 == 0]
-    kylst = [vlkylst[i] for i in range(len(vlkylst)) if i % 2 == 1] 
-    kvdict = dict(zip(vllst, kylst))
-    # print(kvdict)
+    kvdict = dict([[x.split(".")[-1].strip() if x.split(".")[-1].strip() != "null" else 41184
+                    for x in sonlst] for sonlst in splitlst])
 
     url = f"http://localhost:{kvdict.get('port')}"
     api = Api(token=kvdict.get("token"), url=url)
