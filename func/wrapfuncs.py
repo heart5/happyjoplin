@@ -51,10 +51,12 @@ def logit(func):
     """
     @wraps(func)
     def with_logging(*args, **kwargs):
+        args4show = [x[:50] + "...(参数超长，显示截断)"
+                     if ((type(x) == str) and (len(x) > 50)) else x for x in args]
         if not_IPython():
-            log.info(f'{func.__name__}函数被调用，参数列表：{args}')
+            log.info(f'{func.__name__}函数被调用，参数列表：{args4show}')
         else:
-            print(f'{func.__name__}函数被调用，参数列表：{args}')
+            print(f'{func.__name__}函数被调用，参数列表：{args4show}')
 
         return func(*args, **kwargs)
     return with_logging
