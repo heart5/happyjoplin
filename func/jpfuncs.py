@@ -40,7 +40,7 @@ with pathmagic.context():
     from func.wrapfuncs import timethis
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
-    from etc.getid import getdevicename
+    from etc.getid import getdevicename, gethostuser
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
 
 
@@ -68,18 +68,23 @@ def getapi():
     """
     获取api方便调用，自适应不同的joplin server端口；通过命令行joplin获取相关配置参数值
     """
-    tokenstr = execcmd("joplin config api.token")
-    portstr = execcmd("joplin config api.port")
-    if (tokenstr.find("=") == -1) | (portstr.find("=") == -1):
-        logstr = f"主机【{getdevicename()}】账户（{execcmd('whoami')}）貌似尚未运行joplin server！\n退出运行！！！"
+    # 一次运行两个命令，减少一次命令行调用
+    jpcmdstr = execcmd("joplin config api.token&joplin config api.port")
+    if jpcmdstr.find("=") == -1:
+        logstr = f"主机【{gethostuser()}】貌似尚未运行joplin server！\n退出运行！！！"
         log.critical(f"{logstr}")
         exit(1)
-    token = tokenstr.split("=")[1].strip()
-    portraw = portstr.split("=")[1].strip()
-    port = 41184 if portraw == "null" else portraw
+    # 元素摊平
+    splitlst = [son.strip() for line in re.findall(".+=.*", jpcmdstr) for son in line.split("=")]
+    # 简化api.token为token，port类似，同时把默认的port替换为41184
+    vlkylst = [x.split(".")[-1] if x.split(".")[-1] != "null" else 41184 for x in splitlst]
+    vllst = [vlkylst[i] for i in range(len(vlkylst)) if i % 2 == 0]
+    kylst = [vlkylst[i] for i in range(len(vlkylst)) if i % 2 == 1] 
+    kvdict = dict(zip(vllst, kylst))
+    # print(kvdict)
 
-    url = f"http://localhost:{port}"
-    api = Api(token=token, url=url)
+    url = f"http://localhost:{kvdict.get('port')}"
+    api = Api(token=kvdict.get("token"), url=url)
 
     return api
 
@@ -373,7 +378,7 @@ def modify_resource(res_id, imgdata64=None):
         datastr = f"data:image/png;base64,{imgdata64}"
         begin_str = f"curl -X PUT -F 'data=\"{datastr}\"'"
         props_str = " -F 'props={\"title\":\"my modified title\"}'"
-        url_str = f" http://localhost:{jpapi.port}/resources/{res_id}?token={jpapi.token}"
+        url_str = f" {jpapi.url}/resources/{res_id}?token={jpapi.token}"
         update_curl_str = begin_str + props_str + url_str
         print(update_curl_str)
         outstr = execcmd(update_curl_str)
