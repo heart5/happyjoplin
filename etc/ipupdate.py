@@ -41,9 +41,15 @@ with pathmagic.context():
     from func.termuxtools import termux_wifi_connectioninfo
     from etc.getid import getdeviceid, gethostuser
 
-
 # %% [markdown]
 # ## 功能函数
+
+# %%
+ip_public = execcmd("curl ifconfig.me")
+print(ip_public)
+# re.findall("(\d{1,3}\.){3}\d{1,3}}", ip_public)
+re.findall("\d{1,3}\.?", ip_public)
+
 
 # %% [markdown]
 # ### getipwifi()
@@ -62,9 +68,10 @@ def getipwifi():
     if re.findall("Linux", sys_platform_str):
         # ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
         ip_local = execcmd("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}'").split()[-1]
-        # ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
-        ip_public = execcmd("curl ifconfig.me")
-        # ip_public = eval(execcmd("curl 'https://api.ipify.org?format=json'")).get("ip")
+        if (ip_public := execcmd("curl ifconfig.me")) and (len(re.findall("\d{1,3}\.?", ip_public)) != 4):
+            ip_public = eval(execcmd("curl 'https://api.ipify.org?format=json'")).get("ip")
+            if len(re.findall("\d{1,3}\.?", ip_public)) != 4:
+                ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
         if re.findall("Android", sys_platform_str):
             wifi = termux_wifi_connectioninfo().get('ssid')
             if wifi != "<unknown ssid>":
