@@ -59,24 +59,26 @@ def getipwifi():
         exit(1)
 
     sys_platform_str = execcmd("uname -a")
-    if re.findall("Android", sys_platform_str):
-        ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
-        ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
-        wifi = termux_wifi_connectioninfo().get('ssid')
-        if wifi != "<unknown ssid>":
-            wifiid = termux_wifi_connectioninfo().get('bssid')
+    if re.findall("Linux", sys_platform_str):
+        # ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
+        ip_local = execcmd("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}'").split()[-1]
+        # ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
+        ip_public = execcmd("curl ifconfig.me")
+        # ip_public = eval(execcmd("curl 'https://api.ipify.org?format=json'")).get("ip")
+        if re.findall("Android", sys_platform_str):
+            wifi = termux_wifi_connectioninfo().get('ssid')
+            if wifi != "<unknown ssid>":
+                wifiid = termux_wifi_connectioninfo().get('bssid')
+            else:
+                wifi = wifiid = ""
         else:
-            wifi = wifiid = ""
-    elif re.findall("Linux", sys_platform_str):
-        ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
-        ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
-        nmcli_str = execcmd("nmcli dev wifi")
-        if len(nmcli_str) != 0:
-            wifi = re.findall("\*.+", nmcli_str)[0].split()[1]
-            nmclilst_str = execcmd("nmcli device wifi list")
-            wifiid = re.findall(f"{wifi}.+", nmclilst_str)[0].split()[-1]
-        else:
-            wifi = wifiid = ""
+            nmcli_str = execcmd("nmcli dev wifi")
+            if len(nmcli_str) != 0:
+                wifi = re.findall("\*.+", nmcli_str)[0].split()[1]
+                nmclilst_str = execcmd("nmcli device wifi list")
+                wifiid = re.findall(f"{wifi}.+", nmclilst_str)[0].split()[-1]
+            else:
+                wifi = wifiid = ""
     elif platform.system == "Windows":
         ipconfig_str = execcmd("ipconfig")
         ip_local = [line.split(":")[-1] for line in re.findall("IPv4.*", ipconfig_str)
