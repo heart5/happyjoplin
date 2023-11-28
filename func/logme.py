@@ -54,7 +54,7 @@ def mylog(dirlog):
                              '%(processName)s - %(process)d: '
                              '%(levelname)-8s %(message)s')
     console.setFormatter(formatter)
-    lg.getLogger('').addHandler(console)
+    lg.getLogger('hjer').addHandler(console)
     # logew.addHandler(console)
     ################################################################################################
 
