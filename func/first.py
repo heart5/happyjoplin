@@ -73,7 +73,7 @@ for p2i in path2include:
 
 # %%
 if __name__ == '__main__':
-    print(f'开始测试文件\t{__file__}')
+    # print(f'开始测试文件\t{__file__}')
     print(getdirmain())
     for dr in sys.path:
         print(dr)
