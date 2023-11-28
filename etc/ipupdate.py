@@ -41,15 +41,9 @@ with pathmagic.context():
     from func.termuxtools import termux_wifi_connectioninfo
     from etc.getid import getdeviceid, gethostuser
 
+
 # %% [markdown]
 # ## 功能函数
-
-# %%
-ip_public = execcmd("curl ifconfig.me")
-print(ip_public)
-# re.findall("(\d{1,3}\.){3}\d{1,3}}", ip_public)
-re.findall("\d{1,3}\.?", ip_public)
-
 
 # %% [markdown]
 # ### getipwifi()
