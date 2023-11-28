@@ -54,7 +54,7 @@ def mylog(dirlog):
                              '%(processName)s - %(process)d: '
                              '%(levelname)-8s %(message)s')
     console.setFormatter(formatter)
-    lg.getLogger('hjer').addHandler(console)
+    lg.getLogger().addHandler(console)
     # logew.addHandler(console)
     ################################################################################################
 
@@ -68,7 +68,5 @@ log = mylog(dirlog)
 if __name__ == '__main__':
     cwd = os.getcwd()
     print(cwd)
+    print(log.handlers)
     log.info('测试func下的log，主要看路径')
-
-# %%
-print(log.handlers)
