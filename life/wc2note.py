@@ -344,13 +344,13 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
         nrlst = [note_desc, first_note_tail]
     resultstr = "\n\n---\n".join(nrlst)
     df4name.to_excel(dftallpathabs, engine='xlsxwriter', index=False)
-    api, url, port = getapi()
-    res_id = api.add_resource(dftallpathabs)
+    global jpapi
+    res_id = jpapi.add_resource(dftallpathabs)
     link_desc = f"[{dftallpathabs}](:/{res_id})\n\n"
     resultstr = link_desc + resultstr
 
     for res in reslst:
-        api.delete_resource(res.get("id"))
+        jpapi.delete_resource(res.get("id"))
         log.critical(f"资源文件《{res.get('title')}》（id：{res.get('id')}）被从系统中删除！")
 
     updatenote_body(noteid=dftfileguid, bodystr=resultstr)
