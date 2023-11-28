@@ -48,18 +48,6 @@ with pathmagic.context():
 # ## 功能函数集
 
 # %% [markdown]
-# ### joplincmd(cmd)
-
-# %%
-def joplincmd(cmd):
-    """
-    运行joplin命令行并返回输出结果
-    """
-    # result = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, shell=True)
-    return execcmd("cmd")
-
-
-# %% [markdown]
 # ### getapi()
 
 # %%
@@ -145,7 +133,6 @@ def getnoteswithfields(fields, limit=10):
 # ### getnote(id)
 
 # %%
-@timethis
 def getnote(id):
     """
     通过id获取笔记的所有可能内容，NoteData
@@ -250,7 +237,6 @@ def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None
 # ### updatenote_title(noteid, titlestr)
 
 # %%
-@timethis
 def updatenote_title(noteid, titlestr):
     global jpapi
     note = getnote(noteid)
@@ -265,7 +251,6 @@ def updatenote_title(noteid, titlestr):
 # ### updatenote_body(noteid, bodystr)
 
 # %%
-@timethis
 def updatenote_body(noteid, bodystr):
     global jpapi
     note = getnote(noteid)
@@ -324,16 +309,17 @@ def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
 
 # %%
 def test_updatenote_imgdata():
+    global jpapi
     note_health_lst = searchnotes("title:健康动态日日升")
     noteid = note_health_lst[0].id
     print(noteid)
-    newfilename = os.path.abspath(f"{getdirmain()} / QR.png")
+    newfilename = os.path.abspath(f"{getdirmain() / 'img' / 'fengye.jpg'}")
     print(newfilename)
     image_data = tools.encode_base64(newfilename)
     print(image_data)
     notenew_id, res_id_lst = updatenote_imgdata(noteid=noteid, imgdata64=image_data, imgtitle="QR.png")
     print(f"包含新资源文件的新笔记的id为：{notenew_id}")
-    resfile = api.get_resource_file(id_=res_id_lst[0])
+    resfile = jpapi.get_resource_file(id_=res_id_lst[0])
     print(f"资源文件大小（二进制）为：{len(resfile)}字节。")
 
 
@@ -478,7 +464,6 @@ def readinifromcloud():
 # ### getinivaluefromcloud(section, option)
 
 # %%
-@timethis
 def getinivaluefromcloud(section, option):
     readinifromcloud()
 
