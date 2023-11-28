@@ -41,7 +41,7 @@ with pathmagic.context():
     from func.sysfunc import not_IPython, execcmd
     from func.configpr import setcfpoptionvalue, getcfpoptionvalue
     from func.litetools import ifnotcreate, showtablesindb
-    from func.jpfuncs import getapi, getinivaluefromcloud, searchnotes, \
+    from func.jpfuncs import jpapi, getinivaluefromcloud, searchnotes, \
         searchnotebook, createnote, getreslst, updatenote_body, updatenote_title, \
         getnote
     from filedatafunc import getfilemtime as getfltime
@@ -266,6 +266,8 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
     数量再次对比，相同，则跳过，如果不同，则拉取笔记资源文件和本地资源文件融合，更新笔记端资源文件并
     更新ini登记数量（用融合后的记录数量）
     """
+    # global jpapi
+
     ny = df4name['time'].iloc[0].strftime("%y%m")
     dftfilename = f"wcitems_{name}_{ny}.xlsx"
     dftallpath = wcpath / dftfilename
@@ -344,7 +346,6 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
         nrlst = [note_desc, first_note_tail]
     resultstr = "\n\n---\n".join(nrlst)
     df4name.to_excel(dftallpathabs, engine='xlsxwriter', index=False)
-    global jpapi
     res_id = jpapi.add_resource(dftallpathabs)
     link_desc = f"[{dftallpathabs}](:/{res_id})\n\n"
     resultstr = link_desc + resultstr
