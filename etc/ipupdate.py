@@ -61,7 +61,9 @@ def getipwifi():
     sys_platform_str = execcmd("uname -a")
     if re.findall("Linux", sys_platform_str):
         # ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
-        ip_local = execcmd("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}'").split()[-1]
+        ifinet_str = execcmd("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}'")
+        log.info(f"ifconfig grep inet shows:\t{ifinet_str}")
+        ip_local = ifinet_str.split()[-1]
         curlifstr = "curl ifconfig.me"
         if (ip_public := execcmd(curlifstr)) and (len(re.findall("\d{1,3}\.?", ip_public)) != 4):
             log.critical(f"({curlifstr})未获取合适的ip地址，而是【{ip_public}】")
