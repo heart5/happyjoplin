@@ -111,7 +111,7 @@ def getipwifi():
 
 
 # %% [markdown]
-# ### evalnoe(input1)
+# ### evalnone(input1)
 
 # %%
 def evalnone(input1):
@@ -138,11 +138,11 @@ def showiprecords():
     noteip_title = f"ip动态_【{gethostuser()}】"
 
     ip_local, ip_public, wifi, wifiid = getipwifi()
-    if (ip_local is None) and (ip_public is None):
-        logstr = '无效ip(local and public)，可能是没有处于联网状态'
+    log.info(f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}')
+    if ip_public is None:
+        logstr = '无效ip(public)，可能是没有处于联网状态'
         log.critical(logstr)
         sys.exit(1)
-    print(f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}')
     nbid = searchnotebook("ewmobile")
     if not (ip_cloud_id := getcfpoptionvalue(namestr, section, "ip_cloud_id")):
         ipnotefindlist = searchnotes(f"title:{noteip_title}")
@@ -196,8 +196,7 @@ def showiprecords():
         setcfpoptionvalue(namestr, section, 'ip_public_r', str(ip_public))
         setcfpoptionvalue(namestr, section, 'wifi_r', str(wifi))
         setcfpoptionvalue(namestr, section, 'wifiid_r', str(wifiid))
-        start = datetime.datetime.now().strftime('%F %T')
-        setcfpoptionvalue(namestr, section, 'start_r', start)
+        setcfpoptionvalue(namestr, section, 'start_r', nowstr)
         # 把笔记输出放到最后，避免更新不成功退出影响数据逻辑
         updatenote_title(ip_cloud_id, noteip_title)
         updatenote_body(ip_cloud_id, "\n".join(itemnew))
