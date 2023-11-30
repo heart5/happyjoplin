@@ -188,7 +188,7 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
     global jpapi
     if imgdata64:
         noteid = jpapi.add_note(title=title, image_data_url=f"data:image/png;base64,{imgdata64}")
-        jpapi.modify_note(noteid, body=f"{body}\n{getnote(noteid).body}")
+        jpapi.modify_note(noteid, body=f"{getnote(noteid).body}\n{body}")
     else:
         noteid = jpapi.add_note(title=title, body=body)
     if parent_id:
@@ -204,7 +204,7 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
 
 
 # %% [markdown]
-# ### createnote(title="Superman", body="Keep focus, man!", noteid_spec=None, parent_id=None, imgdata64=None)
+# ### createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None, filepath=None)
 
 # %%
 @timethis
