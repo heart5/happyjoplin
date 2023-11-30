@@ -234,13 +234,16 @@ def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None
 
 
 # %% [markdown]
-# ### updatenote_title(noteid, titlestr)
+# ### updatenote_title(noteid, titlestr, parent_id=None)
 
 # %%
-def updatenote_title(noteid, titlestr):
+def updatenote_title(noteid, titlestr, parent_id=None):
     global jpapi
     note = getnote(noteid)
     titleold = note.title
+    if note.parent_id != parent_id:
+        jpapi.modify_note(noteid, parent_id=parent_id)
+        log.critical(f"笔记《{titleold}》所在笔记本从《{jpapi.get_notebook(note.parent_id).title}》调整为《{jpapi.get_notebook(parent_id).title}》。")
     if titlestr == titleold:
         return
     jpapi.modify_note(noteid, title=titlestr)
@@ -248,12 +251,15 @@ def updatenote_title(noteid, titlestr):
 
 
 # %% [markdown]
-# ### updatenote_body(noteid, bodystr)
+# ### updatenote_body(noteid, bodystr, parent_id=None)
 
 # %%
-def updatenote_body(noteid, bodystr):
+def updatenote_body(noteid, bodystr, parent_id=None):
     global jpapi
     note = getnote(noteid)
+    if note.parent_id != parent_id:
+        jpapi.modify_note(noteid, parent_id=parent_id)
+        log.critical(f"笔记《{note.title}》所在笔记本从《{jpapi.get_notebook(note.parent_id).title}》调整为《{jpapi.get_notebook(parent_id).title}》。")
     jpapi.modify_note(noteid, body=bodystr)
     log.info(f"笔记《{note.title}》（id：{noteid}）的body内容被更新了。")
 
@@ -316,7 +322,7 @@ def test_updatenote_imgdata():
     newfilename = os.path.abspath(f"{getdirmain() / 'img' / 'fengye.jpg'}")
     print(newfilename)
     image_data = tools.encode_base64(newfilename)
-    print(image_data)
+    # print(image_data)
     notenew_id, res_id_lst = updatenote_imgdata(noteid=noteid, imgdata64=image_data, imgtitle="QR.png")
     print(f"包含新资源文件的新笔记的id为：{notenew_id}")
     resfile = jpapi.get_resource_file(id_=res_id_lst[0])
