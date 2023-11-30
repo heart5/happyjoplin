@@ -115,12 +115,13 @@ def log2notes():
     device_id = getdeviceid()
     loginname = execcmd("whoami")
 
+    nbid = searchnotebook("ewmobile")
     if not (logid := getcfpoptionvalue(namestr, device_id, 'logid')):
-        logid = createnote(f'服务器_{device_id}_{loginname}_日志信息', "")
+        logid = createnote(f'服务器_{device_id}_{loginname}_日志信息', "", parent_id=nbid)
         setcfpoptionvalue(namestr, device_id, 'logid', logid)
 
     if not (logcid := getcfpoptionvalue(namestr, device_id, 'logcid')):
-        logcid = createnote(f'服务器_{device_id}_{loginname}_严重错误日志信息', "")
+        logcid = createnote(f'服务器_{device_id}_{loginname}_严重错误日志信息', "", parent_id=nbid)
         setcfpoptionvalue(namestr, device_id, 'logcid', logcid)
 
     if not (loglimitc := getinivaluefromcloud(namestr, 'loglimit')):
