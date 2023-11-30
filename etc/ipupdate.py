@@ -131,7 +131,6 @@ def showiprecords():
     """
     综合输出ip记录
     """
-    login_user = execcmd("whoami")
     device_id = getdeviceid()
     namestr = 'happyjpip'
     section = f"{device_id}"
@@ -198,8 +197,8 @@ def showiprecords():
         setcfpoptionvalue(namestr, section, 'wifiid_r', str(wifiid))
         setcfpoptionvalue(namestr, section, 'start_r', nowstr)
         # 把笔记输出放到最后，避免更新不成功退出影响数据逻辑
-        updatenote_title(ip_cloud_id, noteip_title)
-        updatenote_body(ip_cloud_id, "\n".join(itemnew))
+        updatenote_title(ip_cloud_id, noteip_title, parent_id=nbid)
+        updatenote_body(ip_cloud_id, "\n".join(itemnew), parent_id=nbid)
 
 
 # %% [markdown]
