@@ -213,10 +213,12 @@ if __name__ == '__main__':
         print(f'开始测试文件\t{__file__}')
 #     cp, cppath = getcfp('everwork')
 #     print(cp, cppath)
-    cfpapiname = 'everapi'
+    cfpapiname = 'happyjp'
     inipathson = Path(getdirmain()) / 'data' / (cfpapiname + '.ini')
-    name = '[notestore]'
+    # name = '[notestore]'
     cp, cppath = getcfp(cfpapiname)
+    print(cp)
+    print(cppath)
 #     removesection(cfpapiname, nssectionname)
 #     ict = fixinifile(inipathson)
     if not_IPython() and is_log_details:
