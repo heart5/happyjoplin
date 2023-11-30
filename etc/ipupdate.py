@@ -139,7 +139,7 @@ def showiprecords():
     ip_local, ip_public, wifi, wifiid = getipwifi()
     log.info(f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}')
     if ip_public is None:
-        logstr = '无效ip(public)，可能是没有处于联网状态'
+        logstr = '无效ip_public，可能是没有处于联网状态'
         log.critical(logstr)
         sys.exit(1)
     nbid = searchnotebook("ewmobile")
@@ -152,6 +152,7 @@ def showiprecords():
             ip_cloud_id = ipnotefindlist[-1].id
         setcfpoptionvalue(namestr, section, 'ip_cloud_id', f"{ip_cloud_id}")
 
+    nowstr = datetime.datetime.now().strftime('%F %T')
     if getcfpoptionvalue(namestr, section, 'ip_local_r'):
         ip_local_r = evalnone(getcfpoptionvalue(namestr, section, 'ip_local_r'))
         ip_public_r = evalnone(getcfpoptionvalue(namestr, section, 'ip_public_r'))
@@ -167,15 +168,13 @@ def showiprecords():
         wifi_r = wifi
         setcfpoptionvalue(namestr, section, 'wifiid_r', str(wifiid))
         wifiid_r = wifiid
-        start = datetime.datetime.now().strftime('%F %T')
-        start_r = start
+        start_r = nowstr
         setcfpoptionvalue(namestr, section, 'start_r', start_r)
 
     if (ip_local != ip_local_r) or (wifi != wifi_r) or (ip_public != ip_public_r) or (wifiid != wifiid_r):
         txtfilename = str(dirmainpath / 'data' / 'ifttt' /
                           f'ip_{section}.txt')
         print(os.path.abspath(txtfilename))
-        nowstr = datetime.datetime.now().strftime('%F %T')
         itemread = readfromtxt(txtfilename)
         itemclean = [x for x in itemread if 'unknown' not in x]
         itempolluted = [x for x in itemread if 'unknown' in x]
@@ -185,12 +184,12 @@ def showiprecords():
         itemnewr = [
             f'{ip_local_r}\t{ip_public_r}\t{wifi_r}\t{wifiid_r}\t{start_r}\t{nowstr}']
         itemnewr.extend(itemclean)
-        print(itemnewr[:5])
+        log.info(itemnewr[:4])
         write2txt(txtfilename, itemnewr)
         itemnew = [
             f'{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}']
         itemnew.extend(itemnewr)
-        print(itemnew[:4])
+        log.info(itemnew[:5])
         setcfpoptionvalue(namestr, section, 'ip_local_r', str(ip_local))
         setcfpoptionvalue(namestr, section, 'ip_public_r', str(ip_public))
         setcfpoptionvalue(namestr, section, 'wifi_r', str(wifi))
