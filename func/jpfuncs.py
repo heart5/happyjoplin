@@ -265,7 +265,7 @@ def updatenote_body(noteid, bodystr, parent_id=None):
 
 
 # %% [markdown]
-# ### updatenote_imgdata(noteid, imgdata64, imgtitle=None)
+# ### updatenote_imgdata(noteid, imgdata64, parent_id=None, imgtitle=None)
 
 # %%
 @timethis
@@ -292,8 +292,11 @@ def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
     log.info(f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！")
 
     # notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
-    notenew_id = createnote(title=note.title, imgdata64=imgdata64)
-    if (parent_id is not None) and (parent_id != note.parent_id):
+    if parent_id:
+        notenew_id = createnote(title=note.title, imgdata64=imgdata64, parent_id=parent_id)
+    else:
+        notenew_id = createnote(title=note.title, imgdata64=imgdata64)
+    if parent_id != note.parent_id:
         jpapi.modify_note(notenew_id, parent_id=parent_id)
         nb_title = jpapi.get_notebook(parent_id).title
         nb_old_title = jpapi.get_notebook(note.parent_id).title
