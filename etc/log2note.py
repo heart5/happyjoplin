@@ -28,7 +28,8 @@ import pathmagic
 with pathmagic.context():
     from func.first import getdirmain
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body, updatenote_title
+    from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body,\
+        updatenote_title, searchnotebook
     from func.logme import log
     from func.wrapfuncs import timethis
     from etc.getid import getdeviceid
@@ -93,8 +94,9 @@ def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
         log.info(f"日志字符串长度为：\t{len(loglinestr)}")
         # log.info(loglinestr[:100])
         try:
-            updatenote_title(noteid, notetitle)
-            updatenote_body(noteid, loglinestr)
+            nbid = searchnotebook("ewmobile")
+            updatenote_title(noteid, notetitle, parent_id=nbid)
+            updatenote_body(noteid, loglinestr, parent_id=nbid)
             setcfpoptionvalue(namestr, namestr, countnameinini, f'{len(loglines)}')
             print(f'新的log{levelstr4title}信息成功更新入笔记《{notetitle}》')
         except Exception as eeee:
