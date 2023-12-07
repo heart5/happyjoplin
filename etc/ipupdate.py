@@ -69,6 +69,7 @@ def getipwifi():
             log.critical(f"({curlifstr})未获取合适的ipv4_public地址，而是【{ip_public}】")
             curlipifystr = "curl 'https://api.ipify.org?format=json'"
             ip_public = eval(execcmd(curlipifystr)).get("ip")
+            log.info(f"({curlipifystr})获取的ipv4_public地址【{ip_public}】")
             if len(re.findall("\d{1,3}\.?", ip_public)) != 4:
                 log.critical(f"({curlipifystr})未获取合适的ipv4_public地址，而是【{ip_public}】")
                 ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
