@@ -92,7 +92,7 @@ def getmemdf():
 
 # %%
 @timethis
-def gap2img():
+def gap2img(gap=30):
     """
     把内存记录按照间隔（30分钟）拆离，并生成最近的动图和所有数据集的总图
     """
@@ -100,7 +100,8 @@ def gap2img():
     tmemg = totalmem / (1024 * 1024)
 
     time_elasp = memdfdone['time'] - memdfdone['time'].shift(1)
-    tm_gap = time_elasp[time_elasp > pd.Timedelta("30m")]
+    tm_gap = time_elasp[time_elasp > pd.Timedelta(f"{gap}m")]
+    print(gap, tm_gap, pd.Timedelta(f"{gap}m"))
 
     gaplst = list()
     for ix in tm_gap.index:
@@ -165,7 +166,7 @@ def freemem2note():
     section = f"health_{login_user}"
     notestat_title = f"内存动态图【{gethostuser()}】"
 
-    image_base64 = gap2img()
+    image_base64 = gap2img(gap=60)
     nbid = searchnotebook("ewmobile")
     if not (freestat_cloud_id := getcfpoptionvalue(namestr, section, 'freestat_cloud_id')):
         freenotefindlist = searchnotes(f"title:{notestat_title}")
