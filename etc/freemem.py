@@ -166,7 +166,10 @@ def freemem2note():
     section = f"health_{login_user}"
     notestat_title = f"内存动态图【{gethostuser()}】"
 
-    image_base64 = gap2img(gap=60)
+    if not (gapinmin := getcfpoptionvalue(namestr, section, 'gapinmin')):
+        gapinmin = 60
+        setcfpoptionvalue(namestr, section, 'gapinmin', "60")
+    image_base64 = gap2img(gap=gapinmin)
     nbid = searchnotebook("ewmobile")
     if not (freestat_cloud_id := getcfpoptionvalue(namestr, section, 'freestat_cloud_id')):
         freenotefindlist = searchnotes(f"title:{notestat_title}")
