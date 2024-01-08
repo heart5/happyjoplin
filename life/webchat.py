@@ -227,8 +227,11 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
         log.critical(f"登录名{men_wc}为空！！！")
         return
     notetitle = f"微信记录【{men_wc}】 -（{getdevicename()}-{execcmd('whoami')}））"
-    if (chatnoteid := getinivaluefromcloud('webchat', men_wc + f"_{getdeviceid()}")) is None:
-        chatnoteid = createnote(title=notetitle)
+    wcnote_title = men_wc + f"_{getdeviceid()}"
+    if (chatnoteid := getinivaluefromcloud('webchat', wcnote_title)) is None:
+        if (chatnoteid := getcfpoptionvalue('happyjpwebchat', 'webchat', wcnote_title)) is None:
+            chatnoteid = createnote(title=notetitle)
+            setcfpoptionvalue('happyjpwebchat', 'webchat', wcnote_title, str(chatnoteid))
     updatefre = getinivaluefromcloud('webchat', 'updatefre')
     showitemscount = getinivaluefromcloud('webchat', 'showitems')
     # print(f"{type(showitemscount)}\t{showitemscount}")
