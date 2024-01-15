@@ -469,7 +469,7 @@ def merge2note(dfdict, wcpath, notebookguid, newfileonly=False):
                     for res in reslst:
                         flfull = wcpath / fl
                         fh = open(flfull, 'wb')
-                        fh.write(res.contentb)
+                        fh.write(res["contentb"])
                         fh.close()
                         dftest = pd.read_excel(flfull)
                         setcfpoptionvalue('happyjpwcitems', fl, 'guid', guid)
