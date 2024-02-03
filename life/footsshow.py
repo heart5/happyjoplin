@@ -35,7 +35,7 @@ with pathmagic.context():
     from func.datatools import readfromtxt, write2txt
     from func.jpfuncs import searchnotes, createnote, updatenote_imgdata, \
         noteid_used, searchnotebook, updatenote_title, updatenote_body, getinivaluefromcloud, \
-        createresource
+        createresource, deleteresourcesfromnote
     # from func.evernttest import get_notestore, imglist2note, \
     #     evernoteapijiayi, makenote, readinifromnote, getinivaluefromnote, \
     #     tablehtml2evernote
@@ -204,7 +204,8 @@ def foot2show(df4dis):
 
     bodystr = ""
     for son in imglst:
-        bodystr += f"![{son[0]}](:/{son[1]})<br>"
+        bodystr += f"![{son[0]}](:/{son[1]})\n"
+    deleteresourcesfromnote(loc_cloud_id)
     updatenote_body(loc_cloud_id, bodystr)
     # if (device_name := getinivaluefromcloud('device', device_id)) is None:
     #     device_name = device_id
