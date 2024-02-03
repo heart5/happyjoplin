@@ -220,6 +220,23 @@ def createresource(filename, title=None):
 
 
 # %% [markdown]
+# ### deleteresourcesfromnote(noteid)
+
+# %%
+def deleteresourcesfromnote(noteid):
+    """
+    遍历笔记中包含的资源文件并删除之！
+    """
+    global jpapi
+    note = getnote(noteid)
+    ptn = re.compile("\(:/(\w+)\)")
+    residlst = re.findall(ptn, note.body)
+    for i in range(len(residlst)):
+        jpapi.delete_resource(residlst[i])
+        log.critical(f"【{i+1}/{len(residlst)}】资源文件（{residlst[i]}）从笔记（{note.title}）中删除成功（也被从笔记资源系统中彻底删除）！")
+
+
+# %% [markdown]
 # ### createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None, filepath=None)
 
 # %%
