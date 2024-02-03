@@ -241,7 +241,7 @@ def updatenote_title(noteid, titlestr, parent_id=None):
     global jpapi
     note = getnote(noteid)
     titleold = note.title
-    if note.parent_id != parent_id:
+    if (parent_id is not None) & (note.parent_id != parent_id):
         jpapi.modify_note(noteid, parent_id=parent_id)
         log.critical(f"笔记《{titleold}》所在笔记本从《{jpapi.get_notebook(note.parent_id).title}》调整为《{jpapi.get_notebook(parent_id).title}》。")
     if titlestr == titleold:
