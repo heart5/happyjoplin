@@ -34,7 +34,8 @@ with pathmagic.context():
     from func.first import getdirmain, dirmainpath, touchfilepath2depth
     from func.datatools import readfromtxt, write2txt
     from func.jpfuncs import searchnotes, createnote, updatenote_imgdata, \
-        noteid_used, searchnotebook, updatenote_title, updatenote_body, getinivaluefromcloud
+        noteid_used, searchnotebook, updatenote_title, updatenote_body, getinivaluefromcloud, \
+        createresource
     # from func.evernttest import get_notestore, imglist2note, \
     #     evernoteapijiayi, makenote, readinifromnote, getinivaluefromnote, \
     #     tablehtml2evernote
@@ -185,7 +186,9 @@ def foot2show(df4dis):
         plt.tight_layout() # 紧缩排版，缩小默认的边距
         plt.savefig(str(imgpathtoday))
         plt.close()
-        imglst.append(str(imgpathtoday))
+        res_title = str(imgpathtoday).split("/")[-1]
+        res_id = createresource(imgpathtoday, title=res_title)
+        imglst.append([res_title, res_id])
     dsdays = ds.resample('D').sum()
     print(dsdays)
     dsdays.plot()
@@ -194,14 +197,20 @@ def foot2show(df4dis):
     plt.tight_layout() # 紧缩排版，缩小默认的边距
     plt.savefig(str(imgpathdays))
     plt.close()
-    imglst.append(str(imgpathdays))
+    res_title = str(imgpathtoday).split("/")[-1]
+    res_id = createresource(imgpathtoday, title=res_title)
+    imglst.append([res_title, res_id])
     print(imglst)
 
-    if (device_name := getinivaluefromcloud('device', device_id)) is None:
-        device_name = device_id
-    imglist2note(get_notestore(), imglst, guid,
-                 f'手机_{device_name}_location更新记录',
-                 tablehtml2evernote(df4dis.sort_index(ascending=False).iloc[:100, ], "坐标流水记录单"))
+    bodystr = ""
+    for son in imglst:
+        bodystr += f"![{son[0]}](:/{son[1]})<br>"
+    updatenote_body(loc_cloud_id, bodystr)
+    # if (device_name := getinivaluefromcloud('device', device_id)) is None:
+    #     device_name = device_id
+    # imglist2note(get_notestore(), imglst, guid,
+    #              f'手机_{device_name}_location更新记录',
+    #              tablehtml2evernote(df4dis.sort_index(ascending=False).iloc[:100, ], "坐标流水记录单"))
 
 
 # %% [markdown]
