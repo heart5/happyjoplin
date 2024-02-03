@@ -204,6 +204,22 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
 
 
 # %% [markdown]
+# ### createresource(filename, title=None)
+
+# %%
+def createresource(filename, title=None):
+    global jpapi
+    if not title:
+        res_title = title
+    else:
+        res_title = filename.split("/")[-1]
+    res_id = jpapi.add_resource(filename=filename, title=res_title)
+    log.critical(f"资源文件{filename}创建成功，纳入笔记资源系统管理，可以正常被调用！")
+
+    return res_id
+
+
+# %% [markdown]
 # ### createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None, filepath=None)
 
 # %%
