@@ -187,7 +187,7 @@ def foot2show(df4dis):
         plt.savefig(str(imgpathtoday))
         plt.close()
         res_title = str(imgpathtoday).split("/")[-1]
-        res_id = createresource(imgpathtoday, title=res_title)
+        res_id = createresource(str(imgpathtoday), title=res_title)
         imglst.append([res_title, res_id])
     dsdays = ds.resample('D').sum()
     print(dsdays)
@@ -197,8 +197,8 @@ def foot2show(df4dis):
     plt.tight_layout() # 紧缩排版，缩小默认的边距
     plt.savefig(str(imgpathdays))
     plt.close()
-    res_title = str(imgpathtoday).split("/")[-1]
-    res_id = createresource(imgpathtoday, title=res_title)
+    res_title = str(imgpathdays).split("/")[-1]
+    res_id = createresource(str(imgpathdays), title=res_title)
     imglst.append([res_title, res_id])
     print(imglst)
 
