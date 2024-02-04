@@ -37,6 +37,7 @@ with pathmagic.context():
         noteid_used, searchnotebook
     from func.logme import log
     from func.wrapfuncs import timethis
+    from etc.getid import getdeviceid, gethostuser
     from func.sysfunc import not_IPython, execcmd
 
 # %% [markdown]
@@ -225,7 +226,7 @@ def health2note():
     login_user = execcmd("whoami")
     namestr = "happyjp_life"
     section = f"health_{login_user}"
-    notestat_title = f"健康动态日日升【{login_user}】"
+    notestat_title = f"健康动态日日升【{gethostuser()}】"
     if not (health_id := getcfpoptionvalue(namestr, section, 'health_cloud_id')):
         findhealthnotes = searchnotes("title:健康运动笔记")
         if len(findhealthnotes) == 0:
