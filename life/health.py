@@ -75,7 +75,11 @@ def gethealthdatafromnote(noteid):
             log.critical(f"时长字符串“{timestr}”格式有误，默认返回时长值为零")
             return 0
         else:
-            return int(lst[0]) * 60 + int(lst[1])
+            if (lst[0].isdecimal() & lst[1].isdecimal()):
+                return int(lst[0]) * 60 + int(lst[1])
+            else:
+                log.critical(f"时长字符串“{timestr}”格式有误，默认返回时长值为零")
+                return 0
 
     itemslist = [[datecn2utc(item[0]), int(item[1]), timestr2minutes(item[2]),
                   item[3]] for item in itemslist0]
