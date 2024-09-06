@@ -64,7 +64,7 @@ def items2df(fl):
     except Exception as e:
         log.critical(f"文件{fl}读取时出现错误，返回空的pd.DataFrame")
         return pd.DataFrame()
-    ptn = re.compile("(^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\t(True|False)\t([^\t]+)\t(\w+)\t", re.M)
+    ptn = re.compile(r"(^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\t(True|False)\t([^\t]+)\t(\w+)\t", re.M)
     itemlst = re.split(ptn, content)
     # print(itemlst[:5])
     itemlst = [im.strip() for im in itemlst if len(im) > 0]
@@ -75,7 +75,7 @@ def items2df(fl):
     df2 = pd.DataFrame(itemlst4pd1, columns=['time', 'send', 'sender', 'type', 'content'])
     df2['time'] = pd.to_datetime(df2['time'])
     df2['send'] = df2['send'].apply(lambda x : True if x == 'True' else False)
-    df2['content'] = df2['content'].apply(lambda x: re.sub("(\[\w+前\]|\[刚才\])?", "", x))
+    df2['content'] = df2['content'].apply(lambda x: re.sub(r"(\[\w+前\]|\[刚才\])?", "", x))
     dfout = df2.drop_duplicates().sort_values('time', ascending=True)
     print(dfout.dtypes)
     # print(dfout)
@@ -92,7 +92,7 @@ def getownerfromfilename(fn):
     从文件名中获取账号
     文件名称示例：chatitems(heart5).txt.1
     """
-    ptn = re.compile("\((\w*)\)")
+    ptn = re.compile(r"\((\w*)\)")
     ac = ac if (ac := re.search(ptn, fn).groups()[0]) not in ['', 'None'] else '白晔峰'
     return ac
 
@@ -124,7 +124,7 @@ def txtfiles2dfdict(dpath, newfileonly=False):
 #     print(fllst)
     dfdict = dict()
     for fl in fllst[::-1]:
-        rs1 = re.search("\((\w*)\)", fl)
+        rs1 = re.search(r"\((\w*)\)", fl)
         if rs1 is None:
             log.critical(f"记录文件《{fl}》的文件名不符合规范，跳过")
             continue
@@ -305,7 +305,7 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
     if (oldnotecontent := getnote(dftfileguid).body):
         # print(oldnotecontent)
         nrlst = oldnotecontent.split("\n\n---\n")
-        itemsnumfromnet = int(re.search("记录数量\t(-?\d+)", nrlst[0]).groups()[0])
+        itemsnumfromnet = int(re.search(r"记录数量\t(-?\d+)", nrlst[0]).groups()[0])
     else:
         nrlst = list()
         itemsnumfromnet = 0
@@ -390,7 +390,7 @@ def getnotelist(name, wcpath, notebookguid):
             log.info(f"文件列表《{notelisttitle}》被首次创建！")
         setcfpoptionvalue('happyjpwcitems', "common", f'{name}_notelist_guid', str(notelistguid))
 
-    ptn = f"wcitems_{name}_" + "\d{4}.xlsx" # wcitems_heart5_2201.xlsx
+    ptn = f"wcitems_{name}_" + r"\d{4}.xlsx" # wcitems_heart5_2201.xlsx
     xlsxfllstfromlocal = [fl for fl in os.listdir(wcpath) if re.search(ptn, fl)]
     numatlocal_actual = len(xlsxfllstfromlocal)
     if (numatlocal := getcfpoptionvalue('happyjpwcitems', "common", f"{name}_num_at_local")) is None:
@@ -416,9 +416,9 @@ def getnotelist(name, wcpath, notebookguid):
         log.info(f"《{notelisttitle}》笔记内容不符合规范，重构之。【{nrlst}】")
 
 #     print(nrlst)
-    numinnotedesc = int(re.findall("\t(-?\d+)", nrlst[0])[0])
+    numinnotedesc = int(re.findall(r"\t(-?\d+)", nrlst[0])[0])
 #     ptn = f"(wcitems_{name}_\d\d\d\d\.xlsx)\t(\S+)"
-    ptn = f"(wcitems_{name}_" + "\d{4}.xlsx)\t(\S+)"
+    ptn = f"(wcitems_{name}_" + r"\d{4}.xlsx)\t(\S+)"
 #     print(ptn)
     finditems = re.findall(ptn, nrlst[1])
     finditems = sorted(finditems, key=lambda x: x[0], reverse=True)
@@ -428,11 +428,11 @@ def getnotelist(name, wcpath, notebookguid):
         log.info(f"《{notelisttitle}》中数量无更新，跳过。")
         return finditems
     findnotelst = searchnotes(f"title:wcitems_{name}_", parent_id=notebookguid)
-    findnotelst = [[nt.title, nt.id, re.findall("记录数量\t(-?\d+)", nt.body)[0]] for nt in findnotelst]
+    findnotelst = [[nt.title, nt.id, re.findall(r"记录数量\t(-?\d+)", nt.body)[0]] for nt in findnotelst]
     # findnotelst = [[nt.get("title"), note.get("id"), re.findall("记录数量\t(-?\d+)", nt.get("body"))[0]] for nt in findnotelst]
     findnotelst = sorted(findnotelst, key=lambda x: x[0], reverse=True)
     nrlstnew = list()
-    nrlstnew.append(re.sub("\t(-?\d+)", "\t" + f"{len(findnotelst)}", nrlst[0]))
+    nrlstnew.append(re.sub(r"\t(-?\d+)", "\t" + f"{len(findnotelst)}", nrlst[0]))
     nrlstnew.append("\n".join(["\t".join(sonlst) for sonlst in findnotelst]))
     nrlstnew.append(f"更新于{timenowstr}，来自于主机：{getdevicename()}{loginstr}" + f"\n{nrlst[2]}")
 
@@ -456,7 +456,7 @@ def merge2note(dfdict, wcpath, notebookguid, newfileonly=False):
     """
     for name in dfdict.keys():
         fllstfromnote = getnotelist(name, wcpath, notebookguid=notebookguid)
-        ptn = f"wcitems_{name}_" + "\d{4}.xlsx" # wcitems_heart5_2201.xlsx
+        ptn = f"wcitems_{name}_" + r"\d{4}.xlsx" # wcitems_heart5_2201.xlsx
         xlsxfllstfromlocal = [fl for fl in os.listdir(wcpath) if re.search(ptn, fl)]
         if len(fllstfromnote) != len(xlsxfllstfromlocal):
             print(f"{name}的数据文件本地数量\t{len(xlsxfllstfromlocal)}，云端笔记列表中为\t{len(fllstfromnote)}，" \
@@ -520,7 +520,7 @@ def alldfdesc2note(wcpath):
     """
     读取本地所有资源文件的聊天记录到DataFrame中，输出描述性信息到相应笔记中
     """
-    ptn4name = "wcitems_(\w+)_(\d{4}.xlsx)"
+    ptn4name = r"wcitems_(\w+)_(\d{4}.xlsx)"
     names = list(set([re.search(ptn4name, fl).groups()[0] for fl in os.listdir(wcpath)
                 if re.search(ptn4name, fl)]))
     print(names)
