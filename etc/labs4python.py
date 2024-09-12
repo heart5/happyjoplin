@@ -37,7 +37,7 @@ def testtpdict():
 
     fmtype = "Picture"
     if (prefix := tpdict.get(fmtype)) is not None:
-        print("It's maybe a file to send.")
+        print(f"It's maybe a {fmtype} file to send.")
     else:
         print("It's a Text message.")
 
