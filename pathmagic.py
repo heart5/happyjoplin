@@ -34,11 +34,18 @@ class context:
 
 
 # %% [markdown]
+# ## 函数集
+
+# %% [markdown]
 # ## 主函数main()
 
 # %%
 if __name__ == '__main__':
-    print(f'运行文件\t{__file__}')
+    if '__file__' in list(locals()):
+        print(f'运行文件\t{__file__}')
+
     for pp in sys.path:
         print(pp)
+
+    print("It's man, very good.")
     print('Done.完毕。')
