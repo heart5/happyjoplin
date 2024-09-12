@@ -229,7 +229,7 @@ def deleteresourcesfromnote(noteid):
     """
     global jpapi
     note = getnote(noteid)
-    ptn = re.compile("\(:/(\w+)\)")
+    ptn = re.compile(r"\(:/(\w+)\)")
     residlst = re.findall(ptn, note.body)
     for i in range(len(residlst)):
         jpapi.delete_resource(residlst[i])
