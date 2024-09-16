@@ -214,7 +214,7 @@ def createresource(filename, title=None):
     else:
         res_title = filename.split("/")[-1]
     res_id = jpapi.add_resource(filename=filename, title=res_title)
-    log.critical(f"资源文件{filename}创建成功，纳入笔记资源系统管理，可以正常被调用！")
+    log.info(f"资源文件{filename}创建成功，纳入笔记资源系统管理，可以正常被调用！")
 
     return res_id
 
@@ -233,7 +233,7 @@ def deleteresourcesfromnote(noteid):
     residlst = re.findall(ptn, note.body)
     for i in range(len(residlst)):
         jpapi.delete_resource(residlst[i])
-        log.critical(f"【{i+1}/{len(residlst)}】资源文件（{residlst[i]}）从笔记（{note.title}）中删除成功（也被从笔记资源系统中彻底删除）！")
+        log.info(f"【{i+1}/{len(residlst)}】资源文件（{residlst[i]}）从笔记（{note.title}）中删除成功（也被从笔记资源系统中彻底删除）！")
 
 
 # %% [markdown]
