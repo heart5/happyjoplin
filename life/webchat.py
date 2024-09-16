@@ -366,7 +366,15 @@ def fileetc_reply(msg):
 # %%
 def soupclean2item(msgcontent):
     rpcontent = msgcontent.replace('<![CDATA[', '').replace(']]>', '')
-    soup = BeautifulSoup(rpcontent, 'lxml')
+    # rpcontent = msgcontent
+    if isinstance(rpcontent, str) and not rpcontent.strip().startswith('<'):
+        # Handle the case where the input is not HTML
+        # log.info("Warning: Input does not appear to be valid HTML.")
+        # Optionally, you can still parse it as plain text
+        soup = BeautifulSoup(rpcontent, 'html.parser')  # or just handle it differently
+    else:
+        soup = BeautifulSoup(rpcontent, 'lxml')
+    # soup = BeautifulSoup(rpcontent, 'lxml')
     category = soup.category
     if category:
         items = category.find_all('item')
