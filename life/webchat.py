@@ -809,11 +809,11 @@ if __name__ == '__main__':
         log.info(f'运行文件\t{__file__}')
 
     # listallloghander()
-    console = logging.StreamHandler()
-    console.setLevel(logging.DEBUG)
-    itloger = logging.getLogger('itchat')
-    itloger.addHandler(console)
-    print(itloger, itloger.handlers)
+    # console = logging.StreamHandler()
+    # console.setLevel(logging.DEBUG)
+    # itloger = logging.getLogger('itchat')
+    # itloger.addHandler(console)
+    # print(itloger, itloger.handlers)
 
     recentmsg_deque = deque(maxlen=30)
     # face_bug=None  #针对表情包的内容
