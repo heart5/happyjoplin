@@ -794,6 +794,7 @@ def keepliverun():
     else:
         log.critical(f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}")
 
+    itchat.get_mps(update=True)
     # listchatrooms()
     # listfriends()
     itchat.run()
@@ -831,24 +832,26 @@ def tst4itchat():
     itchat.auto_login(hotReload=True, statusStorageDir='../itchat.pkl')
 
     itchat_web_init_dict = itchat.web_init()
-
     print(itchat_web_init_dict.keys())
-
     wcfriends = itchat.get_friends()
+    print(wcfriends[:19])
 
-    print(wcfriends[:3])
+    mps_lst = itchat.get_mps(update=True)
+    mp_meituan = itchat.search_mps(userName="@111b2a64da3fcd28f194226313bf9a342191a947d0bcac29e2e58c3c1e2a6d79")
+    print(mp_meituan)
+    print(mps_lst[-20:])
 
     fileprefix = "img"
-    fpath = "img/webchat/20231019/（多神家园）MS五群(群).INFP_231019-120419.gif"
+    fpath = "img/webchat/20240918/（多神家园）MS五群(群)西尼—破晓_240918-174115.png"
     fileabspath = os.path.abspath(getdirmain() / fpath)
     print(fileabspath)
 
     file = '@%s@%s' % (fileprefix, fileabspath)
     print(file)
-    re_info = itchat.send(file, toUserName='filehelper')
-    return re_info
+    # re_info = itchat.send(file, toUserName='filehelper')
+    # return re_info
 
 
 # %%
-if (not not_IPython()) and False:
+if (not not_IPython()) and True:
     tst4itchat()
