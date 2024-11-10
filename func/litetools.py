@@ -26,6 +26,7 @@ sqlite数据库相关应用函数
 import sqlite3 as lite
 import os
 import re
+import pandas as pd
 
 # %%
 import pathmagic
@@ -125,7 +126,7 @@ def ifclexists(dbin, tb, cl):
 
     createsql =  [name for x in tablefd for name in x][0]
     print(createsql)
-    ptn = re.compile("\((.+)\)")
+    ptn = re.compile(r"\((.+)\)")
     print(re.findall(ptn, createsql)[0])
     rstsplst = re.findall(ptn, createsql)[0].split(',')
     print([x.strip() for x in rstsplst])
@@ -201,6 +202,28 @@ def checktableindb(ininame: str, dbpath: str, tablename: str, creattablesql: str
         ifnotcreate(tablename, creattablesql, dbpath)
 
         setcfpoptionvalue(ininame, absdbpath, tablename, str(True))
+
+
+# %% [markdown]
+# ### def convert_intstr_timestamp(value)
+
+# %%
+def convert_intstr_timestamp(value):
+    """
+    将时间值转换为 Unix 时间戳（秒）。支持字符串和整数格式。
+    """
+    if pd.isna(value):
+        return None # 如果值是 NaN，返回 None
+    if isinstance(value, str):
+        try:
+            # 将字符串转换为 datetime 对象
+            return int(pd.to_datetime(value).timestamp())
+        except Exception:
+            return None  # 如果转换失败，返回 None
+    elif isinstance(value, (int, float)):
+        return int(value)  # 直接返回整数
+    else:
+        return None  # 对于其他类型返回 None
 
 
 # %% [markdown]
