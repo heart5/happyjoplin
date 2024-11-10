@@ -794,7 +794,7 @@ def keepliverun():
     else:
         log.critical(f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}")
 
-    itchat.get_mps(update=True)
+    # itchat.get_mps(update=True)
     # listchatrooms()
     # listfriends()
     itchat.run()
