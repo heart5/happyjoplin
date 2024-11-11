@@ -23,8 +23,6 @@ import wave
 import sqlite3 as lite
 # import vosk
 # from pydub import AudioSegment
-from funasr import AutoModel
-from funasr.utils.postprocess_utils import rich_transcription_postprocess
 
 # %%
 import pathmagic
@@ -92,6 +90,8 @@ def v2t_vosk(vfile, quick=False):
 # %%
 @timethis
 def v2t_funasr(vfilelst):
+    from funasr import AutoModel
+    from funasr.utils.postprocess_utils import rich_transcription_postprocess
     # 加载 SenseVoice 模型
     model_dir = "iic/SenseVoiceSmall"
     model = AutoModel(
