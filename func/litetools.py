@@ -23,9 +23,10 @@ sqlite数据库相关应用函数
 # ## 引入重要库
 
 # %%
-import sqlite3 as lite
 import os
 import re
+import arrow
+import sqlite3 as lite
 import pandas as pd
 
 # %%
@@ -205,23 +206,23 @@ def checktableindb(ininame: str, dbpath: str, tablename: str, creattablesql: str
 
 
 # %% [markdown]
-# ### def convert_intstr_timestamp(value)
+# ### def convert_intstr_datetime(value)
 
 # %%
-def convert_intstr_timestamp(value):
+def convert_intstr_datetime(value):
     """
-    将时间值转换为 Unix 时间戳（秒）。支持字符串和整数格式。
+    将时间值转换为 datetime ，支持字符串和整数(timestamp)格式。
     """
     if pd.isna(value):
         return None # 如果值是 NaN，返回 None
     if isinstance(value, str):
         try:
             # 将字符串转换为 datetime 对象
-            return int(pd.to_datetime(value).timestamp())
+            return arrow.get(value).datetime
         except Exception:
             return None  # 如果转换失败，返回 None
     elif isinstance(value, (int, float)):
-        return int(value)  # 直接返回整数
+        return arrow.get(value).to('Asia/Shanghai').datetime
     else:
         return None  # 对于其他类型返回 None
 
