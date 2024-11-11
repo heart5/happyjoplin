@@ -35,7 +35,7 @@ with pathmagic.context():
     from func.wrapfuncs import timethis
     from func.sysfunc import not_IPython, execcmd
     from func.configpr import setcfpoptionvalue, getcfpoptionvalue
-    from func.litetools import ifnotcreate, showtablesindb, convert_intstr_timestamp
+    from func.litetools import ifnotcreate, showtablesindb, convert_intstr_datetime
     from func.jpfuncs import getapi, getinivaluefromcloud, searchnotes, \
         searchnotebook, createnote, getreslst, updatenote_body, updatenote_title, \
         getnote
