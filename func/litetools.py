@@ -233,6 +233,7 @@ def convert_intstr_datetime(value):
 # ### clean4timecl(name, dbname, confirm)
 
 # %%
+@timethis
 def clean4timecl(name, dbname, confirm):
     with lite.connect(dbname) as conn:
         sql = f"select * from wc_{name}"
