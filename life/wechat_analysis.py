@@ -35,7 +35,7 @@ with pathmagic.context():
     from func.wrapfuncs import timethis
     from func.sysfunc import not_IPython, execcmd
     from func.configpr import setcfpoptionvalue, getcfpoptionvalue
-    from func.litetools import ifnotcreate, showtablesindb, convert_intstr_timestamp
+    from func.litetools import ifnotcreate, showtablesindb, compact_sqlite3_db, convert_intstr_datetime
     from func.jpfuncs import getapi, getinivaluefromcloud, searchnotes, \
         searchnotebook, createnote, getreslst, updatenote_body, updatenote_title, \
         getnote
@@ -82,7 +82,7 @@ class WeChatAnalysis:
         if outdf.shape[0] == 0:
             return None
         # 处理time字段存在int和str两种数据类型的可能
-        outdf.loc[:, 'time'] = outdf['time'].apply(convert_intstr_timestamp)
+        outdf.loc[:, 'time'] = outdf['time'].apply(convert_intstr_datetime)
         outdf.loc[:, 'time'] = outdf['time'].astype(int)
         # 处理录音的音频文件，转换为文字输出
         outdf.loc[:, 'content'] = outdf['content'].apply(lambda x: v4txt(x, dbname) if x.endswith('.mp3') and os.path.exists(x) else x)
@@ -93,13 +93,34 @@ class WeChatAnalysis:
 
         return outdf
         
-
     def load_data_raw(self):
         """从数据库加载RAW数据"""
         query = f"SELECT * FROM wc_{self.name}; "  # 假设表名为 wc
         # self.data = pd.read_sql(query, self.conn, parse_dates=['time'])
         alldf = pd.read_sql(query, self.conn)
         self.data_raw = alldf
+
+        
+    def load_data_mp3(self):
+        """从数据库加载mp3数据"""
+        query = f"SELECT * FROM wc_{self.name} WHERE content LIKE '%.mp3'; "  # 假设表名为 wc
+        # self.data = pd.read_sql(query, self.conn, parse_dates=['time'])
+        df = pd.read_sql(query, self.conn)
+        # 处理多运行平台重复记录的图片或文件路径
+        main_path = str(getdirmain().resolve())
+        # 处理成相对路径，逻辑是准备把所有音频文件集中到主运行环境
+        ptn = re.compile(r"^/\W+happyjoplin/")
+        df.loc[:, 'content'] = df['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
+        # 处理文件的相对路径，处理成绝对路径方便判断文件是否在本环境存在
+        df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if ((x is not None) and x.startswith('img/webchat')) else x)
+        outdf = df[df['content'].apply(lambda x: os.path.exists(x))]
+        log.info(f"读取的MP3数据条目有【{df.shape[0]}】条，本运行环境实际存在的数据条目为【{outdf.shape[0]}】条")
+        mp3s = outdf['content'].unique().tolist()
+        for mp3 in mp3s:
+            ix = mp3s.index(mp3)
+            log.info(f"【{ix + 1}/{len(mp3s)}】:\t{mp3}\t{outdf[outdf['content'] == mp3].iloc[0]['sender']}")
+            print(v4txt(mp3, dbname))
+        self.data_mp3 = outdf
 
     @timethis
     def load_data(self, keyword='all'):
@@ -211,8 +232,33 @@ class WeChatAnalysis:
         """关闭数据库连接"""
         self.conn.close()
 
+
 # %% [markdown]
-# ### fenxi()
+# ### celan4timecl(name, dbname, confirm)
+
+# %%
+def clean4timecl(name, dbname, confirm):
+    with lite.connect(dbname) as conn:
+        sql = f"select * from wc_{name}"
+        df = pd.read_sql(sql, conn)
+
+    # 调用函数转换为datetime
+    df['time'] = df['time'].apply(convert_intstr_datetime)
+    df['time'] = pd.to_datetime(df['time'], errors='coerce')
+    df1 = df[~df.time.isnull()]
+    outdf = df1.drop_duplicates()
+    # outdf = df2.set_index('id')
+    outdf = outdf.sort_values('time')
+    log.info(f"读出记录总数{df.shape[0]}条，去掉time经过转换后为空的后还有{df1.shape[0]}条，去重后还有{outdf.shape[0]}条")
+
+    if confirm == 'yes':
+        log.critical(f"重大操作，向{dbname}写回大量数据，原数据将被覆盖！！！")
+        with lite.connect(dbname) as conn:
+            outdf.to_sql(f"wc_{name}", conn, if_exists='replace', index=False)
+        compact_sqlite3_db(dbname)
+
+    return outdf
+
 
 # %% [markdown]
 # ## main，主函数
@@ -227,36 +273,25 @@ if __name__ == '__main__':
     dbname = os.path.abspath(wcdatapath / dbfilename)
     name = "白晔峰"
     analysis = WeChatAnalysis(dbname, name, chunk_size=800000)
+    
     # friends = ['耿华忠', '闫暄润', '梅富忠', '刘彬', '白磊', '孙四娃', '任大伟', '刘捷易斯', '张仕容', '孙亚', '蒲苇', '龚建利', '孙帅', '范小华']
-    conn = lite.connect(dbname)
-    sql = f"select sender from wc_{name}"
-    friends = pd.read_sql(sql, conn)['sender'].unique().tolist()
-    conn.close()
-    for frd in friends:
-        log.info(f"【{friends.index(frd)}/{len(friends)}】:\t{frd}")
-        analysis.load_data(frd)
-    mydf = analysis.export_data()
+    
+    # conn = lite.connect(dbname)
+    # sql = f"select sender from wc_{name}"
+    # friends = pd.read_sql(sql, conn)['sender'].unique().tolist()
+    # conn.close()
+    # for frd in friends:
+    #     log.info(f"【{friends.index(frd)}/{len(friends)}】:\t{frd}")
+    #     analysis.load_data(frd)
+    # mydf = analysis.export_data()
+
+    # 仅处理mp3文件
+    analysis.load_data_mp3()
+    mp3df = analysis.data_mp3
+    
     # analysis.analyze_messages()
     # analysis.save_report('wechat_report.txt')
     analysis.close()
+    compact_sqlite3_db(dbname)
     if not_IPython():
         log.info(f"文件\t{__file__}\t运行结束。")
-
-# %%
-lst = [1, 2, 3, 5, 10, 'we']
-lst.index('we')
-
-# %%
-mydf
-
-# %%
-mydf[mydf.type == 'Recording']
-
-# %%
-mydf[mydf.time > arrow.get("2024-11-01")]
-
-# %%
-mydf.describe()
-
-# %%
-mydf.dtypes
