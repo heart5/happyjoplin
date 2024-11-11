@@ -233,6 +233,7 @@ def df2db(name, df4name, wcpath):
         itemsnum_db = 0
     itemnum = df4name.shape[0]
     if itemnum != itemsnum_db:
+        df4name = df4name.sort_values('time')
         starttime = df4name['time'].min().strftime("%F %T")
         endtime = df4name['time'].max().strftime("%F %T")
         loginstr = "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
@@ -243,10 +244,10 @@ def df2db(name, df4name, wcpath):
             csql = f"create table if not exists {tablename} " + f"(id INTEGER PRIMARY KEY AUTOINCREMENT, time DATETIME, send BOOLEAN, sender TEXT, type TEXT, content TEXT)"
             ifnotcreate(tablename, csql, dbname)
             cursor = conn.cursor()
-            sql = f"select * from {tablename} where time between \'{starttime}\' and \'{endtime}\';"
+            sql = f"select * from {tablename} where datetime(time, 'unixepoch', 'localtime') between \'{starttime}\' and \'{endtime}\';"
             tb = cursor.execute(sql).fetchall()
             if len(tb) != itemnum:
-                sqldel = f"delete from {tablename} where time between \'{starttime}\' and \'{endtime}\';"
+                sqldel = f"delete from {tablename} where datetime(time, 'unixepoch', 'localtime') between \'{starttime}\' and \'{endtime}\';"
                 print(sqldel)
                 cursor.execute(sqldel)
                 conn.commit()
