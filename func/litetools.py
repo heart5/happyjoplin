@@ -32,10 +32,12 @@ import pandas as pd
 # %%
 import pathmagic
 with pathmagic.context():
+    from func.first import getdirmain, touchfilepath2depth
     from func.logme import log
+    from etc.getid import getdevicename
     from func.first import dbpathquandan, dbpathworkplan, dbpathdingdanmingxi
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.sysfunc import not_IPython
+    from func.sysfunc import not_IPython, execcmd
     from func.wrapfuncs import timethis
 
 
@@ -228,7 +230,7 @@ def convert_intstr_datetime(value):
 
 
 # %% [markdown]
-# ### celan4timecl(name, dbname, confirm)
+# ### clean4timecl(name, dbname, confirm)
 
 # %%
 def clean4timecl(name, dbname, confirm):
@@ -241,14 +243,27 @@ def clean4timecl(name, dbname, confirm):
     df['time'] = pd.to_datetime(df['time'], errors='coerce')
     df1 = df[~df.time.isnull()]
     outdf = df1.drop_duplicates()
-    # outdf = df2.set_index('id')
+    outdf = outdf.set_index('id')
     outdf = outdf.sort_values('time')
-    log.info(f"读出记录总数{df.shape[0]}条，去掉time经过转换后为空的后还有{df1.shape[0]}条，去重后还有{outdf.shape[0]}条")
+    log.info(f"从数据库【{dbname}】的数据表《wc_{name}》中读出记录总数{df.shape[0]}条，去掉time经过转换后为空的后还有{df1.shape[0]}条，去重后还有{outdf.shape[0]}条")
 
     if confirm == 'yes':
-        log.critical(f"重大操作，向{dbname}写回大量数据，原数据将被覆盖！！！")
+        log.critical(f"重大操作，向数据库【{dbname}】的数据表《wc_{name}》写回大量数据，原数据将被覆盖，但是表结构保持不变！！！")
         with lite.connect(dbname) as conn:
-            outdf.to_sql(f"wc_{name}", conn, if_exists='replace', index=False)
+            cursor = conn.cursor()
+            # 创建一个新的临时表，结构与原数据表相同
+            cursor.execute(f"CREATE TABLE wc_{name}_temp AS SELECT * FROM wc_{name} WHERE 1=0")
+            # outdf覆盖导出到临时数据表
+            outdf.to_sql(f"wc_{name}_temp", conn, if_exists='append', index=False)
+            # 清空原数据表
+            cursor.execute(f"DELETE FROM wc_{name}")
+            # 将临时表的数据插入原数据表
+            cursor.execute(f""" INSERT INTO wc_{name} (time, send, sender, type, content) SELECT time, send, sender, type, content FROM wc_{name}_temp """)
+            # 删除临时表
+            cursor.execute(f"DROP TABLE wc_{name}_temp")
+            # 提交更改并关闭数据库连接
+            conn.commit()
+        log.critical(f"数据库【{dbname}】的数据表《wc_{name}》数据清洗完成后有{outdf.shape[0]}条记录，并已成功覆盖回去，表结构保持了不变！！！")
         compact_sqlite3_db(dbname)
 
     return outdf
@@ -276,9 +291,12 @@ if __name__ == "__main__":
         logstr = f"运行文件\t{__file__}\t……"
         log.info(logstr)
     # print(get_filesize(dbpathquandan))
-    compact_sqlite3_db(dbpathquandan)
-    compact_sqlite3_db(dbpathworkplan)
-    compact_sqlite3_db(dbpathdingdanmingxi)
+    loginstr = "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
+    dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
+    wcdatapath = getdirmain() / "data" / "webchat"
+    dbname = os.path.abspath(wcdatapath / dbfilename)
+    name = "heart5"
+    outdf = clean4timecl(name, dbname, "no")
 
     if not_IPython():
         logstr = f"文件\t{__file__}\t运行完毕。"
