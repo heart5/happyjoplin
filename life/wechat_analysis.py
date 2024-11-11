@@ -35,7 +35,7 @@ with pathmagic.context():
     from func.wrapfuncs import timethis
     from func.sysfunc import not_IPython, execcmd
     from func.configpr import setcfpoptionvalue, getcfpoptionvalue
-    from func.litetools import ifnotcreate, showtablesindb, compact_sqlite3_db, convert_intstr_datetime
+    from func.litetools import ifnotcreate, showtablesindb, compact_sqlite3_db, convert_intstr_datetime, clean4timecl
     from func.jpfuncs import getapi, getinivaluefromcloud, searchnotes, \
         searchnotebook, createnote, getreslst, updatenote_body, updatenote_title, \
         getnote
@@ -231,34 +231,6 @@ class WeChatAnalysis:
     def close(self):
         """关闭数据库连接"""
         self.conn.close()
-
-
-# %% [markdown]
-# ### celan4timecl(name, dbname, confirm)
-
-# %%
-def clean4timecl(name, dbname, confirm):
-    with lite.connect(dbname) as conn:
-        sql = f"select * from wc_{name}"
-        df = pd.read_sql(sql, conn)
-
-    # 调用函数转换为datetime
-    df['time'] = df['time'].apply(convert_intstr_datetime)
-    df['time'] = pd.to_datetime(df['time'], errors='coerce')
-    df1 = df[~df.time.isnull()]
-    outdf = df1.drop_duplicates()
-    # outdf = df2.set_index('id')
-    outdf = outdf.sort_values('time')
-    log.info(f"读出记录总数{df.shape[0]}条，去掉time经过转换后为空的后还有{df1.shape[0]}条，去重后还有{outdf.shape[0]}条")
-
-    if confirm == 'yes':
-        log.critical(f"重大操作，向{dbname}写回大量数据，原数据将被覆盖！！！")
-        with lite.connect(dbname) as conn:
-            outdf.to_sql(f"wc_{name}", conn, if_exists='replace', index=False)
-        compact_sqlite3_db(dbname)
-
-    return outdf
-
 
 # %% [markdown]
 # ## main，主函数
