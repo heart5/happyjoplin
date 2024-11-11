@@ -243,10 +243,17 @@ def clean4timecl(name, dbname, confirm):
     df['time'] = df['time'].apply(convert_intstr_datetime)
     df['time'] = pd.to_datetime(df['time'], errors='coerce')
     df1 = df[~df.time.isnull()]
-    outdf = df1.drop_duplicates()
-    outdf = outdf.set_index('id')
+    df2 = df1.set_index('id')
+
+    # 把空值None转换为空字符串""
+    df2.loc[:, 'content'] = df2['content'].apply(lambda x: "" if x is None else x)
+    # 处理成相对路径，逻辑是准备把所有音频等文件集中到主运行环境
+    ptn = re.compile(r"^/\W+happyjoplin/")
+    df2.loc[:, 'content'] = df2['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
+
+    outdf = df2.drop_duplicates()
     outdf = outdf.sort_values('time')
-    log.info(f"从数据库【{dbname}】的数据表《wc_{name}》中读出记录总数{df.shape[0]}条，去掉time经过转换后为空的后还有{df1.shape[0]}条，去重后还有{outdf.shape[0]}条")
+    log.info(f"从数据库【{dbname}】的数据表《wc_{name}》中读出记录总数{df.shape[0]}条，去掉(time经过转换后为空的)后还有{df1.shape[0]}条，去重(文件路径已经转换为相对路径)后还有{outdf.shape[0]}条")
 
     if confirm == 'yes':
         log.critical(f"重大操作，向数据库【{dbname}】的数据表《wc_{name}》写回大量数据，原数据将被覆盖，但是表结构保持不变！！！")
