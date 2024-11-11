@@ -60,7 +60,7 @@ def items2df(fl):
     """
     try:
         content = open(fl, 'r').read()
-        print(fl, content[:100])
+        # print(fl, content[:100])
     except Exception as e:
         log.critical(f"文件{fl}读取时出现错误，返回空的pd.DataFrame")
         return pd.DataFrame()
@@ -77,7 +77,7 @@ def items2df(fl):
     df2['send'] = df2['send'].apply(lambda x : True if x == 'True' else False)
     df2['content'] = df2['content'].apply(lambda x: re.sub(r"(\[\w+前\]|\[刚才\])?", "", x))
     dfout = df2.drop_duplicates().sort_values('time', ascending=True)
-    print(dfout.dtypes)
+    # print(dfout.dtypes)
     # print(dfout)
 
     return dfout
@@ -248,10 +248,11 @@ def df2db(name, df4name, wcpath):
             tb = cursor.execute(sql).fetchall()
             if len(tb) != itemnum:
                 sqldel = f"delete from {tablename} where datetime(time, 'unixepoch', 'localtime') between \'{starttime}\' and \'{endtime}\';"
-                print(sqldel)
                 cursor.execute(sqldel)
                 conn.commit()
-                log.info(f"从数据库文件《{dbname}》的表《{tablename}》中删除{cursor.rowcount}条记录")
+                if cursor.rowcount != 0:
+                    print(sqldel)
+                    log.info(f"从数据库文件《{dbname}》的表《{tablename}》中删除{cursor.rowcount}条记录")
                 df4name.to_sql(tablename, conn, if_exists="append", index=False)
                 setcfpoptionvalue('happyjpwcitems', dftfilename, 'itemsnum_db', str(itemnum))
                 log.info(f"{dftfilename}的数据写入数据库文件（{dbname}）的（{tablename}）表中，并在ini登记数量（{itemnum}）") 
