@@ -76,7 +76,10 @@ def items2df(fl):
     df2['time'] = pd.to_datetime(df2['time'])
     df2['send'] = df2['send'].apply(lambda x : True if x == 'True' else False)
     df2['content'] = df2['content'].apply(lambda x: re.sub(r"(\[\w+前\]|\[刚才\])?", "", x))
-    dfout = df2.drop_duplicates().sort_values('time', ascending=True)
+    # 处理成相对路径，逻辑是准备把所有音频等文件集中到主运行环境
+    ptn = re.compile(r"^/.+happyjoplin/")
+    df2.loc[:, 'content'] = df2['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
+    dfout = df2.drop_duplicates().sort_values('time')
     # print(dfout.dtypes)
     # print(dfout)
 
@@ -134,11 +137,11 @@ def txtfiles2dfdict(dpath, newfileonly=False):
             f"{account}\t{dfin.shape[0]}", end="\t")
         if account in dfdict.keys():
             dfall = pd.concat([dfdict[account], dfin])
-            dfall = dfall.drop_duplicates().sort_values(['time'], ascending=False)
+            dfall = dfall.drop_duplicates().sort_values(['time'])
             print(f"{dfall.shape[0]}")
             dfdict.update({account:dfall})
         else:
-            dfall = dfin.drop_duplicates().sort_values(['time'], ascending=False)
+            dfall = dfin.drop_duplicates().sort_values(['time'])
             print(f"{dfall.shape[0]}")
             dfdict[account] = dfall
 
@@ -327,7 +330,7 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
             fh.write(res.get("contentb"))
             fh.close()
             dfromnote = pd.concat([dfromnote, pd.read_excel(filetmp)])
-        dfcombine = pd.concat([dfromnote, df4name]).drop_duplicates().sort_values(['time'], ascending=False)
+        dfcombine = pd.concat([dfromnote, df4name]).drop_duplicates().sort_values(['time'])
         if dfcombine.shape[0] == itemsnumfromnet:
             log.info(f"本地数据文件记录有{itemnum}条，笔记中资源文件记录数为{itemsnumfromnet}条，合并后总记录数量{dfcombine.shape[0]}没变化，跳过")
             setcfpoptionvalue('happyjpwcitems', dftfilename, 'itemsnum', str(itemsnumfromnet))
