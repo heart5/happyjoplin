@@ -70,10 +70,12 @@ class WeChatAnalysis:
         # 处理多运行平台重复记录的图片或文件路径
         main_path = str(getdirmain().resolve())
         # 处理成相对路径，逻辑是准备把所有音频文件集中到主运行环境
-        ptn = re.compile(r"^/\W+happyjoplin/")
+        ptn = re.compile(r"^/.+happyjoplin/")
+        pathfilter_df = df[df['content'].apply(lambda x: bool(ptn.match(x)))]
+        log.info(f"包含类似/.../happyjoplin/*.*的文件记录共有{pathfilter_df.shape[0]}")
         df.loc[:, 'content'] = df['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
         # 处理文件的相对路径，处理成绝对路径方便判断文件是否在本环境存在
-        df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if ((x is not None) and x.startswith('img/webchat')) else x)
+        # df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if ((x is not None) and x.startswith('img/webchat')) else x)
         
         # 过滤掉包含路径但不是以 main_path 开头的记录 
         # mydf = df[(df['content'].str.startswith(main_path) & df['content'].str.contains(r'^/', regex=True)) | ~df['content'].str.contains(r'^/', regex=True)]
@@ -83,10 +85,8 @@ class WeChatAnalysis:
             return None
         # 处理time字段存在int和str两种数据类型的可能
         outdf.loc[:, 'time'] = outdf['time'].apply(convert_intstr_datetime)
-        outdf.loc[:, 'time'] = outdf['time'].astype(int)
         # 处理录音的音频文件，转换为文字输出
         outdf.loc[:, 'content'] = outdf['content'].apply(lambda x: v4txt(x, dbname) if x.endswith('.mp3') and os.path.exists(x) else x)
-        outdf.loc[:, 'time'] = outdf['time'].apply(lambda x: arrow.get(x).to('Asia/Shanghai'))
         # 重新设置index，用读取的id列
         outdf.set_index('id', inplace=True)
         log.info(f"传入的DF数据有【{indf.shape[0]}】条，去除time为空后数据为【{df.shape[0]}】条，多重字段去重后还有【{outdf.shape[0]}】条")
@@ -109,7 +109,7 @@ class WeChatAnalysis:
         # 处理多运行平台重复记录的图片或文件路径
         main_path = str(getdirmain().resolve())
         # 处理成相对路径，逻辑是准备把所有音频文件集中到主运行环境
-        ptn = re.compile(r"^/\W+happyjoplin/")
+        ptn = re.compile(r"^/.+happyjoplin/")
         df.loc[:, 'content'] = df['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
         # 处理文件的相对路径，处理成绝对路径方便判断文件是否在本环境存在
         df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if ((x is not None) and x.startswith('img/webchat')) else x)
@@ -245,17 +245,9 @@ if __name__ == '__main__':
     dbname = os.path.abspath(wcdatapath / dbfilename)
     name = "白晔峰"
     analysis = WeChatAnalysis(dbname, name, chunk_size=800000)
-    
-    # friends = ['耿华忠', '闫暄润', '梅富忠', '刘彬', '白磊', '孙四娃', '任大伟', '刘捷易斯', '张仕容', '孙亚', '蒲苇', '龚建利', '孙帅', '范小华']
-    
-    # conn = lite.connect(dbname)
-    # sql = f"select sender from wc_{name}"
-    # friends = pd.read_sql(sql, conn)['sender'].unique().tolist()
-    # conn.close()
-    # for frd in friends:
-    #     log.info(f"【{friends.index(frd)}/{len(friends)}】:\t{frd}")
-    #     analysis.load_data(frd)
-    # mydf = analysis.export_data()
+
+    # analysis.load_data("梅富忠")
+    # sdf = analysis.export_data()
 
     # 仅处理mp3文件
     analysis.load_data_mp3()
@@ -264,6 +256,6 @@ if __name__ == '__main__':
     # analysis.analyze_messages()
     # analysis.save_report('wechat_report.txt')
     analysis.close()
-    compact_sqlite3_db(dbname)
+    # compact_sqlite3_db(dbname)
     if not_IPython():
         log.info(f"文件\t{__file__}\t运行结束。")
