@@ -248,7 +248,7 @@ def clean4timecl(name, dbname, confirm):
     # 把空值None转换为空字符串""
     df2.loc[:, 'content'] = df2['content'].apply(lambda x: "" if x is None else x)
     # 处理成相对路径，逻辑是准备把所有音频等文件集中到主运行环境
-    ptn = re.compile(r"^/\W+happyjoplin/")
+    ptn = re.compile(r"^/.+happyjoplin/")
     df2.loc[:, 'content'] = df2['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
 
     outdf = df2.drop_duplicates()
@@ -303,8 +303,8 @@ if __name__ == "__main__":
     dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
     wcdatapath = getdirmain() / "data" / "webchat"
     dbname = os.path.abspath(wcdatapath / dbfilename)
-    name = "heart5"
-    outdf = clean4timecl(name, dbname, "no")
+    name = "白晔峰"
+    outdf = clean4timecl(name, dbname, "yes")
 
     if not_IPython():
         logstr = f"文件\t{__file__}\t运行完毕。"
