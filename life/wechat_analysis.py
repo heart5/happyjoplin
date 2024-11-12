@@ -64,16 +64,12 @@ class WeChatAnalysis:
         df = indf.dropna(subset=['time'])
         # 处理content的时间差前缀
         df.loc[:, 'content'] = df['content'].apply(lambda x:re.sub(r"(\[\w+前\]|\[刚才\])?", "", x) if x is not None else x)
-        # 把空值None转换为空字符串""
-        df.loc[:, 'content'] = df['content'].apply(lambda x: "" if x is None else x)
         
         # 处理多运行平台重复记录的图片或文件路径
         main_path = str(getdirmain().resolve())
         # 处理成相对路径，逻辑是准备把所有音频文件集中到主运行环境
         ptn = re.compile(r"^/.+happyjoplin/")
-        pathfilter_df = df[df['content'].apply(lambda x: bool(ptn.match(x)))]
-        log.info(f"包含类似/.../happyjoplin/*.*的文件记录共有{pathfilter_df.shape[0]}")
-        df.loc[:, 'content'] = df['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
+        df.loc[:, 'content'] = df['content'].apply(lambda x: re.sub(ptn, '', x) if isinstance(x, str) and ptn.match(x) else x)
         # 处理文件的相对路径，处理成绝对路径方便判断文件是否在本环境存在
         # df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if ((x is not None) and x.startswith('img/webchat')) else x)
         
@@ -86,7 +82,7 @@ class WeChatAnalysis:
         # 处理time字段存在int和str两种数据类型的可能
         outdf.loc[:, 'time'] = outdf['time'].apply(convert_intstr_datetime)
         # 处理录音的音频文件，转换为文字输出
-        outdf.loc[:, 'content'] = outdf['content'].apply(lambda x: v4txt(x, dbname) if x.endswith('.mp3') and os.path.exists(x) else x)
+        outdf.loc[:, 'content'] = outdf['content'].apply(lambda x: v4txt(x, dbname) if isinstance(x, str) and x.endswith('.mp3') and os.path.exists(x) else x)
         # 重新设置index，用读取的id列
         outdf.set_index('id', inplace=True)
         log.info(f"传入的DF数据有【{indf.shape[0]}】条，去除time为空后数据为【{df.shape[0]}】条，多重字段去重后还有【{outdf.shape[0]}】条")
@@ -110,9 +106,9 @@ class WeChatAnalysis:
         main_path = str(getdirmain().resolve())
         # 处理成相对路径，逻辑是准备把所有音频文件集中到主运行环境
         ptn = re.compile(r"^/.+happyjoplin/")
-        df.loc[:, 'content'] = df['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
+        df.loc[:, 'content'] = df['content'].apply(lambda x: re.sub(ptn, '', x) if isinstance(x, str) and ptn.match(x) else x)
         # 处理文件的相对路径，处理成绝对路径方便判断文件是否在本环境存在
-        df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if ((x is not None) and x.startswith('img/webchat')) else x)
+        df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if isinstance(x, str) and x.startswith('img/webchat') else x)
         outdf = df[df['content'].apply(lambda x: os.path.exists(x))]
         log.info(f"读取的MP3数据条目有【{df.shape[0]}】条，本运行环境实际存在的数据条目为【{outdf.shape[0]}】条")
         mp3s = outdf['content'].unique().tolist()
