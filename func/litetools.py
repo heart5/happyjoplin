@@ -301,8 +301,8 @@ if __name__ == "__main__":
     dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
     wcdatapath = getdirmain() / "data" / "webchat"
     dbname = os.path.abspath(wcdatapath / dbfilename)
-    name = "白晔峰"
-    outdf = clean4timecl(name, dbname, "yes")
+    name = "heart5"
+    outdf = clean4timecl(name, dbname, "no")
 
     if not_IPython():
         logstr = f"文件\t{__file__}\t运行完毕。"
