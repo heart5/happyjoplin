@@ -326,8 +326,9 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
             log.info(f"本地资源的记录数量（{itemnum}），本地登记的记录数量（{itemsnum4net}）" \
                      f"和笔记中登记的记录数量（{itemsnumfromnet}）相同，跳过")
             return
-    log.info(f"本地资源的记录数量（{itemnum}），登记的记录数量（{itemsnum4net}）" \
-             f"和笔记中登记的记录数量（{itemsnumfromnet}）三不相同，从笔记端拉取融合")
+    else:
+        log.info(f"本地资源的记录数量（{itemnum}），登记的记录数量（{itemsnum4net}）" \
+                 f"和笔记中登记的记录数量（{itemsnumfromnet}）三不相同，从笔记端拉取融合")
     reslst = getreslst(dftfileguid)
     # reslst = getnoteresource(dftfileguid)
     if len(reslst) != 0:
