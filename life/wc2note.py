@@ -330,15 +330,20 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
             fh.write(res.get("contentb"))
             fh.close()
             dfromnote = pd.concat([dfromnote, pd.read_excel(filetmp)])
-        dfcombine = pd.concat([dfromnote, df4name]).drop_duplicates().sort_values(['time'])
-        if dfcombine.shape[0] == itemsnumfromnet:
-            log.info(f"本地数据文件记录有{itemnum}条，笔记中资源文件记录数为{itemsnumfromnet}条，合并后总记录数量{dfcombine.shape[0]}没变化，跳过")
+        dfcombine = pd.concat([dfromnote, df4name])
+        ptn = re.compile(r"^/.+happyjoplin/")
+        dfcombine.loc[:, 'content'] = dfcombine['content'].apply(lambda x: re.sub(ptn, '', x) if isinstance(x, str) and ptn.match(x) else x)
+        dfcombinedone = dfcombine.drop_duplicates().sort_values(['time'])
+        if dfcombine.shape[0] != dfcombinedone.shape[0]:
+            log.info(f"云端笔记《{getnote(dftfileguid).title}》资源文件存在重复记录，从{dfcombine.shape[0]}去重后降至{dfcombinedone.shape[0]}")
+        if dfcombinedone.shape[0] == itemsnumfromnet:
+            log.info(f"本地数据文件记录有{itemnum}条，笔记中资源文件记录数为{itemsnumfromnet}条，合并后总记录数量{dfcombinedone.shape[0]}没变化，跳过")
             setcfpoptionvalue('happyjpwcitems', dftfilename, 'itemsnum', str(itemsnumfromnet))
             setcfpoptionvalue('happyjpwcitems', dftfilename, 'itemsnum4net', str(itemsnumfromnet))
             return
         log.info(f"本地数据文件记录数有{itemnum}条，笔记资源文件记录数为{itemsnumfromnet}条" \
-                f"，合并后记录总数为：\t{dfcombine.shape[0]}")
-        df4name = dfcombine
+                f"，合并后记录总数为：\t{dfcombinedone.shape[0]}")
+        df4name = dfcombinedone
     df2db(name, df4name, wcpath)
     note_desc = f"### 账号\t{name}\n### 记录数量\t{df4name.shape[0]}"
     df4name_desc = f"更新时间：{timenowstr}\t" \
