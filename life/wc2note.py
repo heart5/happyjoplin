@@ -273,6 +273,7 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
     """
     # global jpapi
 
+    forcerefresh = getinivaluefromcloud('wcitems', 'forcerefresh')
     ny = df4name['time'].iloc[0].strftime("%y%m")
     dftfilename = f"wcitems_{name}_{ny}.xlsx"
     dftallpath = wcpath / dftfilename
@@ -300,8 +301,11 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
         itemsnum_old = 0
     itemnum = df4name.shape[0]
     if itemnum == itemsnum_old:
-        log.info(f"笔记《{dftfilename}》的记录数量（{itemnum}）和本地登记数量相同，跳过")
-        return
+        if forcerefresh:
+            log.info(f"笔记《{dftfilename}》的记录数量（{itemnum}）和本地登记数量相同，但是强制更新！！！")
+        else:
+            log.info(f"笔记《{dftfilename}》的记录数量（{itemnum}）和本地登记数量相同，跳过")
+            return
 
     # print(dftfileguid)
     if (itemsnum4net := getcfpoptionvalue('happyjpwcitems', dftfilename, 'itemsnum4net')) is None:
@@ -315,9 +319,13 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
         nrlst = list()
         itemsnumfromnet = 0
     if itemsnum4net == itemsnumfromnet == itemnum:
-        log.info(f"本地资源的记录数量（{itemnum}），本地登记的记录数量（{itemsnum4net}）" \
-                 f"和笔记中登记的记录数量（{itemsnumfromnet}）相同，跳过")
-        return
+        if forcerefresh:
+            log.info(f"本地资源的记录数量（{itemnum}），本地登记的记录数量（{itemsnum4net}）" \
+                     f"和笔记中登记的记录数量（{itemsnumfromnet}）相同，但是要强制更新！！！")
+        else:
+            log.info(f"本地资源的记录数量（{itemnum}），本地登记的记录数量（{itemsnum4net}）" \
+                     f"和笔记中登记的记录数量（{itemsnumfromnet}）相同，跳过")
+            return
     log.info(f"本地资源的记录数量（{itemnum}），登记的记录数量（{itemsnum4net}）" \
              f"和笔记中登记的记录数量（{itemsnumfromnet}）三不相同，从笔记端拉取融合")
     reslst = getreslst(dftfileguid)
@@ -337,10 +345,13 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
         if dfcombine.shape[0] != dfcombinedone.shape[0]:
             log.info(f"云端笔记《{getnote(dftfileguid).title}》资源文件存在重复记录，从{dfcombine.shape[0]}去重后降至{dfcombinedone.shape[0]}")
         if dfcombinedone.shape[0] == itemsnumfromnet:
-            log.info(f"本地数据文件记录有{itemnum}条，笔记中资源文件记录数为{itemsnumfromnet}条，合并后总记录数量{dfcombinedone.shape[0]}没变化，跳过")
             setcfpoptionvalue('happyjpwcitems', dftfilename, 'itemsnum', str(itemsnumfromnet))
             setcfpoptionvalue('happyjpwcitems', dftfilename, 'itemsnum4net', str(itemsnumfromnet))
-            return
+            if forcerefresh:
+                log.info(f"本地数据文件记录有{itemnum}条，笔记中资源文件记录数为{itemsnumfromnet}条，合并后总记录数量{dfcombinedone.shape[0]}没变化，但是要强制更新！！！")
+            else:
+                log.info(f"本地数据文件记录有{itemnum}条，笔记中资源文件记录数为{itemsnumfromnet}条，合并后总记录数量{dfcombinedone.shape[0]}没变化，跳过")
+                return
         log.info(f"本地数据文件记录数有{itemnum}条，笔记资源文件记录数为{itemsnumfromnet}条" \
                 f"，合并后记录总数为：\t{dfcombinedone.shape[0]}")
         df4name = dfcombinedone
