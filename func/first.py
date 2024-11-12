@@ -11,10 +11,14 @@
 #       format_version: '1.3'
 # ---
 
-# %%
-"""
-首函，用于定位相对目录，丰富工作目录路径，还有构建路径的基本函数
-"""
+# %% [markdown]
+# # 首函
+
+# %% [markdown]
+# 首函，用于定位相对目录，丰富工作目录路径，还有构建路径的基本函数
+
+# %% [markdown]
+# ## 重要库导入
 
 # %%
 import os
@@ -28,6 +32,12 @@ with pathmagic.context():
 
 
 # %% [markdown]
+# ## 函数库
+
+# %% [markdown]
+# ### touchfilepath2depth(filepath: Path)
+
+# %% [markdown]
 # from func.logme import log
 
 
@@ -36,14 +46,12 @@ def touchfilepath2depth(filepath: Path):
     if not os.path.exists(os.path.split(str(filepath))[0]):
         os.makedirs(os.path.split(str(filepath))[0])
         print(f'目录《{os.path.split(str(filepath))[0]}》不存在，构建之。')
-    # else:
-    #     print(f'目录《{os.path.split(str(filepath))[0]}》已现实存在，不需要重新构建。')
-    # if not os.path.exists(str(filepath)):
-    #     fp = open(str(filepath), 'w', encoding='utf-8')
-    #     fp.close()
 
     return filepath
 
+
+# %% [markdown]
+# ### getdirmain()
 
 # %%
 def getdirmain():
@@ -51,8 +59,11 @@ def getdirmain():
     dirmainin = os.path.split(fdmodir)[0]
     dirmaininoutput = os.path.split(dirmainin)[0]
 
-    return Path(dirmaininoutput)
+    return Path(dirmaininoutput).resolve()
 
+
+# %% [markdown]
+# ### 定义全局变量
 
 # %%
 dirmainpath = getdirmain()
@@ -70,6 +81,9 @@ for p2i in path2include:
     sys.path.append(str(dirmainpath / p2i))
 # for dr in sys.path:
 #     print(dr)
+
+# %% [markdown]
+# ## 主函数，main()
 
 # %%
 if __name__ == '__main__':
