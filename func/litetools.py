@@ -245,11 +245,9 @@ def clean4timecl(name, dbname, confirm):
     df1 = df[~df.time.isnull()]
     df2 = df1.set_index('id')
 
-    # 把空值None转换为空字符串""
-    df2.loc[:, 'content'] = df2['content'].apply(lambda x: "" if x is None else x)
     # 处理成相对路径，逻辑是准备把所有音频等文件集中到主运行环境
     ptn = re.compile(r"^/.+happyjoplin/")
-    df2.loc[:, 'content'] = df2['content'].apply(lambda x: re.sub(ptn, '', x) if ptn.match(x) else x)
+    df2.loc[:, 'content'] = df2['content'].apply(lambda x: re.sub(ptn, '', x) if isinstance(x, str) and ptn.match(x) else x)
 
     outdf = df2.drop_duplicates()
     outdf = outdf.sort_values('time')
