@@ -107,14 +107,14 @@ def getownerfromfilename(fn):
 @timethis
 def txtfiles2dfdict(dpath, newfileonly=False):
     """
-    读取传入目录下符合标准（固定格式文件名）所有文本文件并提取融合分账号的df，
+    读取传入目录下符合标准（固定格式文件名）的文本文件并提取融合分账号的df，
     返回字典{name:dict}
     """
 
     fllst = [f for f in os.listdir(dpath) if f.startswith("chatitems")]
     names = list(set([getownerfromfilename(nm) for nm in fllst]))
     print(names)
-    # 如果设置为new，则找到每个账号的最新文本文件处理，否则是全部文本文件
+    # 如果设置为new，则找到每个账号的两个最新文本文件处理，否则则处理全部文本文件
     if newfileonly:
         fl3lst = [[getownerfromfilename(fl), fl, getfltime(dpath / fl)] for fl in fllst]
         fllstout = list()
@@ -141,7 +141,7 @@ def txtfiles2dfdict(dpath, newfileonly=False):
             print(f"{dfall.shape[0]}")
             dfdict.update({account:dfall})
         else:
-            dfall = dfin.drop_duplicates().sort_values(['time'])
+            dfall = dfin
             print(f"{dfall.shape[0]}")
             dfdict[account] = dfall
 
@@ -162,7 +162,12 @@ def getdaterange(start, end):
     else:
         dr = pd.date_range(pd.to_datetime(start.strftime("%F 23:59:59")), end, freq='M')
         drlst = list(dr)
-#         drlst.pop()
+        """
+        start = pd.to_datetime("2024-1-9")
+        end = pd.to_datetime("2024-11-18")
+        output:
+        [Timestamp('2024-01-31 23:59:59'), Timestamp('2024-02-29 23:59:59'), Timestamp('2024-03-31 23:59:59'), Timestamp('2024-04-30 23:59:59'), Timestamp('2024-05-31 23:59:59'), Timestamp('2024-06-30 23:59:59'), Timestamp('2024-07-31 23:59:59'), Timestamp('2024-08-31 23:59:59'), Timestamp('2024-09-30 23:59:59'), Timestamp('2024-10-31 23:59:59')]
+        """
         drlst.insert(0, start)
         drlst.append(end)
 
@@ -207,8 +212,7 @@ def txtdfsplit2xlsx(name, df, dpath, newfileonly=False):
                     oldnum = 0
                 if oldnum != dfp.shape[0]:
                     dftmp = pd.read_excel(fna)
-                    dfpall = pd.concat([dfp,dftmp]).drop_duplicates().sort_values(['time'],
-                                                                             ascending=False)
+                    dfpall = pd.concat([dfp,dftmp]).drop_duplicates().sort_values(['time'])
                     logstr = f"{fn}\t本地（文本文件）登记的记录数量为（{oldnum}），但新文本文件中" \
                         f"记录数量（{dfp.shape[0]}）条记录，" \
                         f"融合本地excel文件后记录数量为({dfpall.shape[0]})。覆盖写入所有新数据！"
@@ -241,7 +245,7 @@ def df2db(name, df4name, wcpath):
         endtime = df4name['time'].max().strftime("%F %T")
         loginstr = "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
         dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
-        dbname = os.path.abspath(wcpath / dbfilename)
+        dbname = str((wcpath / dbfilename).resolve())
         with lite.connect(dbname) as conn:
             tablename = f"wc_{name}"
             csql = f"create table if not exists {tablename} " + f"(id INTEGER PRIMARY KEY AUTOINCREMENT, time DATETIME, send BOOLEAN, sender TEXT, type TEXT, content TEXT)"
@@ -408,7 +412,6 @@ def getnotelist(name, wcpath, notebookguid):
             note_body_str = '\n\n---\n'.join(nrlst)
             note_body = f"{note_body_str}"
             notelistguid = createnote(title=notelisttitle, body=note_body, parent_id=notebookguid)
-            # notelistguid = makenote2(notelisttitle, notebody=note_body, parentnotebookguid=notebookguid).guid
             log.info(f"文件列表《{notelisttitle}》被首次创建！")
         setcfpoptionvalue('happyjpwcitems', "common", f'{name}_notelist_guid', str(notelistguid))
 
@@ -443,7 +446,7 @@ def getnotelist(name, wcpath, notebookguid):
     ptn = f"(wcitems_{name}_" + r"\d{4}.xlsx)\t(\S+)"
 #     print(ptn)
     finditems = re.findall(ptn, nrlst[1])
-    finditems = sorted(finditems, key=lambda x: x[0], reverse=True)
+    finditems = sorted(finditems, key=lambda x: (x[0], int(x[2])), reverse=True)
 #     print(finditems)
     print(numinnotedesc, numatlocal, len(finditems))
     if numinnotedesc == numatlocal == len(finditems):
@@ -452,7 +455,11 @@ def getnotelist(name, wcpath, notebookguid):
     findnotelst = searchnotes(f"title:wcitems_{name}_", parent_id=notebookguid)
     findnotelst = [[nt.title, nt.id, re.findall(r"记录数量\t(-?\d+)", nt.body)[0]] for nt in findnotelst]
     # findnotelst = [[nt.get("title"), note.get("id"), re.findall("记录数量\t(-?\d+)", nt.get("body"))[0]] for nt in findnotelst]
-    findnotelst = sorted(findnotelst, key=lambda x: x[0], reverse=True)
+    # 使用字典去重
+    unique_findnotelst = {item[0]: item for item in findnotelst}.values()
+    # 转换为列表
+    unique_findnotelst = list(unique_findnotelst)
+    findnotelst = sorted(unique_findnotelst, key=lambda x: (x[0], int(x[2])), reverse=True)
     nrlstnew = list()
     nrlstnew.append(re.sub(r"\t(-?\d+)", "\t" + f"{len(findnotelst)}", nrlst[0]))
     nrlstnew.append("\n".join(["\t".join(sonlst) for sonlst in findnotelst]))
