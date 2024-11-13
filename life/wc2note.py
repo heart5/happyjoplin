@@ -446,7 +446,7 @@ def getnotelist(name, wcpath, notebookguid):
     ptn = f"(wcitems_{name}_" + r"\d{4}.xlsx)\t(\S+)"
 #     print(ptn)
     finditems = re.findall(ptn, nrlst[1])
-    finditems = sorted(finditems, key=lambda x: (x[0], int(x[2])), reverse=True)
+    finditems = sorted(finditems, key=lambda x: x[0], reverse=True)
 #     print(finditems)
     print(numinnotedesc, numatlocal, len(finditems))
     if numinnotedesc == numatlocal == len(finditems):
