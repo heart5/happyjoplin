@@ -85,7 +85,7 @@ def v2t_vosk(vfile, quick=False):
 
 
 # %% [markdown]
-# ### v2t_funasr(vfile)
+# ### v2t_funasr(vfilelst)
 
 # %%
 @timethis
@@ -106,20 +106,25 @@ def v2t_funasr(vfilelst):
 
     txtlst = list()
     for vfile in vfilelst:
-        # 转换音频文件为文本
-        res = model.generate(
-            input = vfile,
-            cache={},
-            # language="auto",
-            language="cn",
-            use_itn=True,
-            batch_size_s=30,
-            merge_vad=True,
-            merge_length_s=10,
-        )
-        
+        log.info(f"【{vfilelst.index(vfile)}/{len(vfilelst)}】\t{vfile}")
+        try:
+            # 转换音频文件为文本
+            res = model.generate(
+                input = vfile,
+                cache={},
+                # language="auto",
+                language="cn",
+                use_itn=True,
+                batch_size_s=30,
+                merge_vad=True,
+                merge_length_s=10,
+            )
+
         # 处理转换后的文本
-        text = rich_transcription_postprocess(res[0]["text"])
+            text = rich_transcription_postprocess(res[0]["text"])
+        except Exception as E:
+            text = f"语音转换失败：{E}"
+        log.info(f"{text}")
         txtlst.append('【funasr】' + text)
     return txtlst
 
@@ -129,13 +134,16 @@ def v2t_funasr(vfilelst):
 
 # %%
 def v4txt(vfile, dbn): 
+    """
+    根据传入的文件路径在数据表中查询结果，如果不存在则执行语音转换并存入数据表
+    """
     # 检查v4txt数据表是否已经存在，不存在则构建之
     createsql = "CREATE TABLE v4txt ( id INTEGER PRIMARY KEY AUTOINCREMENT, filepath TEXT NOT NULL UNIQUE, text TEXT NOT NULL );"
     ifnotcreate('v4txt', createsql, dbn)
     # 连接到 sqlite3 数据库 
     conn = lite.connect(dbn) 
     cursor = conn.cursor()
-    
+ 
     # 查找文件路径对应的文本 
     cursor.execute("SELECT text FROM v4txt WHERE filepath = ?", (vfile,)) 
     result = cursor.fetchone() 
@@ -158,6 +166,71 @@ def v4txt(vfile, dbn):
 
 
 # %% [markdown]
+# ### batch_v4txt(vfilelst, dbn)
+
+# %%
+@timethis
+def batch_v4txt(vfilelst, dbn, batch_size=100):
+    """
+    批量转换文件路径列表并存入数据库
+    """
+    # 检查v4txt数据表是否已经存在，不存在则构建之
+    createsql = "CREATE TABLE IF NOT EXISTS v4txt (id INTEGER PRIMARY KEY AUTOINCREMENT, filepath TEXT NOT NULL UNIQUE, text TEXT NOT NULL);"
+    ifnotcreate('v4txt', createsql, dbn)
+
+    # 连接到 sqlite3 数据库
+    conn = lite.connect(dbn)
+    cursor = conn.cursor()
+
+    # 查找文件路径对应的文本
+    cursor.execute("SELECT filepath FROM v4txt")
+    existing_files = {row[0] for row in cursor.fetchall()}
+
+    # 过滤出需要转换的文件
+    files_to_convert = [vfile for vfile in vfilelst if vfile not in existing_files]
+
+    # 分批处理
+    for i in range(0, len(files_to_convert), batch_size):
+        log.info(f"【{i}/{len(files_to_convert)}】\t…………………………")
+        batch = files_to_convert[i:i + batch_size]
+        if batch:
+            # 调用 v2t_funasr 函数执行转换
+            texts = v2t_funasr(batch)
+
+            # 将转换后的文本存入 v4txt 数据表
+            for vfile, text in zip(batch, texts):
+                cursor.execute("INSERT  OR REPLACE INTO v4txt (filepath, text) VALUES (?, ?)", (vfile, text))
+            conn.commit()
+
+    # 关闭数据库连接
+    conn.close()
+
+
+# %% [markdown]
+# ### query_v4txt(vfile, dbn)
+
+# %%
+def query_v4txt(vfile, dbn):
+    """ 根据传入的文件路径在数据表中查询结果 """
+    # 连接到 sqlite3 数据库
+    conn = lite.connect(dbn)
+    cursor = conn.cursor()
+
+    # 查找文件路径对应的文本
+    cursor.execute("SELECT text FROM v4txt WHERE filepath = ?", (vfile,))
+    result = cursor.fetchone()
+
+    # 关闭数据库连接
+    conn.close()
+    if result:
+        # 如果找到相应的文本，则返回该文本
+        return result[0]
+    else:
+        # 如果找不到，则返回 vfile
+        return vfile
+
+
+# %% [markdown]
 # ## main，主函数
 
 # %%
@@ -172,9 +245,11 @@ if __name__ == '__main__':
     # outtxt = v2t_vosk(vfile)
     # outtxt = v2t_vosk(vfile, quick=True)
     vfilelst = ['/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241108-092025.mp3', '/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241109-011903.mp3', '/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241108-213337.mp3', '/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241109-011903.mp3', '/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241108-213452.mp3']
-    vfilelst = [vfile for vfile in vfilelst if os.path.exists(vfile)]
-    outtxt = v2t_funasr(vfilelst)
-    print(outtxt)
+    vfilelst_filter = [vfile for vfile in vfilelst if os.path.exists(vfile)]
+    print(vfilelst_filter)
+    # batch_v4txt(vfilelst_filter, dbname)
+    for file in vfilelst_filter:
+        print(f"{file}\t{query_v4txt(file, dbname)}")
 
     if not_IPython():
         log.info(f"文件\t{__file__}\t运行结束。")
