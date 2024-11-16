@@ -2,6 +2,7 @@
 # jupyter:
 #   jupytext:
 #     cell_metadata_filter: -all
+#     formats: ipynb,py:percent
 #     notebook_metadata_filter: jupytext,-kernelspec,-jupytext.text_representation.jupytext_version
 #     text_representation:
 #       extension: .py
@@ -41,7 +42,7 @@ with pathmagic.context():
         getnote
     from filedatafunc import getfilemtime as getfltime
     from life.wc2note import items2df
-    from etc.voice2txt import v2t_funasr, v4txt
+    from etc.voice2txt import query_v4txt, batch_v4txt
 
 
 # %% [markdown]
@@ -82,7 +83,7 @@ class WeChatAnalysis:
         # 处理time字段存在int和str两种数据类型的可能
         outdf.loc[:, 'time'] = outdf['time'].apply(convert_intstr_datetime)
         # 处理录音的音频文件，转换为文字输出
-        outdf.loc[:, 'content'] = outdf['content'].apply(lambda x: v4txt(x, dbname) if isinstance(x, str) and x.endswith('.mp3') and os.path.exists(x) else x)
+        outdf.loc[:, 'content'] = outdf['content'].apply(lambda x: query_v4txt(x, self.db_path) if isinstance(x, str) and x.endswith('.mp3') and os.path.exists(x) else x)
         # 重新设置index，用读取的id列
         outdf.set_index('id', inplace=True)
         log.info(f"传入的DF数据有【{indf.shape[0]}】条，去除time为空后数据为【{df.shape[0]}】条，多重字段去重后还有【{outdf.shape[0]}】条")
@@ -110,12 +111,9 @@ class WeChatAnalysis:
         # 处理文件的相对路径，处理成绝对路径方便判断文件是否在本环境存在
         df.loc[:, 'content'] = df['content'].apply(lambda x: str(getdirmain().resolve() / x) if isinstance(x, str) and x.startswith('img/webchat') else x)
         outdf = df[df['content'].apply(lambda x: os.path.exists(x))]
-        log.info(f"读取的MP3数据条目有【{df.shape[0]}】条，本运行环境实际存在的数据条目为【{outdf.shape[0]}】条")
         mp3s = outdf['content'].unique().tolist()
-        for mp3 in mp3s:
-            ix = mp3s.index(mp3)
-            log.info(f"【{ix + 1}/{len(mp3s)}】:\t{mp3}\t{outdf[outdf['content'] == mp3].iloc[0]['sender']}")
-            print(v4txt(mp3, dbname))
+        log.info(f"读取的MP3数据条目有【{df.shape[0]}】条，本运行环境实际存在的数据条目为【{outdf.shape[0]}】条，有效的文件数量为{len(mp3s)}个。")
+        batch_v4txt(mp3s, self.db_path)
         self.data_mp3 = outdf
 
     @timethis
