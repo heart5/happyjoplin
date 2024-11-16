@@ -51,12 +51,23 @@ def logit(func):
     """
     @wraps(func)
     def with_logging(*args, **kwargs):
-        args4show = [x[:50] + "...(参数超长，显示截断)"
-                     if ((type(x) == str) and (len(x) > 50)) else x for x in args]
+        def truncate(arg):
+            if isinstance(arg, str) and len(arg) > 50:
+                return arg[:50] + "...(参数超长，显示截断)"
+            elif isinstance(arg, list) and len(arg) > 10:
+                return arg[:10] + ["...(列表超长，显示截断)"]
+            elif isinstance(arg, dict) and len(arg) > 10:
+                truncated_dict = {k: arg[k] for i, k in enumerate(arg) if i < 10}
+                truncated_dict["...(字典超长，显示截断)"] = "..."
+                return truncated_dict
+            return arg
+        
+        args4show = [truncate(x) for x in args]
+        kwargs4show = {k: truncate(v) for k, v in kwargs.items()}
         if not_IPython():
-            log.info(f'{func.__name__}函数被调用，参数列表：{args4show}')
+            log.info(f'{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}')
         else:
-            print(f'{func.__name__}函数被调用，参数列表：{args4show}')
+            print(f'{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}')
 
         return func(*args, **kwargs)
     return with_logging
