@@ -295,6 +295,10 @@ def note_reply(msg):
         msg_information = deque2dict(recentmsg_deque)
         old_msg = msg_information.get(old_msg_id)
         print(old_msg)
+        if old_msg is None:
+            print(f"未找到有效msg_id，直接返回。原始信息如下：")
+            print(msg)
+            return
 
         msg_body = f"{old_msg.get('fmSender')}撤回了 {old_msg.get('fmType')} 消息\n{old_msg.get('fmTime')}\
             \n ⇣ \n{old_msg.get('fmText')}"
