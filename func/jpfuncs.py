@@ -68,6 +68,7 @@ def getapi():
                     for x in sonlst] for sonlst in splitlst])
 
     url = f"http://localhost:{kvdict.get('port')}"
+    # print(kvdict.get("token"), url)
     api = Api(token=kvdict.get("token"), url=url)
 
     return api
@@ -133,19 +134,34 @@ def getnoteswithfields(fields, limit=10):
 # ### getnote(id)
 
 # %%
-def getnote(id):
+def getnote(noteid):
     """
     通过id获取笔记的所有可能内容，NoteData
     """
     global jpapi
-    # 所有可能的属性名称：
-    # fields="id, parent_id, title, body, created_time, updated_time, is_conflict, latitude, longitude, altitude, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect")
-    # 经过测试，fields中不能携带的属性值有：
-    # latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect
-    fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id"
-    note = jpapi.get_note(id, fields=fields)
+    fields="parent_id, title, body, created_time, updated_time, is_conflict, latitude, longitude, altitude, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect"
+    flst = [fl.strip() for fl in fields.split(',')]
+    unallowedfllst = list()
+    for fl in flst:
+        flteststr = ','.join(['id', fl])
+        try:
+            note = jpapi.get_note(noteid.strip(), fields=flteststr)
+            # print(f"{fl}", end="\t")
+        except Exception as e:
+            unallowedfllst.append(fl)
+            # print("获值错误！")
+            # print(e)
+            continue
+        # print(getattr(note, fl))
+    resultlst = [fl for fl in flst if fl not in unallowedfllst]
+    resultlst.insert(0, 'id')
+    # print(resultlst)
+    if 'share_id' in resultlst:
+        log.info(f"笔记（id：{noteid}）非共享笔记！")
+    else:
+        log.info(f"笔记（id：{noteid}）位于共享笔记本中，应该是共享笔记！")
 
-    return note
+    return jpapi.get_note(noteid, fields=','.join(resultlst)) 
 
 
 # %% [markdown]
@@ -529,8 +545,12 @@ if __name__ == '__main__':
         log.info(f'开始运行文件\t{__file__}')
     # joplinport()
 
+    note_ids_to_monitor = ['a8ed272dcb594ad4beaaedf57ed7afb6', '9025c19f884c40609bef2133d1a224a1']  # 需要监控的笔记ID列表，替换为实际的GUID
+    for note_id in note_ids_to_monitor:
+        print(getnote(note_id))
+    
     # createnote(title="重生的笔记", body="some things happen", noteid_spec="3ffccc7c48fc4b25bcd7cf3841421ce5")
-    test_updatenote_imgdata()
+    # test_updatenote_imgdata()
     # test_modify_res()
     # log.info(f"ping服务器返回结果：\t{api.ping()}")
     # allnotes = getallnotes()[:6]
