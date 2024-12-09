@@ -56,11 +56,25 @@ class NoteMonitor:
             if 'content_by_date' not in note_info:
                 note_info['content_by_date'] = {}
 
+            # 初始化 first_fetch_time 为 None
+            if 'first_fetch_time' not in note_info:
+                note_info['first_fetch_time'] = None
+            if isinstance(note_info['first_fetch_time'], str):
+                note_info['first_fetch_time'] = datetime.strptime(note_info['first_fetch_time'], '%Y-%m-%d %H:%M:%S.%f')
+
+            # 初始化 note_update_time 为 None
+            if 'note_update_time' not in note_info:
+                note_info['note_update_time'] = None
+            if isinstance(note_info['note_update_time'], str):
+                note_info['note_update_time'] = datetime.strptime(note_info['note_update_time'], '%Y-%m-%d %H:%M:%S.%f')
+
     def add_note(self, note_id):
         if note_id not in self.monitored_notes:
             self.monitored_notes[note_id] = {
                 'title': '',
                 'update_count': 0,
+                'note_update_time': None,
+                'first_fetch_time': None,
                 'last_fetch_time': None,
                 'word_count_history': [],
                 'previous_word_count': 0,
@@ -77,8 +91,16 @@ class NoteMonitor:
         else:
             note_info['update_count'] = 1
 
+        if note_info['first_fetch_time'] is None:
+            if len(note_info['content_by_date']) == 0:
+                note_info['first_fetch_time'] = current_time
+            else:
+                timelst = [x for sonlst in note_info['content_by_date'].values() for (x, y) in sonlst]
+                note_info['first_fetch_time'] = min(timelst)
         note_info['last_fetch_time'] = current_time
-        note_info['title'] = getattr(getnote(note_id), 'title')
+        note = getnote(note_id)
+        note_info['title'] = getattr(note, 'title')
+        note_info['note_update_time'] = getattr(note, 'updated_time')
         note_info['word_count_history'].append(word_count)
         # print(note_id, type(note_info['content_by_date']))
 
@@ -102,7 +124,7 @@ class NoteMonitor:
                     date1 = datetime.strptime(date_str, '%Y年%m月%d日').date()
                     # print(type(date1))
                     # date_str_2 = date.strftime('%Y年%m月%d日')
-                    word_count = len(content.split())  # 计算字数
+                    word_count = len(content)  # 计算字数
 
                     note_info = self.monitored_notes[note_id]
                     self.update_word_count_by_date(note_info, date1, current_time, word_count)
@@ -151,6 +173,12 @@ class NoteMonitor:
                 if key == 'last_fetch_time' and isinstance(value, (datetime, date)):
                     # 将日期转换为字符串
                     serializable_info[key] = value.isoformat()
+                if key == 'first_fetch_time' and isinstance(value, (datetime, date)):
+                    # 将日期转换为字符串
+                    serializable_info[key] = value.isoformat()
+                if key == 'note_update_time' and isinstance(value, (datetime, date)):
+                    # 将日期转换为字符串
+                    serializable_info[key] = value.isoformat()
                 elif isinstance(value, dict):
                     # 对于包含日期的字典，转换日期键为字符串
                     serializable_value = {}
@@ -178,6 +206,10 @@ class NoteMonitor:
                     for key, value in note_info.items():
                         if key == 'last_fetch_time' and isinstance(value, str):
                             note_info[key] = datetime.fromisoformat(value)
+                        elif key == 'first_fetch_time' and isinstance(value, str):
+                            note_info[key] = datetime.fromisoformat(value)
+                        elif key == 'note_update_time' and isinstance(value, str):
+                            note_info[key] = datetime.fromisoformat(value)
                         elif key == 'content_by_date' and isinstance(value, dict):
                             content_by_date = {}
                             for date_str, updates in value.items():
@@ -195,30 +227,22 @@ class NoteMonitor:
 # ### monitor_notes(note_ids)
 
 # %%
-def monitor_notes(note_ids):
-    log.info(f'监控笔记 ID 列表: {note_ids_to_monitor}')
-
-    global jpapi
-    note_monitor = NoteMonitor()
-
+def monitor_notes(note_ids, note_monitor):
     for note_id in note_ids:
         note_monitor.add_note(note_id)
-        print(note_id)
         note = getnote(note_id)
         current_time = datetime.now()
         # 不是英文需要统计所有字数而不是英语单词
         # current_word_count = len(note.body.split())
         current_word_count = len(note.body)
+        last_update_time_note = getattr(note, 'updated_time')
 
         # 更新监控信息
-        if current_word_count != note_monitor.monitored_notes[note_id]['previous_word_count']:
+        if last_update_time_note != note_monitor.monitored_notes[note_id]['note_update_time']:
             note_monitor.update_monitor(note_id, current_time, current_word_count)
             note_monitor.monitored_notes[note_id]['previous_word_count'] = current_word_count
     # 保存监控状态
     note_monitor.save_state()
-
-    # 返回监控笔记用于后续更新
-    return note_monitor
 
 
 # %% [markdown]
@@ -226,39 +250,72 @@ def monitor_notes(note_ids):
 
 # %%
 def ensure_monitor_note_exists(title="监控笔记"):
-    global jpapi
     # 查找监控笔记
-    results = searchnotes(f"title:{title}")
-    if results:
-        monitor_note_id = results[0].id
-    else:
-        monitor_note_id = createnote(title=title, body="监控笔记已创建。")
+    if (monitor_note_id := getcfpoptionvalue("happyjpmonitor", "monitor", "monitor_id")) is None:
+        results = searchnotes(f"title:{title}")
+        if results:
+            monitor_note_id = results[0].id
+        else:
+            monitor_note_id = createnote(title=title, body="监控笔记已创建。")
+        setcfpoptionvalue('happyjpmonitor', 'monitor', 'monitor_id', monitor_note_id)
 
-    print(f"监控笔记id为：\t{monitor_note_id}")
     return monitor_note_id
-
 
 
 # %% [markdown]
 # ### log_monitor_info(monior_note_id, note_monitor)
 
 # %%
-def log_monitor_info(monitor_note_id, note_monitor):
-    global jpapi
-    body_content = "监控结果:\n\n"
-    
-    for note_id, info in note_monitor.monitored_notes.items():
+def monitor_log_info(title, note_ids_to_monitor, note_monitor):
+    """
+    检测器综合信息构建并输出
+    """
+    targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if k in note_ids_to_monitor}
+    body_content = f"## {title}\n"
+    for note_id, info in targetdict.items():
         body_content += f"笔记ID: {note_id}\n"
-        body_content += f"笔记标题: {info['title']}\n"
-        body_content += f"更新次数: {info['update_count']}\n"
-        body_content += f"最后抓取时间: {info['last_fetch_time']}\n"
+        body_content += f"### 笔记标题: {info['title']}\n"
+        body_content += f"最早抓取时间: {info['first_fetch_time']}\n"
+        body_content += f"最近抓取时间: {info['last_fetch_time']}\n"
+        body_content += f"笔记最近更新时间: {info['note_update_time']}\n"
+        body_content += f"有效抓取次数: {info['update_count']}\n"
         body_content += f"字数历史变化: {info['word_count_history']}\n"
-        body_content += f"笔记最新有效日期: {max(info['content_by_date'])}\n"
+        body_content += f"笔记内容最新有效日期: {max(info['content_by_date'])}\n"
         body_content += f"笔记有效日期数量: {len(info['content_by_date'])}\n\n"
 
-    # 更新监控笔记的内容
-    updatenote_body(monitor_note_id, body_content)
+    return body_content
 
+
+# %% [markdown]
+# ### split_ref()
+
+# %%
+def split_ref():
+    # 从指定待监控笔记列表笔记获取内容，分区块处理
+    note = getnote('2ec45f5b1a10470db1eb3e52462edd18')
+    bodystr = getattr(note, 'body')
+    note_links = getattr(note, 'body').split()
+    ptn = re.compile(r"^### (\w+)$", re.M)
+    section_lst_raw = re.split(ptn, bodystr)
+    section_lst = section_lst_raw[1:]
+    section_dict = dict([(section_lst[i*2].strip(), section_lst[i*2 + 1].strip()) for i in range(int(len(section_lst) / 2))])
+
+    outputstr = ""
+    for title in section_dict:
+        outputstr += "---\n"
+        # 提取笔记 ID
+        note_ids_to_monitor = [re.search(r'\(:/(.+)\)', link).group(1) for link in section_dict[title].split()]
+        
+        # 监控笔记
+        note_monitor = NoteMonitor()
+        monitor_notes(note_ids_to_monitor, note_monitor)  
+        
+        # 输出结果到监控笔记
+        outputstr += monitor_log_info(title, note_ids_to_monitor, note_monitor)  
+
+    monitor_note_id = ensure_monitor_note_exists()  # 确保监控笔记存在
+    # 更新监控笔记的内容
+    updatenote_body(monitor_note_id, outputstr)
 
 
 # %% [markdown]
@@ -269,14 +326,7 @@ if __name__ == '__main__':
     if not_IPython():
         log.info(f'开始运行文件\t{__file__}')
 
-    # 从指定待监控笔记列表笔记获取内容
-    note = getnote('2ec45f5b1a10470db1eb3e52462edd18')
-    note_links = getattr(note, 'body').split()
-    # 提取笔记 ID
-    note_ids_to_monitor = [re.search(r'\(:/(.+)\)', link).group(1) for link in note_links]
-    monitor_note_id = ensure_monitor_note_exists()  # 确保监控笔记存在
-    note_monitor = monitor_notes(note_ids_to_monitor)  # 监控笔记
-    log_monitor_info(monitor_note_id, note_monitor)  # 输出结果到监控笔记
+    split_ref()
 
     if not_IPython():
         log.info(f'Done.结束执行文件\t{__file__}')
