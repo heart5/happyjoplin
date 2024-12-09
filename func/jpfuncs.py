@@ -157,9 +157,11 @@ def getnote(noteid):
     resultlst.insert(0, 'id')
     # print(resultlst)
     if 'share_id' in resultlst:
-        log.info(f"笔记（id：{noteid}）非共享笔记！")
+        pass
+        # log.info(f"笔记（id：{noteid}）非共享笔记！")
     else:
-        log.info(f"笔记（id：{noteid}）位于共享笔记本中，应该是共享笔记！")
+        pass
+        # log.info(f"笔记（id：{noteid}）位于共享笔记本中，应该是共享笔记！")
 
     return jpapi.get_note(noteid, fields=','.join(resultlst)) 
 
