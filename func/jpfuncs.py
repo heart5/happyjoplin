@@ -22,6 +22,7 @@ import os
 import re
 # import requests
 # import subprocess
+import tempfile
 import arrow
 # import joppy
 # import datetime
@@ -233,6 +234,25 @@ def createresource(filename, title=None):
         res_title = filename.split("/")[-1]
     res_id = jpapi.add_resource(filename=filename, title=res_title)
     log.info(f"资源文件{filename}创建成功，纳入笔记资源系统管理，可以正常被调用！")
+
+    return res_id
+
+
+# %% [markdown]
+# ### createresourcefromobj(file_obj, title=None)
+
+# %%
+def createresourcefromobj(file_obj, title=None):
+    # 创建一个临时文件
+    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
+        # 将 BytesIO 的内容写入临时文件
+        tmpfile.write(file_obj.getvalue())
+        tmpfile_path = tmpfile.name
+
+    # 使用临时文件的路径调用 add_resource
+    res_id = jpapi.add_resource(filename=tmpfile_path, title=title)
+
+    log.info(f"资源文件《{title}》从file_obj创建成功，纳入笔记资源系统管理，可以正常被调用！")
 
     return res_id
 
@@ -468,10 +488,8 @@ def searchnotes(key, parent_id=None):
     传入关键字搜索并返回笔记列表，每个笔记中包含了所有可能提取field值
     """
     global jpapi
-    # 经过测试，fields中不能携带的属性值有：latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect
-    # note = api.get_note(id, fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id")
-    # note = api.get_note(id, fields="id, latitude, longitude, altitude")
-    fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id"
+    # 经过测试，fields中不能携带的属性值有：latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect，另外shared_id对于共享笔记本下的笔记无法查询，出错
+    fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, conflict_original_id"
     results = jpapi.search(query=key, fields=fields).items
     log.info(f"搜索“{key}”，找到{len(results)}条笔记")
     if parent_id:
