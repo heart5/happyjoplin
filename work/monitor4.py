@@ -110,14 +110,14 @@ class NoteMonitor:
                 continue
         daterange = pd.date_range(min(entries_dict), max(entries_dict))
         datezero = [date.date() for date in daterange if date.date() not in entries_dict]
-        log.info(f"笔记《{getattr(note, 'title')}的有效数据最早日期为{min(entries_dict)}，最新日期为{max(entries_dict)}，其中内容为空的条目数量为：{len(datezero)}")
+        log.info(f"笔记《{getattr(note, 'title')}》的有效数据最早日期为{min(entries_dict)}，最新日期为{max(entries_dict)}，其中内容为空的条目数量为：{len(datezero)}")
         note_info = self.monitored_notes[note_id]
         timelst = [x for sonlst in note_info['content_by_date'].values() for (x, y) in sonlst]
         str2time =lambda x: datetime.strptime(x, '%Y-%m-%d %H:%M:%S.%f') if isinstance(x, str) else x
         timelst = [str2time(x) for x in timelst]
         oldesttime = min(timelst)
         datezero_not_init = [date for date in datezero if date not in note_info['content_by_date']]
-        log.info(f"笔记《{getattr(note, 'title')}内容为空且还未初始化的日期列表为：{datezero_not_init}")
+        log.info(f"笔记《{getattr(note, 'title')}》内容为空且还未初始化的日期列表为：{datezero_not_init}")
         for date in datezero_not_init:
             if note_info['fetch_count'] != 1:
                 note_info['content_by_date'][date] = [(oldesttime, 0)]
@@ -251,10 +251,12 @@ def ensure_monitor_note_exists(title="监控笔记"):
 # %%
 def monitor_log_info(title, note_ids_to_monitor, note_monitor):
     """
-    检测器综合信息构建并输出
+    综合输出指定title和ids的监测情况
     """
     # 只处理输入的note_id列表，因为note_monitor包含了所有
-    targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if k in note_ids_to_monitor}
+    targetdict = {note_id: note_info for note_id, note_info in note_monitor.monitored_notes.items() if note_id in note_ids_to_monitor}
+    # 排序，按照note_info的last_fetch_time倒序排列
+    targetdict = dict(sorted(targetdict.items(), key=lambda item:item[1]['last_fetch_time']), reverse=True)
     body_content = f"## {title}\n"
     for note_id, info in targetdict.items():
         body_content += f"笔记ID: {note_id}\n"
