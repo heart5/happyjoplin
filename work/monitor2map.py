@@ -79,12 +79,12 @@ def plot_word_counts(daily_counts, title):
     # 将字典转换为 DataFrame，方便处理
     df = pd.DataFrame(list(daily_counts.items()), columns=['date', 'count'])
     df['date'] = pd.to_datetime(df['date'])
-    
+
     # 添加年份和星期几列
     df['year'] = df['date'].dt.year
     df['week'] = df['date'].dt.isocalendar().week
     df['day_of_week'] = df['date'].dt.weekday
-    
+
     # 确保数据正确处理跨年周数
     df.loc[(df['week'] == 1) & (df['date'].dt.month == 12), 'week'] = 53
 
@@ -92,48 +92,46 @@ def plot_word_counts(daily_counts, title):
     min_date = df['date'].min()
     current_date = pd.to_datetime(datetime.now().date())
 
-    # 创建一个透视表
+    # 创建一个透视表，确保缺失值填充为零
     pivot_table = df.pivot_table(index='week', columns='day_of_week', values='count', aggfunc='sum', fill_value=0)
 
     # 自定义颜色映射
-    dark_gray = '#A9A9A9'  # 更暗的灰色
-    # dark_gray = '#5C4033'  # 暗红色
-    colors = [dark_gray if min_date <= pd.to_datetime(date) <= current_date else 'white' for date in df['date']]
-    colors = [dark_gray] + list(plt.cm.Greens(np.linspace(0.3, 1, 256)))  # 更暗的灰色 + 原始的绿色渐变
+    white = 'white'
+    warning_color = '#FFD700'  # 暗黄色
+    greens = list(plt.cm.Greens(np.linspace(0.3, 1, 254)))
+    colors = [white, warning_color] + greens
     cmap = mcolors.ListedColormap(colors)
-    norm = mcolors.Normalize(vmin=0, vmax=df['count'].max())
-    
+
+    # 设置边界，确保 count 为零时使用警示颜色
+    boundaries = [0, 1] + list(np.linspace(1.01, df['count'].max(), 255))
+    norm = mcolors.BoundaryNorm(boundaries=boundaries, ncolors=cmap.N, clip=True)
+
     # 创建图形
     fig, ax = plt.subplots(figsize=(15, 10))
     
     # 绘制热图
     heatmap = ax.pcolor(pivot_table.values, cmap=cmap, norm=norm, edgecolors='white', linewidths=2)
-    
+
     # 设置刻度
     ax.set_xticks(np.arange(7) + 0.5, minor=False)
     ax.set_yticks(np.arange(len(pivot_table.index)) + 0.5, minor=False)
-    
+
     # 标签
     ax.set_xticklabels(['一', '二', '三', '四', '五', '六', '日'], minor=False)
     ax.set_yticklabels(pivot_table.index, minor=False)
-    
+
     # 反转y轴
     ax.invert_yaxis()
-    
+
     # 添加颜色条
     cbar = plt.colorbar(heatmap)
     cbar.set_label('更新字数')
     
-    # 设置标题
     plt.title(title)
 
-    # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
     plt.savefig(buffer, format='png')
     buffer.seek(0)
-    # image_base64 = base64.b64encode(buffer.read()).decode()
-    
-    # plt.show()
     plt.close(fig)
 
     return buffer
@@ -176,6 +174,16 @@ def heatmap2note():
                 break
         if should_plot:
             heatmap_id = get_heatmap_note_id(person)
+            oldnote = getnote(heatmap_id)
+            res_ids = [re.search(r'\(:/(.+)\)', link).group(1) for link in getattr(oldnote, "body").split()]
+            print(f"笔记《{getattr(oldnote, 'title')}》中包含以下资源文件：{res_ids}，不出意外将被删除清理！")
+            jpapi = getapi()
+            for resid in res_ids:
+                try:
+                    jpapi.delete_resource(resid)
+                except Exception as e:
+                    print(e)
+
             newbodystr = ""
             for k, v in stat2df(person).items():
                 buffer = plot_word_counts(v, k)
