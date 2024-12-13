@@ -256,15 +256,16 @@ def monitor_log_info(title, note_ids_to_monitor, note_monitor):
     # 只处理输入的note_id列表，因为note_monitor包含了所有
     targetdict = {note_id: note_info for note_id, note_info in note_monitor.monitored_notes.items() if note_id in note_ids_to_monitor}
     # 排序，按照note_info的last_fetch_time倒序排列
-    targetdict = dict(sorted(targetdict.items(), key=lambda item:item[1]['last_fetch_time']), reverse=True)
+    targetdict = dict(sorted(targetdict.items(), key=lambda item:item[1]['last_fetch_time'], reverse=True))
+    # print(len(targetdict))
     body_content = f"## {title}\n"
     for note_id, info in targetdict.items():
         body_content += f"笔记ID: {note_id}\n"
         body_content += f"### 笔记标题: {info['title']}\n"
-        body_content += f"抓取时间起止: {info['first_fetch_time']}，"
-        body_content += f"{info['last_fetch_time']}\n"
+        body_content += f"抓取时间起止: {info['first_fetch_time'].strftime('%Y-%m-%d %H:%M:%S')}，"
+        body_content += f"{info['last_fetch_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         body_content += f"有效抓取次数: {info['fetch_count']}\n"
-        body_content += f"笔记最近更新时间: {info['note_update_time']}\n"
+        body_content += f"笔记最近更新时间: {info['note_update_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         body_content += f"字数历史变化: {info['word_count_history']}\n"
         body_content += f"笔记有效内容起止日期: {min(info['content_by_date'])}，"
         body_content += f"{max(info['content_by_date'])}\n"
