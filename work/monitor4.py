@@ -57,10 +57,20 @@ class NoteMonitor:
             if 'content_by_date' not in note_info:
                 note_info['content_by_date'] = {}
 
+            # 初始化 person 为str
+            if 'person' not in note_info:
+                note_info['person'] = ""
+
+            # 初始化 section 为str
+            if 'section' not in note_info:
+                note_info['section'] = ""
+
     def add_note(self, note_id):
         if note_id not in self.monitored_notes:
             self.monitored_notes[note_id] = {
                 'title': '',
+                'person': '',
+                'section': '',
                 'fetch_count': 0,
                 'note_update_time': None,
                 'first_fetch_time': None,
@@ -87,10 +97,20 @@ class NoteMonitor:
         note_info['last_fetch_time'] = current_time
         note = getnote(note_id)
         note_info['title'] = getattr(note, 'title')
+        if len(note_info['person']) == 0:
+            ptn = re.compile(r"[(（](\w+)[)）]")
+            if (grp := re.findall(ptn, note_info['title'])):
+                note_info['person'] = grp[0]
         note_info['note_update_time'] = getattr(note, 'updated_time')
         note_info['word_count_history'].append(word_count)
+        log.info(f"笔记《{note_info['title']}》进入监测并更新相应数据……")
         # 更新 content_by_date
         self.update_content_by_date(note_id, current_time, word_count)
+
+    def update_section_for_note_id(self, note_id, section):
+        note_info = self.monitored_notes[note_id]
+        if len(note_info['section']) == 0:
+            note_info["section"] = section
 
     def update_content_by_date(self, note_id, current_time, word_count):
         note = getnote(note_id)
@@ -99,7 +119,10 @@ class NoteMonitor:
         ptn = re.compile(r"^###\s+(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)\s*$", re.M)
         date_lst_raw = re.split(ptn, note_content.strip())
         entries_dict = dict(zip([datetime.strptime(re.sub(r"\s+", "", datestr), '%Y年%m月%d日').date() for datestr in date_lst_raw[1::2]], date_lst_raw[2::2]))
-        # print(entries_dict)
+        # print(f"before(from raw):{entries_dict}")
+        # 无有效日期文本数据对则返回
+        if len(entries_dict) == 0:
+            return
 
         for entry in entries_dict:
             try:
@@ -107,7 +130,9 @@ class NoteMonitor:
                 note_info = self.monitored_notes[note_id]
                 self.update_word_count_by_date(note_info, entry, current_time, word_count)
             except ValueError:
+                print(entry)
                 continue
+        # print(f"after(update word count done):{entries_dict}")
         daterange = pd.date_range(min(entries_dict), max(entries_dict))
         datezero = [date.date() for date in daterange if date.date() not in entries_dict]
         log.info(f"笔记《{getattr(note, 'title')}》的有效数据最早日期为{min(entries_dict)}，最新日期为{max(entries_dict)}，其中内容为空的条目数量为：{len(datezero)}")
@@ -260,6 +285,9 @@ def monitor_log_info(title, note_ids_to_monitor, note_monitor):
     # print(len(targetdict))
     body_content = f"## {title}\n"
     for note_id, info in targetdict.items():
+        if len(info['content_by_date']) == 0:
+            log.info(f"笔记《{info['title']}》的有效日期内容为空，跳过")
+            continue
         body_content += f"笔记ID: {note_id}\n"
         body_content += f"### 笔记标题: {info['title']}\n"
         body_content += f"抓取时间起止: {info['first_fetch_time'].strftime('%Y-%m-%d %H:%M:%S')}，"
@@ -290,15 +318,34 @@ def split_ref():
 
     # 监控笔记
     note_monitor = NoteMonitor()
+
     outputstr = ""
-    for title in section_dict:
+    person_updated = False # person更新开关
+    section_updated = False # section更新开关
+    person_ptn = re.compile(r"[(（](\w+)[)）]") # 识别title中person的正则表达式
+    for section in section_dict:
         outputstr += "---\n"
-        # 提取笔记 ID
-        note_ids_to_monitor = [re.search(r'\(:/(.+)\)', link).group(1) for link in section_dict[title].split()]
+        # 提取笔记 ID并监测指定section的笔记列表
+        note_ids_to_monitor = [re.search(r'\(:/(.+)\)', link).group(1) for link in section_dict[section].split()]
         monitor_notes(note_ids_to_monitor, note_monitor)  
 
-        # 输出结果到监控笔记
-        outputstr += monitor_log_info(title, note_ids_to_monitor, note_monitor)  
+        # 检查person和section是否已经设置，没有设置则设置之
+        for note_id in note_ids_to_monitor:
+            info = note_monitor.monitored_notes[note_id]
+            if len(info["person"]) == 0:
+                if (grp := re.findall(person_ptn, info['title'])):
+                    info['person'] = grp[0]
+                    person_updated = True
+            if len(info["section"]) == 0:
+                info["section"] = section
+                section_updated = True
+
+        # 累加生成输出结果
+        outputstr += monitor_log_info(section, note_ids_to_monitor, note_monitor)
+
+    # 如果section设置开关为真则保存状态文件
+    if section_updated or person_updated:
+        note_monitor.save_state()
 
     monitor_note_id = ensure_monitor_note_exists()  # 确保监控笔记存在
     # 更新监控笔记的内容
