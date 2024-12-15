@@ -74,61 +74,129 @@ def stat2df(person):
 # %%
 def plot_word_counts(daily_counts, title):
     """
-    图形化输出函数
+    图形化输出函数，使用热图展示每天的字数统计。
+
+    Args:
+      daily_counts: 包含日期和对应字数的字典，例如：
+        {'2023-10-26': 1200, '2023-10-27': 850, ...}
+      title: 图表的标题。
+
+    Returns:
+      包含生成的 PNG 图像的 io.BytesIO 对象。
     """
-    # 将字典转换为 DataFrame，方便处理
+
+    # 1. 数据预处理
     df = pd.DataFrame(list(daily_counts.items()), columns=['date', 'count'])
     df['date'] = pd.to_datetime(df['date'])
 
-    # 添加年份和星期几列
+    # 2. 确定最小日期和当前日期所在周的第一天和最后一天
+    min_date = df['date'].min()
+    current_date = pd.to_datetime(datetime.now().date())
+    # print(min_date, type(min_date), current_date, type(current_date))
+    min_week_start = min_date - timedelta(days=min_date.weekday())
+    current_week_end = current_date + timedelta(days=6 - current_date.weekday())
+
+    # 3. 创建完整日期范围，包含补齐的日期
+    all_dates = pd.date_range(start=min_week_start, end=current_week_end)
+    all_dates_df = pd.DataFrame({'date': all_dates, 'count': -1})
+
+    # 4. 合并数据，保留原始 count 值
+    df = pd.concat([df, all_dates_df], ignore_index=True)
+    df = df.drop_duplicates(subset=['date'], keep='first')
+    df = df.sort_values(by='date').reset_index(drop=True)
+
+    # 5. 添加年份和星期几列
     df['year'] = df['date'].dt.year
     df['week'] = df['date'].dt.isocalendar().week
     df['day_of_week'] = df['date'].dt.weekday
 
-    # 确保数据正确处理跨年周数
+    # 6. 确保数据正确处理跨年周数
     df.loc[(df['week'] == 1) & (df['date'].dt.month == 12), 'week'] = 53
 
-    # 获取最小日期和当前日期
-    min_date = df['date'].min()
-    current_date = pd.to_datetime(datetime.now().date())
+    # 7. 创建透视表
+    pivot_table = df.pivot_table(
+        index='week', columns='day_of_week', values='count', aggfunc='sum', fill_value=-1
+    )
 
-    # 创建一个透视表，确保缺失值填充为零
-    pivot_table = df.pivot_table(index='week', columns='day_of_week', values='count', aggfunc='sum', fill_value=0)
-
-    # 自定义颜色映射
+    # 8. 自定义颜色映射
     white = 'white'
-    warning_color = '#FFD700'  # 暗黄色
-    greens = list(plt.cm.Greens(np.linspace(0.3, 1, 254)))
-    colors = [white, warning_color] + greens
+    warning_color = '#FFD700' 
+
+    # --- Dynamically determine the number of color bins ---
+    max_count = int(df['count'].max())
+    num_bins = min(max_count + 2, 254)  # Limit bins to a maximum of 254 
+
+    # --- CORRECTED BOUNDARIES CALCULATION --- 
+    boundaries = [-1, 0] + list(np.linspace(1, max_count + 1, num_bins - 1))
+    # ----------------------------------------
+
+    # 根据 count 值生成颜色
+    greens = list(plt.cm.Greens(np.linspace(0.3, 1, num_bins - 2))) 
+    colors = [white, warning_color] + greens 
     cmap = mcolors.ListedColormap(colors)
 
-    # 设置边界，确保 count 为零时使用警示颜色
-    boundaries = [0, 1] + list(np.linspace(1.01, df['count'].max(), 255))
+    # 9. 设置边界，确保 count 为零时使用警示颜色，count 为 -1 时使用白色
     norm = mcolors.BoundaryNorm(boundaries=boundaries, ncolors=cmap.N, clip=True)
-
-    # 创建图形
-    fig, ax = plt.subplots(figsize=(15, 10))
     
-    # 绘制热图
-    heatmap = ax.pcolor(pivot_table.values, cmap=cmap, norm=norm, edgecolors='white', linewidths=2)
+    # 10. 创建图形
+    fig, ax = plt.subplots(figsize=(15, 10))
 
-    # 设置刻度
+    # 11. 绘制热图
+    heatmap = ax.pcolor(
+        pivot_table.values, cmap=cmap, norm=norm, edgecolors='white', linewidths=2
+    )
+
+    # 12. 设置刻度和标签
     ax.set_xticks(np.arange(7) + 0.5, minor=False)
     ax.set_yticks(np.arange(len(pivot_table.index)) + 0.5, minor=False)
-
-    # 标签
     ax.set_xticklabels(['一', '二', '三', '四', '五', '六', '日'], minor=False)
     ax.set_yticklabels(pivot_table.index, minor=False)
 
-    # 反转y轴
+    # 13. 反转 y 轴
     ax.invert_yaxis()
 
-    # 添加颜色条
+    # 14. 添加颜色条
     cbar = plt.colorbar(heatmap)
     cbar.set_label('更新字数')
-    
+
+    # 15. 设置标题
     plt.title(title)
 
+    # --- 添加起始日期和当前日期标记 ---
+    # 找到最小日期和当前日期在热图中的位置
+    min_date_week = df[df['date'] == min_date]['week'].iloc[0]
+    print(df[df['date'] == min_date])
+    min_date_weekday = df[df['date'] == min_date]['day_of_week'].iloc[0]
+    print(df[df['date'] == current_date])
+    current_date_week = df[df['date'] == current_date]['week'].iloc[0]
+    current_date_weekday = df[df['date'] == current_date]['day_of_week'].iloc[0]
+
+    # 在最小日期的格子中添加日期文本
+    ax.text(
+        min_date_weekday + 0.5,
+        min_date_week - min(pivot_table.index) + 0.5,
+        min_date.strftime('%m-%d'),
+        ha='center',
+        va='center',
+        color='black',
+        fontsize=8,
+    )
+
+    # 为当前日期的格子添加红色虚线边框
+    ax.add_patch(
+        plt.Rectangle(
+            (current_date_weekday, current_date_week - min(pivot_table.index)),
+            1,
+            1,
+            fill=False,
+            edgecolor='red',
+            linestyle='--',
+            linewidth=2,
+        )
+    )
+    # --- 标记添加完成 ---
+
+    # 16. 将图像保存到 BytesIO 对象并返回
     buffer = io.BytesIO()
     plt.savefig(buffer, format='png')
     buffer.seek(0)
@@ -164,25 +232,23 @@ def heatmap2note():
     ptn = re.compile(r"[(（](\w+)[)）]")
     person_lst = list(set([re.findall(ptn, info['title'])[0] for note_id, info in note_monitor.monitored_notes.items()]))
     print(person_lst)
-    # person = '耿华忠'
+    jpapi = getapi()
     for person in person_lst:
+        # 筛选出指定person相关的{note_id:note_info}字典
         targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person in v['title']}
         should_plot = False
         for note_id, note_info in targetdict.items():
-            if getattr(getnote(note_id), 'updated_time') != note_info['note_update_time']:
+            if len(note_info['content_by_date']) == 0:
+                log.info(f"笔记《{note_info['title']}》的有效日期内容为空，跳过")
+                continue
+            else:
+                log.info(f"笔记《{note_info['title']}》进入热图处理程序……")
+            if (person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'):
                 should_plot = True
-                break
+                setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'))
         if should_plot:
             heatmap_id = get_heatmap_note_id(person)
             oldnote = getnote(heatmap_id)
-            res_ids = [re.search(r'\(:/(.+)\)', link).group(1) for link in getattr(oldnote, "body").split()]
-            print(f"笔记《{getattr(oldnote, 'title')}》中包含以下资源文件：{res_ids}，不出意外将被删除清理！")
-            jpapi = getapi()
-            for resid in res_ids:
-                try:
-                    jpapi.delete_resource(resid)
-                except Exception as e:
-                    print(e)
 
             newbodystr = ""
             for k, v in stat2df(person).items():
@@ -190,7 +256,21 @@ def heatmap2note():
                 title=f"{k}-{person}"
                 res_id = createresourcefromobj(buffer, title=title)
                 newbodystr += f"![{title}](:/{res_id})" + "\n"
+
             updatenote_body(heatmap_id, newbodystr)
+            # 操作成功后再删除原始笔记中的资源文件
+            res_ids = [re.search(r'\(:/(.+)\)', link).group(1) for link in getattr(oldnote, "body").split()]
+            print(f"笔记《{getattr(oldnote, 'title')}》中包含以下资源文件：{res_ids}，不出意外将被删除清理！")
+            for resid in res_ids:
+                try:
+                    jpapi.delete_resource(resid)
+                except Exception as e:
+                    print(e)
+        # 操作成功后再setcfpoptionvalue
+        for note_id, note_info in targetdict.items():
+            if (person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'):
+                setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'))
+
 
 
 # %% [markdown]
