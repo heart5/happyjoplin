@@ -54,11 +54,12 @@ def stat2df(person):
     统计指定人员的相关笔记更新记录
     """
     note_monitor = NoteMonitor()
-    targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person in v['title']}
+    # 筛选出指定person的数据字典
+    targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person == v['person']}
     # print(targetdict)
     title_count_dict = {}
     for note_id, note_info in targetdict.items():
-        daily_counts = {}
+        daily_counts = {} # 采用字典数据类型，确保日期唯一
         for date_key, updates in note_info['content_by_date'].items():
             # 获取最后一次更新的字数
             last_update_time, word_count = updates[-1]
@@ -241,11 +242,8 @@ def heatmap2note():
             if len(note_info['content_by_date']) == 0:
                 log.info(f"笔记《{note_info['title']}》的有效日期内容为空，跳过")
                 continue
-            else:
-                log.info(f"笔记《{note_info['title']}》进入热图处理程序……")
-            if (person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'):
+            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S') or (person_note_update_time != getattr(getnote(note_id), "updated_time").strftime('%Y-%m-%d %H:%M:%S')):
                 should_plot = True
-                setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'))
         if should_plot:
             heatmap_id = get_heatmap_note_id(person)
             oldnote = getnote(heatmap_id)
@@ -268,9 +266,8 @@ def heatmap2note():
                     print(e)
         # 操作成功后再setcfpoptionvalue
         for note_id, note_info in targetdict.items():
-            if (person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'):
+            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'):
                 setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'))
-
 
 
 # %% [markdown]
