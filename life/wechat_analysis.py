@@ -26,6 +26,7 @@ import pandas as pd
 from pathlib import Path
 from collections import Counter
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 # %%
 import pathmagic
@@ -226,6 +227,86 @@ class WeChatAnalysis:
         """关闭数据库连接"""
         self.conn.close()
 
+
+# %% [markdown]
+# ### analysis_group(sdf, fromdatestr)
+
+# %%
+def analysis_group(sdf, fromdatestr):
+    """
+    分析传入的群信息，带起始日期字符串
+    """
+    c1sdf = sdf.drop_duplicates()
+    df = c1sdf[~c1sdf.content.isnull()]
+    c2df = df[(df.type == 'Note') & (df.sender.str.contains('群')) & (~df.content.str.contains("[撤回|recalled]", regex=True))]
+    # Basic statistics
+    print(c2df.describe())
+
+    # Count the number of messages per sender
+    message_counts = c2df['sender'].value_counts()
+    print(message_counts)
+
+    def fre_plot(df):
+        import matplotlib.pyplot as plt
+
+        # Convert 'time' column to datetime
+        df['time'] = pd.to_datetime(df['time'])
+
+        # Plot message frequency over time
+        plt.figure(figsize=(12, 6))
+        df['time'].groupby(df['time'].dt.date).count().plot(kind='line')
+        plt.title('Message Frequency Over Time')
+        plt.xlabel('日期')
+        plt.ylabel('Number of Messages')
+        plt.show()
+
+    fre_plot(c2df)
+
+    notimg_df = c2df[~c2df.content.str.contains(r'img/webchat', regex=True)]
+    tdf = notimg_df[notimg_df.type != 'Sharing']
+    tdf = tdf[(tdf.type != "False") & (tdf.type != "True")]
+
+    def cloud_plot(tdf, fromdatestr):
+        from wordcloud import WordCloud
+
+        # Combine all text content
+        text = ' '.join(tdf[tdf.time >= arrow.get(fromdatestr).to("Asia/Shanghai").datetime]['content'])
+
+        # Generate word cloud
+        wordcloud = WordCloud(width=800, height=400, background_color='white', font_path=font_path).generate(text)
+
+        # Display the word cloud
+        plt.figure(figsize=(10, 5))
+        plt.imshow(wordcloud, interpolation='bilinear')
+        plt.axis('off')
+        plt.show()
+
+    if fromdatestr == None:
+        fromdatestr = "2024-10-01"
+    cloud_plot(tdf, fromdatestr)
+
+    def text_plot(df):
+        from textblob import TextBlob
+
+        # Function to get sentiment
+        def get_sentiment(text):
+            blob = TextBlob(text)
+            return blob.sentiment.polarity
+
+        # Apply sentiment analysis
+        df['sentiment'] = df['content'].apply(get_sentiment)
+
+        # Plot sentiment over time
+        plt.figure(figsize=(12, 6))
+        df['sentiment'].groupby(df['time'].dt.date).mean().plot(kind='line')
+        plt.title('Sentiment Over Time')
+        plt.xlabel('Date')
+        plt.ylabel('Sentiment')
+        plt.show()
+
+    text_plot(c2df)
+
+
 # %% [markdown]
 # ## main，主函数
 
@@ -240,7 +321,7 @@ if __name__ == '__main__':
     name = "白晔峰"
     analysis = WeChatAnalysis(dbname, name, chunk_size=800000)
 
-    # analysis.load_data("梅富忠")
+    # analysis.load_data("MS五群")
     # sdf = analysis.export_data()
 
     # 仅处理mp3文件
