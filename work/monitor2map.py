@@ -39,7 +39,7 @@ with pathmagic.context():
     # from func.nettools import ifttt_notify
     # from etc.getid import getdevicename, gethostuser
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
-    from func.jpfuncs import getapi, getnote, searchnotes, createnote, updatenote_body, createresourcefromobj
+    from func.jpfuncs import getinivaluefromcloud, getapi, getnote, searchnotes, createnote, updatenote_body, createresourcefromobj
 
 
 # %% [markdown]
@@ -57,13 +57,23 @@ def stat2df(person):
     # 筛选出指定person的数据字典
     targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person == v['person']}
     # print(targetdict)
+    # 过滤日期超过当天一天之内的日期数据对
+    one_days_later = datetime.now().date() + timedelta(days=1)
     title_count_dict = {}
+
     for note_id, note_info in targetdict.items():
         daily_counts = {} # 采用字典数据类型，确保日期唯一
-        for date_key, updates in note_info['content_by_date'].items():
+        # 过滤掉可能的超纲日期
+        for date_key, updates in [(date, updates) for date, updates in note_info['content_by_date'].items() if date < one_days_later]:
             # 获取最后一次更新的字数
             last_update_time, word_count = updates[-1]
-            daily_counts[date_key] = word_count  # 使用日期作为键，字数作为值
+            # 检查 updates 的长度
+            if len(updates) > 1:
+                addedLater = True  # 标记该日期
+            else:
+                addedLater = False
+            daily_counts[date_key] = (word_count, addedLater)  # 使用日期作为键，字数和后补布林值作为值
+
         outlst = sorted(daily_counts.items(), key=lambda kv: kv[0])
         title_count_dict[note_info['title']] = dict(outlst)
     return title_count_dict
@@ -85,38 +95,71 @@ def plot_word_counts(daily_counts, title):
     Returns:
       包含生成的 PNG 图像的 io.BytesIO 对象。
     """
+    if (monthrange := getinivaluefromcloud("monitor", "monthrange")) is None:
+        monthrange = 3
 
     # 1. 数据预处理
-    df = pd.DataFrame(list(daily_counts.items()), columns=['date', 'count'])
-    df['date'] = pd.to_datetime(df['date'])
+    dfall = pd.DataFrame([[k, v[0], v[1]] for k, v in daily_counts.items()], columns=['date', 'count', 'addedlater'])
+    # print(df)
+    dfall['date'] = pd.to_datetime(dfall['date'])
 
-    # 2. 确定最小日期和当前日期所在周的第一天和最后一天
-    min_date = df['date'].min()
+    # 新2. 确定日期范围（最近三个月）
     current_date = pd.to_datetime(datetime.now().date())
-    # print(min_date, type(min_date), current_date, type(current_date))
-    min_week_start = min_date - timedelta(days=min_date.weekday())
-    current_week_end = current_date + timedelta(days=6 - current_date.weekday())
+    three_months_ago = current_date - pd.DateOffset(months=monthrange)
 
-    # 3. 创建完整日期范围，包含补齐的日期
-    all_dates = pd.date_range(start=min_week_start, end=current_week_end)
+    # 过滤有效数据（允许补填但限制范围）
+    valid_dates = [
+        dt for dt in daily_counts.keys() 
+        if (dt >= three_months_ago.date()) or 
+           (daily_counts[dt][1] and dt >= (three_months_ago - pd.DateOffset(months=1)).date())
+    ]
+    if not valid_dates:
+        ax.text(0.5, 0.5, '暂时没有有效数据', 
+                ha='center', va='center', fontsize=20)
+        return buffer  # 返回提示图而非空白
+
+    # 强制从指定月数前开始
+    min_date = max(min(dfall['date']), three_months_ago)
+    max_date = current_date
+
+    # 新3. 创建完整日期范围（保证周完整性）
+    start_date = min_date - pd.Timedelta(days=min_date.weekday())
+    # 处理有效内容涵盖了起始周周一的情况
+    if start_date in list(dfall['date']):
+        min_date = start_date
+    # 按照日期截取dfall
+    dfready = dfall[dfall.date >= min_date]
+    end_date = max_date + pd.Timedelta(days=6 - max_date.weekday())
+    # 全须全尾的周列表
+    all_dates = pd.date_range(start=start_date, end=end_date)
+    # 转换为DataFrame
     all_dates_df = pd.DataFrame({'date': all_dates, 'count': -1})
 
     # 4. 合并数据，保留原始 count 值
-    df = pd.concat([df, all_dates_df], ignore_index=True)
+    df = pd.concat([dfready, all_dates_df], ignore_index=True)
     df = df.drop_duplicates(subset=['date'], keep='first')
     df = df.sort_values(by='date').reset_index(drop=True)
+    if getinivaluefromcloud('monitor', 'debug'):
+        print(df)
+        log.info(f"数据记录最早日期为：{min(dfall['date'])}，最新日期为：{max(dfall['date'])}；最近{monthrange}个月的记录最早日期为：{min(dfready['date'])}，最新日期为：{max(dfready['date'])}；规整后全须全尾周的记录最早日期为：{min(df['date'])}，最新日期为：{max(df['date'])}")
 
     # 5. 添加年份和星期几列
     df['year'] = df['date'].dt.year
     df['week'] = df['date'].dt.isocalendar().week
     df['day_of_week'] = df['date'].dt.weekday
 
-    # 6. 确保数据正确处理跨年周数
-    df.loc[(df['week'] == 1) & (df['date'].dt.month == 12), 'week'] = 53
+    # 6. 计算自然周序号
+    df['week_number'] = ((df['date'] - start_date).dt.days // 7) + 1
 
     # 7. 创建透视表
+    dfcount = df[['year', 'week', 'week_number', 'day_of_week', 'date', 'count']]
+    # print(dfcount)
     pivot_table = df.pivot_table(
-        index='week', columns='day_of_week', values='count', aggfunc='sum', fill_value=-1
+        index='week_number', 
+        columns='day_of_week', 
+        values='count', 
+        aggfunc='sum', 
+        fill_value=-1
     )
 
     # 8. 自定义颜色映射
@@ -140,7 +183,13 @@ def plot_word_counts(daily_counts, title):
     norm = mcolors.BoundaryNorm(boundaries=boundaries, ncolors=cmap.N, clip=True)
     
     # 10. 创建图形
-    fig, ax = plt.subplots(figsize=(15, 10))
+    if pivot_table.values.max() <= 0:
+        ax.text(0.5, 0.5, '最近三个月无有效更新', 
+                ha='center', va='center', fontsize=20)
+        return buffer  # 返回提示图而非空白
+    # 设置动态分辨率
+    figsize_factor = max(1, len(pivot_table) // 10)  # 每10周增加1英寸高度
+    fig, ax = plt.subplots(figsize=(15, 6 + figsize_factor))
 
     # 11. 绘制热图
     heatmap = ax.pcolor(
@@ -148,10 +197,28 @@ def plot_word_counts(daily_counts, title):
     )
 
     # 12. 设置刻度和标签
+    week_labels = []
+    for week_num in pivot_table.index:
+        week_start = start_date + pd.Timedelta(weeks=week_num-1)
+        week_str = f"{week_start.strftime('%m-%d')}"
+        week_labels.append(week_str)
+
+    ax.set_yticks(np.arange(len(pivot_table.index)) + 0.5)
+    ax.set_yticklabels(week_labels)
     ax.set_xticks(np.arange(7) + 0.5, minor=False)
-    ax.set_yticks(np.arange(len(pivot_table.index)) + 0.5, minor=False)
     ax.set_xticklabels(['一', '二', '三', '四', '五', '六', '日'], minor=False)
-    ax.set_yticklabels(pivot_table.index, minor=False)
+    # 新增月份分割线
+    month_locs = []
+    month_labels = []
+    temp_date = start_date
+    while temp_date <= end_date:
+        if temp_date.day == 1:  # 每月第一天
+            week_num = ((temp_date - start_date).days // 7) + 1
+            month_locs.append(week_num - 0.5)
+            month_labels.append(temp_date.strftime('%Y-%m'))
+        temp_date += pd.DateOffset(days=1)
+
+    ax.hlines(month_locs, -0.5, 6.5, colors='gray', linestyles='dashed', linewidth=0.5)
 
     # 13. 反转 y 轴
     ax.invert_yaxis()
@@ -165,11 +232,11 @@ def plot_word_counts(daily_counts, title):
 
     # --- 添加起始日期和当前日期标记 ---
     # 找到最小日期和当前日期在热图中的位置
-    min_date_week = df[df['date'] == min_date]['week'].iloc[0]
-    print(df[df['date'] == min_date])
+    min_date_week = df[df['date'] == min_date]['week_number'].iloc[0]
+    # print(df[df['date'] == min_date])
     min_date_weekday = df[df['date'] == min_date]['day_of_week'].iloc[0]
-    print(df[df['date'] == current_date])
-    current_date_week = df[df['date'] == current_date]['week'].iloc[0]
+    # print(df[df['date'] == current_date])
+    current_date_week = df[df['date'] == current_date]['week_number'].iloc[0]
     current_date_weekday = df[df['date'] == current_date]['day_of_week'].iloc[0]
 
     # 在最小日期的格子中添加日期文本
@@ -195,6 +262,21 @@ def plot_word_counts(daily_counts, title):
             linewidth=2,
         )
     )
+    # 在需要标记的日期上添加灰色虚线外框
+    for marked_date in df[df.addedlater == True]['date']:
+        week = dfcount[dfcount['date'] == marked_date]['week_number'].values[0]
+        day_of_week = dfcount[dfcount['date'] == marked_date]['day_of_week'].values[0]
+        ax.add_patch(
+            plt.Rectangle(
+                (day_of_week, week - min(pivot_table.index)),
+                1,
+                1,
+                fill=False,
+                edgecolor='gray',
+                linestyle='--',
+                linewidth=2,
+            )
+        )
     # --- 标记添加完成 ---
 
     # 16. 将图像保存到 BytesIO 对象并返回
@@ -243,6 +325,9 @@ def heatmap2note():
                 log.info(f"笔记《{note_info['title']}》的有效日期内容为空，跳过")
                 continue
             if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S') or (person_note_update_time != getattr(getnote(note_id), "updated_time").strftime('%Y-%m-%d %H:%M:%S')):
+                should_plot = True
+        if getinivaluefromcloud('monitor', 'debug'):
+            if person == "白晔峰":
                 should_plot = True
         if should_plot:
             heatmap_id = get_heatmap_note_id(person)
