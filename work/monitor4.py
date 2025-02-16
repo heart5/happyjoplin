@@ -118,7 +118,12 @@ class NoteMonitor:
         # 按照三级标题加日期分割文本，datetime.strptime时处理日期字符串中的空格
         ptn = re.compile(r"^###\s+(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)\s*$", re.M)
         date_lst_raw = re.split(ptn, note_content.strip())
-        entries_dict = dict(zip([datetime.strptime(re.sub(r"\s+", "", datestr), '%Y年%m月%d日').date() for datestr in date_lst_raw[1::2]], date_lst_raw[2::2]))
+        entries_dict_raw = dict(zip([datetime.strptime(re.sub(r"\s+", "", datestr), '%Y年%m月%d日').date() for datestr in date_lst_raw[1::2]], date_lst_raw[2::2]))
+        # 过滤日期超过当天一天之内的日期数据对
+        one_days_later = current_time.date() + timedelta(days=1)
+        entries_dict = {date:count for date, count in entries_dict_raw.items() if date <= one_days_later}
+        if len(entries_dict_raw) != len(entries_dict):
+            log.critical(f"笔记《{getattr(note, 'title')}》存在超纲日期：{[date for date in entries_dict_raw.keys() if date > one_days_later]}，过滤之")
         # print(f"before(from raw):{entries_dict}")
         # 无有效日期文本数据对则返回
         if len(entries_dict) == 0:
@@ -133,7 +138,11 @@ class NoteMonitor:
                 print(entry)
                 continue
         # print(f"after(update word count done):{entries_dict}")
-        daterange = pd.date_range(min(entries_dict), max(entries_dict))
+        # 处理非笔记有效日期的初始化填空问题
+        # 最大日期取自笔记最大日期和昨天，避免迟交无效留空
+        entry_date_min = min(entries_dict)
+        entry_date_max = max(max(entries_dict), current_time.date() + timedelta(days=-1))
+        daterange = pd.date_range(entry_date_min, entry_date_max)
         datezero = [date.date() for date in daterange if date.date() not in entries_dict]
         log.info(f"笔记《{getattr(note, 'title')}》的有效数据最早日期为{min(entries_dict)}，最新日期为{max(entries_dict)}，其中内容为空的条目数量为：{len(datezero)}")
         note_info = self.monitored_notes[note_id]
