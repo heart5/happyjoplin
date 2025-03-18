@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, date
 # %%
 import pathmagic
 with pathmagic.context():
-    from func.first import getdirmain
+    from func.first import getdirmain, dirmainpath, touchfilepath2depth
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.logme import log
     from work.monitor4 import NoteMonitor
@@ -93,8 +93,14 @@ def plot_word_counts(daily_counts, title):
       title: 图表的标题。
 
     Returns:
-      包含生成的 PNG 图像的 io.BytesIO 对象。
+      包含生成的 PNG 图像的文件路径。
     """
+    # 准备输出图片的目录和文件名
+    img_dir = Path(getdirmain()) / 'img'
+    img_dir.mkdir(parents=True, exist_ok=True)  # 自动创建目录
+    img_heat_file_path = img_dir / 'heatmap.png'
+    img_heat_file_path_str = str(img_heat_file_path.absolute())
+
     if (monthrange := getinivaluefromcloud("monitor", "monthrange")) is None:
         monthrange = 3
 
@@ -114,9 +120,12 @@ def plot_word_counts(daily_counts, title):
            (daily_counts[dt][1] and dt >= (three_months_ago - pd.DateOffset(months=1)).date())
     ]
     if not valid_dates:
+        fig, ax = plt.subplots(figsize=(10, 6))  # 统一尺寸
         ax.text(0.5, 0.5, '暂时没有有效数据', 
                 ha='center', va='center', fontsize=20)
-        return buffer  # 返回提示图而非空白
+        plt.savefig(img_heat_file_path_str)
+        plt.close()
+        return img_heat_file_path_str  # 返回提示图而非空白
 
     # 强制从指定月数前开始
     min_date = max(min(dfall['date']), three_months_ago)
@@ -184,9 +193,12 @@ def plot_word_counts(daily_counts, title):
     
     # 10. 创建图形
     if pivot_table.values.max() <= 0:
+        fig, ax = plt.subplots(figsize=(10, 6))  # 统一尺寸
         ax.text(0.5, 0.5, '最近三个月无有效更新', 
                 ha='center', va='center', fontsize=20)
-        return buffer  # 返回提示图而非空白
+        plt.savefig(img_heat_file_path_str)
+        plt.close()
+        return img_heat_file_path_str  # 返回提示图而非空白
     # 设置动态分辨率
     figsize_factor = max(1, len(pivot_table) // 10)  # 每10周增加1英寸高度
     fig, ax = plt.subplots(figsize=(15, 6 + figsize_factor))
@@ -280,12 +292,14 @@ def plot_word_counts(daily_counts, title):
     # --- 标记添加完成 ---
 
     # 16. 将图像保存到 BytesIO 对象并返回
-    buffer = io.BytesIO()
-    plt.savefig(buffer, format='png')
-    buffer.seek(0)
-    plt.close(fig)
+    plt.savefig(img_heat_file_path_str)
+    plt.close()
+    # buffer = io.BytesIO()
+    # plt.savefig(buffer, format='png')
+    # buffer.seek(0)
+    # plt.close(fig)
 
-    return buffer
+    return img_heat_file_path_str
 
 
 # %% [markdown]
@@ -335,9 +349,10 @@ def heatmap2note():
 
             newbodystr = ""
             for k, v in stat2df(person).items():
-                buffer = plot_word_counts(v, k)
+                # buffer = plot_word_counts(v, k)
+                img_heat_file_path = plot_word_counts(v, k)
                 title=f"{k}-{person}"
-                res_id = createresourcefromobj(buffer, title=title)
+                res_id = jpapi.add_resource(img_heat_file_path, title=title)
                 newbodystr += f"![{title}](:/{res_id})" + "\n"
 
             updatenote_body(heatmap_id, newbodystr)
