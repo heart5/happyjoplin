@@ -27,8 +27,9 @@ import arrow
 # import joppy
 # import datetime
 # from pathlib import Path
-from joppy.api import Api
-from joppy import tools
+from joppy.client_api import ClientApi
+# from joppy.api import Api
+# from joppy import tools
 # from tzlocal import get_localzone
 # from dateutil import tz
 
@@ -70,7 +71,7 @@ def getapi():
 
     url = f"http://localhost:{kvdict.get('port')}"
     # print(kvdict.get("token"), url)
-    api = Api(token=kvdict.get("token"), url=url)
+    api = ClientApi(token=kvdict.get("token"), url=url)
 
     return api
 
@@ -243,18 +244,45 @@ def createresource(filename, title=None):
 
 # %%
 def createresourcefromobj(file_obj, title=None):
+    print(file_obj)
+    # 改用用户空间临时目录（绕过沙箱限制）
+    tmp_dir = os.path.expanduser("~/.joplin_temp")
+    os.makedirs(tmp_dir, exist_ok=True)
     # 创建一个临时文件
-    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
+    with tempfile.NamedTemporaryFile(
+        mode='wb',
+        delete=False,
+        prefix="joplin_res_", # 便于识别
+        dir=tmp_dir #指定目录
+    ) as tmpfile:
         # 将 BytesIO 的内容写入临时文件
         tmpfile.write(file_obj.getvalue())
         tmpfile_path = tmpfile.name
+        os.chmod(tmpfile_path, 0o644)  # 显式设置权限
+        tmpfile.flush()  # 强制写入磁盘
+        print(f"临时文件实际路径: {tmpfile_path}")
+        print(f"文件存在状态: {os.path.exists(tmpfile_path)}")
+        print(f"文件权限: {oct(os.stat(tmpfile_path).st_mode)}")
 
-    # 使用临时文件的路径调用 add_resource
-    res_id = jpapi.add_resource(filename=tmpfile_path, title=title)
-
-    log.info(f"资源文件《{title}》从file_obj创建成功，纳入笔记资源系统管理，可以正常被调用！")
-
-    return res_id
+        try:
+            # # 添加文件句柄释放保障
+            # os.close(tmpfile.file.fileno())
+            # os.sync()
+            # 使用临时文件的路径调用 add_resource
+            # 使用文件描述符重定向
+            res_id = jpapi.add_resource(filename=tmpfile_path, title=title)
+            log.info(f"资源文件《{title}》从file_obj创建成功，纳入笔记资源系统管理，可以正常被调用！")
+        except Exception as e:
+            log.error(f"资源上传失败: {str(e)}")
+            raise
+        finally:
+            try:
+                # 延迟删除保障
+                if os.path.exists(tmpfile_path):
+                    os.unlink(tmpfile_path)
+            except Exception as e:
+                log.warning(f"文件清理失败: {str(e)}")
+        return res_id
 
 
 # %% [markdown]
