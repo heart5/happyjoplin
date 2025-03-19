@@ -24,6 +24,7 @@ import re
 # import subprocess
 import tempfile
 import arrow
+from tzlocal import get_localzone
 # import joppy
 # import datetime
 # from pathlib import Path
@@ -551,7 +552,7 @@ def readinifromcloud():
     # print(noteid_inifromcloud)
 
     note = getnote(noteid_inifromcloud)
-    noteupdatetimewithzone = arrow.get(note.updated_time, tzinfo="local")
+    noteupdatetimewithzone = arrow.get(note.updated_time).to(get_localzone())
     # print(arrow.get(ini_cloud_updatetimestamp, tzinfo=get_localzone()), note.updated_time, noteupdatetimewithzone)
     if noteupdatetimewithzone.timestamp() == ini_cloud_updatetimestamp:
         # print(f'配置笔记无更新【最新更新时间为：{noteupdatetimewithzone}】，不对本地化的ini配置文件做更新。')
@@ -593,9 +594,16 @@ if __name__ == '__main__':
         log.info(f'开始运行文件\t{__file__}')
     # joplinport()
 
-    note_ids_to_monitor = ['a8ed272dcb594ad4beaaedf57ed7afb6', '9025c19f884c40609bef2133d1a224a1']  # 需要监控的笔记ID列表，替换为实际的GUID
+    note_ids_to_monitor = ['ed8523d3812143e0943acd9c6cdd3ffe', '9025c19f884c40609bef2133d1a224a1']  # 需要监控的笔记ID列表，替换为实际的GUID
     for note_id in note_ids_to_monitor:
-        print(getnote(note_id))
+        updated_time = getnote(note_id).updated_time
+        print(updated_time)
+        utc_arrow = arrow.get(updated_time)
+        local_tz = get_localzone()
+        print(local_tz)
+        # local_arrow = utc_arrow.to('Asia/Shanghai')
+        local_arrow = utc_arrow.to(local_tz)
+        print(local_arrow)
     
     # createnote(title="重生的笔记", body="some things happen", noteid_spec="3ffccc7c48fc4b25bcd7cf3841421ce5")
     # test_updatenote_imgdata()
