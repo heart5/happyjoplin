@@ -19,6 +19,8 @@
 import re
 import json
 import pandas as pd
+import arrow
+from tzlocal import get_localzone
 from pathlib import Path
 from datetime import datetime, timedelta, date
 
@@ -101,7 +103,7 @@ class NoteMonitor:
             ptn = re.compile(r"[(（](\w+)[)）]")
             if (grp := re.findall(ptn, note_info['title'])):
                 note_info['person'] = grp[0]
-        note_info['note_update_time'] = getattr(note, 'updated_time')
+        note_info['note_update_time'] = arrow.get(getattr(note, 'updated_time')).to(get_localzone())
         note_info['word_count_history'].append(word_count)
         log.info(f"笔记《{note_info['title']}》进入监测并更新相应数据……")
         # 更新 content_by_date
@@ -252,7 +254,7 @@ def monitor_notes(note_ids, note_monitor):
         # 不是英文需要统计所有字数而不是英语单词
         # current_word_count = len(note.body.split())
         current_word_count = len(note.body.strip())
-        last_update_time_note = getattr(note, 'updated_time')
+        last_update_time_note = arrow.get(getattr(note, 'updated_time')).to(get_localzone())
 
         # 更新监控信息，用笔记更新时间做判断依据
         if last_update_time_note != note_monitor.monitored_notes[note_id]['note_update_time']:
