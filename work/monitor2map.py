@@ -25,6 +25,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.dates as mdates
+import arrow
+from tzlocal import get_localzone
 from pathlib import Path
 from datetime import datetime, timedelta, date
 
@@ -338,7 +340,7 @@ def heatmap2note():
             if len(note_info['content_by_date']) == 0:
                 log.info(f"笔记《{note_info['title']}》的有效日期内容为空，跳过")
                 continue
-            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S') or (person_note_update_time != getattr(getnote(note_id), "updated_time").strftime('%Y-%m-%d %H:%M:%S')):
+            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S') or (person_note_update_time != arrow.get(getattr(getnote(note_id), "updated_time")).to(get_localzone()).strftime('%Y-%m-%d %H:%M:%S')):
                 should_plot = True
         if getinivaluefromcloud('monitor', 'debug'):
             if person == "白晔峰":
@@ -366,8 +368,9 @@ def heatmap2note():
                     print(e)
         # 操作成功后再setcfpoptionvalue
         for note_id, note_info in targetdict.items():
-            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'):
-                setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S'))
+            note_time_with_zone = arrow.get(note_info["note_update_time"]).to(get_localzone()).strftime('%Y-%m-%d %H:%M:%S')
+            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_time_with_zone:
+                setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_time_with_zone)
 
 
 # %% [markdown]
