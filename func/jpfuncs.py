@@ -566,7 +566,7 @@ def readinifromcloud():
     fileobj.close()
 
     setcfpoptionvalue('happyjpsys', 'joplin', 'ini_cloud_updatetimestamp', str(noteupdatetimewithzone.timestamp()))
-    log.info(f'云端配置笔记有更新【（{noteupdatetimewithzone}）->（{arrow.get(ini_cloud_updatetimestamp, tzinfo="local")}）】，更新本地化的ini配置文件。')
+    log.info(f'云端配置笔记有更新【（{noteupdatetimewithzone}）->（{arrow.get(ini_cloud_updatetimestamp).to(get_localzone())}）】，更新本地化的ini配置文件。')
 
 
 # %% [markdown]
