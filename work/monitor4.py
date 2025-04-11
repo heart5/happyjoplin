@@ -148,6 +148,8 @@ class NoteMonitor:
         datezero = [date.date() for date in daterange if date.date() not in entries_dict]
         log.info(f"笔记《{getattr(note, 'title')}》的有效数据最早日期为{min(entries_dict)}，最新日期为{max(entries_dict)}，其中内容为空的条目数量为：{len(datezero)}")
         note_info = self.monitored_notes[note_id]
+        # 读取笔记的title，来确保是最新的
+        note_info['title'] = getattr(note, 'title')
         timelst = [x for sonlst in note_info['content_by_date'].values() for (x, y) in sonlst]
         str2time =lambda x: datetime.strptime(x, '%Y-%m-%d %H:%M:%S.%f') if isinstance(x, str) else x
         timelst = [str2time(x) for x in timelst]
