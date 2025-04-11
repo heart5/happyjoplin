@@ -60,7 +60,7 @@ def stat2df(person):
     targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person == v['person']}
     # print(targetdict)
     # 过滤日期超过当天一天之内的日期数据对
-    one_days_later = datetime.now().date() + timedelta(days=1)
+    one_days_later = arrow.now(get_localzone()).shift(days=1).date()
     title_count_dict = {}
 
     for note_id, note_info in targetdict.items():
@@ -112,7 +112,7 @@ def plot_word_counts(daily_counts, title):
     dfall['date'] = pd.to_datetime(dfall['date'])
 
     # 新2. 确定日期范围（最近三个月）
-    current_date = pd.to_datetime(datetime.now().date())
+    current_date = pd.to_datetime(arrow.now(get_localzone()).date())
     three_months_ago = current_date - pd.DateOffset(months=monthrange)
 
     # 过滤有效数据（允许补填但限制范围）
@@ -329,6 +329,8 @@ def heatmap2note():
     # 监控笔记
     note_monitor = NoteMonitor()
     ptn = re.compile(r"[(（](\w+)[)）]")
+    for note_id, info in note_monitor.monitored_notes.items():
+        print(f"{note_id}\t{info['title']}")
     person_lst = list(set([re.findall(ptn, info['title'])[0] for note_id, info in note_monitor.monitored_notes.items()]))
     print(person_lst)
     jpapi = getapi()
