@@ -150,6 +150,10 @@ class NoteMonitor:
         note_info = self.monitored_notes[note_id]
         # 读取笔记的title，来确保是最新的
         note_info['title'] = getattr(note, 'title')
+        # 从最新的title提取person确保是最新的
+        ptn = re.compile(r"[(（](\w+)[)）]")
+        if (grp := re.findall(ptn, note_info['title'])):
+            note_info['person'] = grp[0]
         timelst = [x for sonlst in note_info['content_by_date'].values() for (x, y) in sonlst]
         str2time =lambda x: datetime.strptime(x, '%Y-%m-%d %H:%M:%S.%f') if isinstance(x, str) else x
         timelst = [str2time(x) for x in timelst]
@@ -245,13 +249,18 @@ class NoteMonitor:
 
 
 # %% [markdown]
-# ### monitor_notes(note_ids)
+# ### monitor_notes(note_ids, note_monitor)
 
 # %%
 def monitor_notes(note_ids, note_monitor):
     for note_id in note_ids:
+        # 确保该id的笔记存在，否则跳过
+        try:
+            note = getnote(note_id)
+        except Exception as e:
+            log.critical(f"获取id为“{note_id}”的笔记时出错如下，或许是不存在或笔记冲突导致的：\n{e}")
+            continue
         note_monitor.add_note(note_id)
-        note = getnote(note_id)
         current_time = datetime.now()
         # 不是英文需要统计所有字数而不是英语单词
         # current_word_count = len(note.body.split())
@@ -323,7 +332,14 @@ def monitor_log_info(title, note_ids_to_monitor, note_monitor):
 # %%
 def split_ref():
     # 从指定待监控笔记列表笔记获取内容，分区块处理
-    note = getnote('2ec45f5b1a10470db1eb3e52462edd18')
+    title = "四件套笔记列表"
+    results = searchnotes(f"title:{title}")
+    if results:
+        note_list_id = results[0].id
+    else:
+        log.critical(f"标题为：《{title}》的笔记不存在")
+        return
+    note = getnote(note_list_id)
     bodystr = getattr(note, 'body')
     ptn = re.compile(r"^###\s+(\w+)\s*$", re.M)
     section_lst_raw = re.split(ptn, bodystr.strip())
@@ -339,7 +355,8 @@ def split_ref():
     for section in section_dict:
         outputstr += "---\n"
         # 提取笔记 ID并监测指定section的笔记列表
-        note_ids_to_monitor = [re.search(r'\(:/(.+)\)', link).group(1) for link in section_dict[section].split()]
+        note_ids_to_monitor = [re.search(r'\(:/(.+)\)', link).group(1) for link in section_dict[section].split() if re.search(r'\(:/(.+)\)', link)]
+        print(f"section is 《{section}》")
         monitor_notes(note_ids_to_monitor, note_monitor)  
 
         # 检查person和section是否已经设置，没有设置则设置之
