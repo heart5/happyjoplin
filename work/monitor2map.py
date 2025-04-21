@@ -322,6 +322,25 @@ def get_heatmap_note_id(person):
 
 
 # %% [markdown]
+# ### get_refresh_id_list
+
+# %%
+def get_refresh_id_list():
+    # 获取最新额《四件套笔记列表》中有效的笔记id列表
+    title = "四件套笔记列表"
+    results = searchnotes(f"title:{title}")
+    if results:
+        note_list_id = results[0].id
+    else:
+        log.critical(f"标题为：《{title}》的笔记不存在")
+        return list()
+    note = getnote(note_list_id)
+    note_id_list_refresh = [re.search(r'\(:/(.+)\)', link).group(1) for link in note.body.split() if re.search(r'\(:/(.+)\)', link) ]
+
+    return note_id_list_refresh
+
+
+# %% [markdown]
 # ### heatmap2note()
 
 # %%
@@ -329,16 +348,23 @@ def heatmap2note():
     # 监控笔记
     note_monitor = NoteMonitor()
     ptn = re.compile(r"[(（](\w+)[)）]")
-    for note_id, info in note_monitor.monitored_notes.items():
-        print(f"{note_id}\t{info['title']}")
-    person_lst = list(set([re.findall(ptn, info['title'])[0] for note_id, info in note_monitor.monitored_notes.items()]))
+    # 获取person列表
+    if (plststr :=getinivaluefromcloud('monitor', 'person_list')):
+        person_lst = plststr.split("，")
+    else:
+        person_lst = list(set([re.findall(ptn, info['title'])[0] for note_id, info in note_monitor.monitored_notes.items()]))
     print(person_lst)
+    # 获取最新的被监控笔记id列表
+    note_id_list_refresh = get_refresh_id_list()
     jpapi = getapi()
     for person in person_lst:
-        # 筛选出指定person相关的{note_id:note_info}字典
+        # 筛选出指定person相关的{note_id:note_info}字典，同时确保只处理当前列表中的笔记
         targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person in v['title']}
         should_plot = False
-        for note_id, note_info in targetdict.items():
+        refreshdict = {k:v for k, v in targetdict.items() if k in note_id_list_refresh}
+        print(f">》{person}")
+        for note_id, note_info in refreshdict.items():
+            print(f"{note_id}\t{note_info['title']}")
             if len(note_info['content_by_date']) == 0:
                 log.info(f"笔记《{note_info['title']}》的有效日期内容为空，跳过")
                 continue
@@ -369,7 +395,7 @@ def heatmap2note():
                 except Exception as e:
                     print(e)
         # 操作成功后再setcfpoptionvalue
-        for note_id, note_info in targetdict.items():
+        for note_id, note_info in refreshdict.items():
             note_time_with_zone = arrow.get(note_info["note_update_time"]).to(get_localzone()).strftime('%Y-%m-%d %H:%M:%S')
             if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_time_with_zone:
                 setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_time_with_zone)
