@@ -54,6 +54,20 @@ def timestamp2str(timestamp):
 
 
 # %% [markdown]
+# ## normalize_timestamp(ts)
+
+# %%
+def normalize_timestamp(ts):
+    if isinstance(ts, str):
+        # 统一处理带时区的ISO格式和简化格式
+        try:
+            return arrow.get(ts).to(get_localzone()).datetime
+        except:
+            return datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+    return ts
+
+
+# %% [markdown]
 # ## getstartdate(period, thedatetime)
 
 # %%
