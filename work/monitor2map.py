@@ -36,12 +36,13 @@ with pathmagic.context():
     from func.first import getdirmain, dirmainpath, touchfilepath2depth
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.logme import log
+    from func.datetimetools import normalize_timestamp
     from work.monitor4 import NoteMonitor
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     # from etc.getid import getdevicename, gethostuser
     from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
-    from func.jpfuncs import getinivaluefromcloud, getapi, getnote, searchnotes, createnote, updatenote_body, createresourcefromobj
+    from func.jpfuncs import getinivaluefromcloud, getapi, getnote, searchnotes, createnote, updatenote_body, createresourcefromobj, content_hash
 
 
 # %% [markdown]
@@ -368,8 +369,16 @@ def heatmap2note():
             if len(note_info['content_by_date']) == 0:
                 log.info(f"笔记《{note_info['title']}》的有效日期内容为空，跳过")
                 continue
-            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_info["note_update_time"].strftime('%Y-%m-%d %H:%M:%S') or (person_note_update_time != arrow.get(getattr(getnote(note_id), "updated_time")).to(get_localzone()).strftime('%Y-%m-%d %H:%M:%S')):
-                should_plot = True
+            note_ini_time = normalize_timestamp(getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id))
+            note_json_time = normalize_timestamp(note_info["note_update_time"])
+            note_cloud_time = normalize_timestamp(getattr(getnote(note_id), "updated_time"))
+            current_hash = content_hash(note_id)
+            stored_hash = getcfpoptionvalue("happyjpmonitor", "content_hash", note_id)
+            # 时间对不上内容也对不上然后才打开开关画图
+            if not note_ini_time or (note_ini_time != note_json_time) or (note_ini_time != note_cloud_time):
+               if current_hash != stored_hash:
+                    should_plot = True
+                    log.debug(f"[笔记ID:{note_id}]，本地存储时间: {note_ini_time}，监测爬取记录时间: {note_json_time}，云端新鲜时间: {note_cloud_time}，笔记内容哈希比对: {current_hash} vs {stored_hash}，触发条件: {should_plot}")
         if getinivaluefromcloud('monitor', 'debug'):
             if person == "白晔峰":
                 should_plot = True
@@ -387,7 +396,8 @@ def heatmap2note():
 
             updatenote_body(heatmap_id, newbodystr)
             # 操作成功后再删除原始笔记中的资源文件
-            res_ids = [re.search(r'\(:/(.+)\)', link).group(1) for link in getattr(oldnote, "body").split()]
+            lines = getattr(oldnote, "body").split()
+            res_ids = [re.search(r'\(:/(.+)\)', line).group(1) for line in lines if re.search(r'\(:/(.+)\)', line)]
             print(f"笔记《{getattr(oldnote, 'title')}》中包含以下资源文件：{res_ids}，不出意外将被删除清理！")
             for resid in res_ids:
                 try:
@@ -396,8 +406,12 @@ def heatmap2note():
                     print(e)
         # 操作成功后再setcfpoptionvalue
         for note_id, note_info in refreshdict.items():
+            current_hash = content_hash(note_id)
+            stored_hash = getcfpoptionvalue("happyjpmonitor", "content_hash", note_id)
+            if current_hash != stored_hash:
+                setcfpoptionvalue('happyjpmonitor', 'content_hash', note_id, current_hash)
             note_time_with_zone = arrow.get(note_info["note_update_time"]).to(get_localzone()).strftime('%Y-%m-%d %H:%M:%S')
-            if (person_note_update_time := getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)) != note_time_with_zone:
+            if (note_ini_time != note_json_time):
                 setcfpoptionvalue('happyjpmonitor', 'note_update_time', note_id, note_time_with_zone)
 
 
