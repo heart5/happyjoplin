@@ -24,6 +24,7 @@ import re
 # import subprocess
 import tempfile
 import arrow
+import hashlib
 from tzlocal import get_localzone
 # import joppy
 # import datetime
@@ -577,6 +578,15 @@ def getinivaluefromcloud(section, option):
     readinifromcloud()
 
     return getcfpoptionvalue('happyjpinifromcloud', section, option)
+
+
+# %% [markdown]
+# ### content_hash(note_id)
+
+# %%
+def content_hash(note_id):
+    note = getnote(note_id)
+    return hashlib.md5(note.body.encode()).hexdigest()
 
 
 # %% [markdown]
