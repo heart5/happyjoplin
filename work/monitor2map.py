@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.dates as mdates
 import arrow
+# from memory_profiler import profile
 from tzlocal import get_localzone
 from pathlib import Path
 from datetime import datetime, timedelta, date
@@ -345,6 +346,7 @@ def get_refresh_id_list():
 # ### heatmap2note()
 
 # %%
+# @profile
 def heatmap2note():
     # 监控笔记
     note_monitor = NoteMonitor()
