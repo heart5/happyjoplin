@@ -514,7 +514,7 @@ def merge2note(dfdict, wcpath, notebookguid, newfileonly=False):
         print(f"本次处理的数量为\t{xflen}")
         for xfl in xlsxfllst:
             print(f"{'-' * 15}\t{name}\t【{xlsxfllst.index(xfl) + 1}/{xflen}】\tBegin\t{'-' * 15}")
-            dftest = pd.read_excel(wcpath / xfl).drop_duplicates()
+            dftest = pd.read_excel(wcpath / xfl, engine='openpyxl').drop_duplicates()
             updatewcitemsxlsx2note(name, dftest, wcpath, notebookguid)
             print(f"{'-' * 15}\t{name}\t【{xlsxfllst.index(xfl) + 1}/{xflen}】\tDone!\t{'-' * 15}")
 
