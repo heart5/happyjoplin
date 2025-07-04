@@ -163,7 +163,7 @@ def freemem2note():
 
     login_user = execcmd("whoami")
     namestr = "happyjp_life"
-    section = f"health_{login_user}"
+    section = f"health_{getdevicename()}_{login_user}"
     notestat_title = f"内存动态图【{gethostuser()}】"
 
     if not (gapinmin := getcfpoptionvalue(namestr, section, 'gapinmin')):
