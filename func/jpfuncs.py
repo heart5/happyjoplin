@@ -135,39 +135,54 @@ def getnoteswithfields(fields, limit=10):
 
 
 # %% [markdown]
-# ### getnote(id)
+# ### getnote(id, full_analysis=False)
 
 # %%
-def getnote(noteid):
+def getnote(noteid, full_analysis=False):
     """
-    通过id获取笔记的所有可能内容，NoteData
+    通过id获取笔记内容，默认只获取基础字段，可选全字段分析
+    :param noteid: 笔记ID
+    :param full_analysis: 是否进行全字段分析（默认False）
+    :return: NoteData对象
     """
-    global jpapi
-    fields="parent_id, title, body, created_time, updated_time, is_conflict, latitude, longitude, altitude, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect"
-    flst = [fl.strip() for fl in fields.split(',')]
-    unallowedfllst = list()
-    for fl in flst:
-        flteststr = ','.join(['id', fl])
-        try:
-            note = jpapi.get_note(noteid.strip(), fields=flteststr)
-            # print(f"{fl}", end="\t")
-        except Exception as e:
-            unallowedfllst.append(fl)
-            # print("获值错误！")
-            # print(e)
-            continue
-        # print(getattr(note, fl))
-    resultlst = [fl for fl in flst if fl not in unallowedfllst]
-    resultlst.insert(0, 'id')
-    # print(resultlst)
-    if 'share_id' in resultlst:
-        pass
-        # log.info(f"笔记（id：{noteid}）非共享笔记！")
-    else:
-        pass
-        # log.info(f"笔记（id：{noteid}）位于共享笔记本中，应该是共享笔记！")
+    # 基础字段（parent_id到source_url）
+    base_fields = "parent_id, title, body, created_time, updated_time, is_conflict, latitude, longitude, altitude, author, source_url"
 
-    return jpapi.get_note(noteid, fields=','.join(resultlst)) 
+    if full_analysis:
+        # 全字段分析模式
+        extended_fields = "is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect"
+        allowed_fields = _validate_fields(noteid, base_fields + ", " + extended_fields)
+        return jpapi.get_note(noteid, fields=",".join([f.strip() for f in ("id, " + allowed_fields).split(",")]))
+    else:
+        # 常规模式：直接获取基础字段
+        return jpapi.get_note(noteid, fields=",".join([f.strip() for f in ("id, " + base_fields).split(",")]))
+
+
+# %% [markdown]
+# ### _validate_fields(noteid, fields_str)
+
+# %%
+def _validate_fields(noteid, fields_str):
+    """ 检查字段可用性并返回有效字段列表 """
+    flst = [f.strip() for f in fields_str.split(',')]
+    allowed_fields = []
+
+    for field in flst:
+        if field == 'id':  # 始终包含id
+            allowed_fields.append(field)
+            continue
+
+        try:
+            # 测试单个字段是否可获取
+            jpapi.get_note(noteid, fields=f"id,{field}")
+            allowed_fields.append(field)
+        except Exception:
+            continue  # 跳过无效字段
+
+    # 共享笔记检测逻辑
+    if 'share_id' in allowed_fields:
+        logging.debug(f"笔记（id：{noteid}）是共享笔记")
+    return ','.join(allowed_fields)
 
 
 # %% [markdown]
