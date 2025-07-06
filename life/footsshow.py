@@ -19,33 +19,36 @@
 
 # %%
 import os
-# import urllib2
 import re
-import datetime
+import arrow
+from tzlocal import get_localzone
+from pathlib import Path
 from math import radians, cos, sin, asin, sqrt
+
 import pandas as pd
 import numpy as np
 from pylab import plt
 import plotly.express as px
 import folium
 from plotly.subplots import make_subplots
+from typing import List, Tuple
+import plotly.graph_objects as go
 
 # %%
+# 自定义函数
 import pathmagic
 with pathmagic.context():
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain, dirmainpath, touchfilepath2depth
     from func.datatools import readfromtxt, write2txt
-    from func.jpfuncs import searchnotes, createnote, updatenote_imgdata, \
-        noteid_used, searchnotebook, updatenote_title, updatenote_body, getinivaluefromcloud, \
-        createresource, deleteresourcesfromnote
-    # from func.evernttest import get_notestore, imglist2note, \
-    #     evernoteapijiayi, makenote, readinifromnote, getinivaluefromnote, \
-    #     tablehtml2evernote
+    from func.jpfuncs import (searchnotes, createnote, updatenote_imgdata,
+                                noteid_used, searchnotebook, updatenote_title,
+                                updatenote_body, getinivaluefromcloud,
+                                createresource, deleteresourcesfromnote)
     from func.logme import log
     from func.wrapfuncs import timethis, ift2phone
-    from func.termuxtools import termux_telephony_deviceinfo, \
-        termux_telephony_cellinfo, termux_location
+    from func.termuxtools import (termux_telephony_deviceinfo,
+                                termux_telephony_cellinfo, termux_location)
     from etc.getid import getdeviceid, gethostuser
     from func.sysfunc import not_IPython, set_timeout, after_timeout
 
@@ -57,7 +60,7 @@ with pathmagic.context():
 # ### geodistance(lng1, lat1, lng2, lat2)
 
 # %%
-def geodistance(lng1, lat1, lng2, lat2):
+def geodistance(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
     """
     计算两点之间的距离并返回（公里，千米）
     """
@@ -65,6 +68,7 @@ def geodistance(lng1, lat1, lng2, lat2):
     dlon = lng2 - lng1
     dlat = lat2 - lat1
     a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    # 地球半径为：6371千米
     dis = 4 * asin(sqrt(a)) * 6371 * 1000
     return dis
 
@@ -74,18 +78,17 @@ def geodistance(lng1, lat1, lng2, lat2):
 
 # %%
 @timethis
-def chuli_datasource():
+def chuli_datasource() -> pd.DataFrame:
     """
     展示足迹
     """
     namestr = 'happyjp_life'
     section = 'hjloc'
-    if (device_id := str(getcfpoptionvalue(namestr, section, 'device_id'))) is None:
+    if not (device_id := str(getcfpoptionvalue(namestr, section, 'device_id'))):
         device_id = getdeviceid()
         setcfpoptionvalue(namestr, section, 'device_id', device_id)
 
     txtfilename = str(dirmainpath / 'data' / 'ifttt' / f'location_{device_id}.txt')
-    # txtfilename = str(dirmainpath / 'data' / 'ifttt' / f'location_0x1505face7d31be5a.txt')
     print(txtfilename)
     itemread = readfromtxt(txtfilename)
     numlimit = 9    # 显示项目数
@@ -117,15 +120,14 @@ def chuli_datasource():
             itemtime = pd.to_datetime(time1)
             itemtimeend = pd.to_datetime(time2)
             timedelta = itemtime - itemtimeend
-        except Exception as eep:
+        except ValueErrors as eep:
             log.critical(f"{time1}\t{time2}，处理此时间点处数据出现问题。跳过此组（两个）数据条目！！！{eep}")
             continue
         while timedelta.seconds == 0:
             log.info(f"位置记录时间戳相同：{itemtime}\t{itemtimeend}")
             i = i + 1
             time2, lng2, lat2, *others = itemfine[i + 1]
-            dis = round(geodistance(eval(lng1), eval(lat1), eval(lng2), eval(lat2)) / 1000, 3)
-#             dis = round(geodistance(eval(lng1), eval(lat1), eval(lng2), eval(lat2)), 3)
+            dis = round(geodistance(float(lng1), float(lat1), float(lng2), float(lat2)) / 1000, 3)
             itemtime = pd.to_datetime(time1)
             itemtimeend = pd.to_datetime(time2)
             timedelta = itemtime - itemtimeend
@@ -180,8 +182,16 @@ def foot2show(df4dis):
 
     imglst = []
     ds = df4dis['distance']
-    today = datetime.datetime.now().strftime('%F')
-    dstoday = ds[today].sort_index().cumsum()
+    today = arrow.now(get_localzone())
+    start_time = pd.Timestamp(today.date().strftime("%F"))
+    end_time = pd.Timestamp(today.shift(days=1).date().strftime("%F"))
+    try:
+        dstoday = ds.loc[start_time:end_time].sort_index().cumsum()
+        if dstoday.empty:
+            raise KeyError
+    except KeyError:
+        log.warning(f"{today}无有效数据")
+        dstoday = pd.Series(dtype=float)
     print(dstoday)
     if dstoday.shape[0] > 1:
         dstoday.plot()
@@ -206,93 +216,91 @@ def foot2show(df4dis):
     imglst.append([res_title, res_id])
     print(imglst)
 
-    bodystr = ""
-    for son in imglst:
-        bodystr += f"![{son[0]}](:/{son[1]})\n"
+    bodystr = "\n".join(f"![{son[0]}](:/{son[1]})" for son in imglst)
     deleteresourcesfromnote(loc_cloud_id)
     updatenote_body(loc_cloud_id, bodystr)
-    # if (device_name := getinivaluefromcloud('device', device_id)) is None:
-    #     device_name = device_id
-    # imglist2note(get_notestore(), imglst, guid,
-    #              f'手机_{device_name}_location更新记录',
-    #              tablehtml2evernote(df4dis.sort_index(ascending=False).iloc[:100, ], "坐标流水记录单"))
 
 
 # %% [markdown]
 # ### enhanced_visualization(df)
 
 # %%
-def enhanced_visualization(df):
+def enhanced_visualization(dfin: pd.DataFrame) -> Tuple[go.Figure, pd.DataFrame]:
     """综合可视化仪表盘"""
-    # 预处理
-    df = df.reset_index()
+
+    df = dfin.reset_index()
+    # 数据清洗: 去掉缺失值和不合理的记录
+    df.dropna(subset=['longi', 'lati'], inplace=True)  # 去除缺失经纬度或时间的记录
+    df = df[(df['longi'].between(73.0, 135.0)) & (df['lati'].between(18.0, 54.0))]  # 只保留在中国范围内的坐标
+
+    # 计算移动速度和距离
+    df['distance'] = df['longi'].shift().combine_first(df['longi']).diff()**2 + df['lati'].shift().combine_first(df['lati']).diff()**2
+    df['distance'] = (df['distance'].pow(0.5) * 111.32)  # 将弧度转换为公里
+    df['speed'] = df['distance'] / (df['jiange'].dt.seconds / 3600).replace(0, np.nan)  # 小时速度
+
+    # 处理时间数据
     df['hour'] = df['time'].dt.hour
     df['weekday'] = df['time'].dt.weekday
-    
+
     # 创建仪表盘
     fig = make_subplots(
         rows=3, cols=2,
-        specs=[[{"type": "xy"}, {"type": "xy"}],  # Changed to 'xy'
-           [{"type": "xy"}, {"type": "scattergeo"}], 
-           [{"colspan": 2}, None]],
-        # specs=[[{"type": "scattergeo"}, {"type": "xy"}],
-        #        [{"type": "xy"}, {"type": "scattergeo"}],
-        #        [{"colspan": 2}, None]],
+        specs=[[{"type": "xy"}, {"type": "xy"}],
+               [{"type": "xy"}, {"type": "scattergeo"}],
+               [{"colspan": 2}, None]],
         subplot_titles=('移动轨迹热力图', '时段活跃度', '移动距离分布', '常去区域', '移动速度趋势')
     )
-    
-    # 轨迹热力图 (Density Heatmap)
+
+    # 轨迹热力图
     fig.add_trace(px.density_heatmap(
-        df, x='longi', y='lati', 
-        z='hour',  # You can change 'z' to represent density or another variable
+        df, x='longi', y='lati', z='hour',
         nbinsx=30, nbinsy=30,
         title='移动轨迹热力图'
     ).data[0], row=1, col=1)
-    
-    # 时段活跃度（热力图）
+
+    # 时段活跃度
     hour_dist = df.groupby('hour').size().reset_index(name='counts')
     fig.add_trace(px.bar(
-        hour_dist, x='hour', y='counts', 
+        hour_dist, x='hour', y='counts',
         color='counts', title='时段分布'
     ).data[0], row=1, col=2)
-    
+
     # 移动距离分布
     fig.add_trace(px.histogram(
-        df, x='distance', nbins=20, 
+        df, x='distance', nbins=20,
         title='单次移动距离分布'
     ).data[0], row=2, col=1)
-    
-    # 常去区域（停留点聚类）(Scatter Geo)
-    stay_points = df[df['distance'] < 0.1]  # 小于100米视为停留
+
+    # 常去区域（中国地图）
+    stay_points = df[df['distance'] < 0.1]
     fig.add_trace(px.scatter_geo(
-        stay_points, lat='lati', lon='longi', 
-        color='hour', size='hour',  # Size can be based on another variable
-        projection="natural earth",  # Choose a suitable projection
-        title='常去区域'
+        stay_points, lat='lati', lon='longi',
+        color='hour', size='hour',
+        projection="natural earth",
+        title='常去区域',
+        scope='asia',  # 设置为亚洲地图
+        center={"lat": 35.0, "lon": 105.0},  # 中心点为中国
+        # projection_type="natural earth",  # 设置投影类型
     ).data[0], row=2, col=2)
-    
+
     # 移动速度趋势
-    df['speed'] = df['distance'] / (df['jiange'].dt.seconds/3600)  # 公里/小时
+    df['speed'] = df['distance'] / (df['jiange'].dt.seconds / 3600).replace(0, np.nan)  # 小时速度
     fig.add_trace(px.line(
-        df, x='time', y='speed', 
+        df, x='time', y='speed',
         title='移动速度变化'
     ).data[0], row=3, col=1)
 
-    # 统一更新布局
-    fig.update_layout(height=1200)  # No more Mapbox settings
-
-    # 输出到文件
+    fig.update_layout(height=1200)
     outfile = os.path.abspath(getdirmain() / 'img' / "location_dashboard.html")
     fig.write_html(outfile)
-    df = df.set_index('time')
-    return fig, df
+    return fig, df.set_index('time')
 
 
 # %% [markdown]
 # ### create_interactive_map(df)
 
 # %%
-def create_interactive_map(df):
+def create_interactive_map(df: pd.DataFrame) -> folium.Map:
     """生成可交互的轨迹地图"""
     df = df.reset_index()
     m = folium.Map(
@@ -360,11 +368,11 @@ def publish_to_joplin(df):
     stats, stats_markdown = calculate_metrics(updated_df)
     
     # 转换图表为图片
-    img_file = os.path.abspath(getdirmain() / 'img' / 'dashboard.png')  # Only include the Plotly image
+    img_file = (getdirmain() / 'img' / 'dashboard.png').absolute() # Only include the Plotly image
     fig.write_image(img_file)
     img_ids = []
     for img_file in ['dashboard.png', 'trail_map.html']:
-        res_id = createresource(os.path.abspath(getdirmain() /"img" / img_file))
+        res_id = createresource(str((getdirmain() /"img" / img_file).absolute()), img_file)
         img_ids.append(res_id)
     
     # 构建笔记内容
@@ -388,7 +396,9 @@ def publish_to_joplin(df):
 
 # %%
 if __name__ == '__main__':
-
+    """
+    主函数：处理数据源，展示足迹，发布到 Joplin。
+    """
     if not_IPython():
         log.info(f'运行文件\t{__file__}……')
     df = chuli_datasource()
