@@ -27,12 +27,13 @@ from math import radians, cos, sin, asin, sqrt
 
 import pandas as pd
 import numpy as np
+import folium
+from typing import List, Tuple
 from pylab import plt
 import plotly.express as px
-import folium
 from plotly.subplots import make_subplots
-from typing import List, Tuple
 import plotly.graph_objects as go
+import plotly.io as pio
 
 # %%
 # 自定义函数
@@ -292,7 +293,7 @@ def enhanced_visualization(dfin: pd.DataFrame) -> Tuple[go.Figure, pd.DataFrame]
 
     fig.update_layout(height=1200)
     outfile = os.path.abspath(getdirmain() / 'img' / "location_dashboard.html")
-    fig.write_html(outfile)
+    pio.write_html(fig, outfile)
     return fig, df.set_index('time')
 
 
