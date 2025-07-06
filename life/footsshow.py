@@ -153,6 +153,15 @@ def chuli_datasource() -> pd.DataFrame:
     return df.set_index(['time'])[['longi', 'lati', 'alti', 'provider', 'jiange', 'distance']]
 
 
+# %%
+today = arrow.now(get_localzone())
+print(today)
+start_time = pd.Timestamp(today.strftime("%F"))
+end_time = pd.Timestamp(today.shift(days=1).strftime("%F"))
+print(start_time, end_time)
+print(type(start_time))
+
+
 # %% [markdown]
 # ### foot2show(df4dis)
 
@@ -370,7 +379,8 @@ def publish_to_joplin(df):
     
     # 转换图表为图片
     img_file = (getdirmain() / 'img' / 'dashboard.png').absolute() # Only include the Plotly image
-    fig.write_image(img_file)
+    # fig.write_image(img_file)
+    pio.write_image(fig, str(img_file))
     img_ids = []
     for img_file in ['dashboard.png', 'trail_map.html']:
         res_id = createresource(str((getdirmain() /"img" / img_file).absolute()), img_file)
