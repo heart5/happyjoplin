@@ -315,8 +315,11 @@ def deleteresourcesfromnote(noteid):
     ptn = re.compile(r"\(:/(\w+)\)")
     residlst = re.findall(ptn, note.body)
     for i in range(len(residlst)):
-        jpapi.delete_resource(residlst[i])
-        log.info(f"【{i+1}/{len(residlst)}】资源文件（{residlst[i]}）从笔记（{note.title}）中删除成功（也被从笔记资源系统中彻底删除）！")
+        try:
+            jpapi.delete_resource(residlst[i])
+            log.info(f"【{i+1}/{len(residlst)}】资源文件（{residlst[i]}）从笔记（{note.title}）中删除成功（也被从笔记资源系统中彻底删除）！")
+        except Exception as e:
+            log.info(f"{e}")
 
 
 # %% [markdown]
