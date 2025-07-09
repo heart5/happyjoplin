@@ -30,10 +30,10 @@ import numpy as np
 import folium
 from typing import List, Tuple
 from pylab import plt
-import plotly.express as px
-from plotly.subplots import make_subplots
-import plotly.graph_objects as go
-import plotly.io as pio
+# import plotly.express as px
+# from plotly.subplots import make_subplots
+# import plotly.graph_objects as go
+# import plotly.io as pio
 
 # %%
 # 自定义函数
