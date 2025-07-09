@@ -237,10 +237,10 @@ def foot2show(df4dis):
 def enhanced_visualization(dfin: pd.DataFrame) -> pd.DataFrame:
     """综合可视化仪表盘"""
 
-    print("输入数据的前几行：")
-    print(dfin.head())
-    print("数据框信息：")
-    print(dfin.info())
+    # print("输入数据的前几行：")
+    # print(dfin.head())
+    # print("数据框信息：")
+    # print(dfin.info())
 
     df = dfin.reset_index()
     # 数据清洗
@@ -367,24 +367,105 @@ def calculate_metrics(df):
 
 
 # %% [markdown]
+# ### process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]
+
+# %%
+# 增加一个处理最近一个月数据的函数
+def process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+    """处理最近一个月的数据并生成统计信息和可视化"""
+    # 计算最近一个月的时间范围
+    # today = pd.Timestamp.today()
+    # start_date = today - pd.DateOffset(months=1)
+    start_date = df.index.max() - pd.DateOffset(months=1)
+
+    # 过滤出最近一个月的数据
+    last_month_data = df[(df.index >= start_date) & (df.index <= df.index.max())]
+    
+    # 计算统计信息
+    if last_month_data.empty:
+        print("最近一个月没有数据！")
+        return None, "最近一个月没有数据。"
+
+    stats = {
+        'total_distance': last_month_data['distance'].sum(),
+        'daily_avg': last_month_data.resample('D')['distance'].sum().mean(),
+        'frequent_hour': last_month_data['hour'].mode()[0],
+        'max_speed': last_month_data['speed'].max(),
+        'stay_points': len(last_month_data[last_month_data['speed'] < 1])  # 速度<1km/h视为停留
+    }
+
+    stats_markdown = f"""
+### 最近一个月的数据统计
+- 总移动距离：{stats['total_distance']:.1f} km
+- 日均移动：{stats['daily_avg']:.1f} km
+- 最活跃时段：{stats['frequent_hour']:02d}:00-{stats['frequent_hour']+1:02d}:00
+- 最高移动速度：{stats['max_speed']:.1f} km/h
+- 重要停留点：{stats['stay_points']} 处
+    """
+
+    # 生成可视化
+    fig, axs = plt.subplots(3, 2, figsize=(15, 15))
+    fig.suptitle('最近一个月移动数据综合可视化', fontsize=20)
+
+    # 轨迹热力图
+    hb = axs[0, 0].hexbin(last_month_data['longi'], last_month_data['lati'], gridsize=30, cmap='Blues')
+    axs[0, 0].set_title('最近一个月移动轨迹热力图')
+    plt.colorbar(hb, ax=axs[0, 0], label='频率')
+
+    # 时段活跃度
+    hour_dist = last_month_data.groupby('hour').size().reset_index(name='counts')
+    axs[0, 1].bar(hour_dist['hour'], hour_dist['counts'], color='orange')
+    axs[0, 1].set_title('最近一个月时段活跃度')
+
+    # 移动距离分布
+    axs[1, 0].hist(last_month_data['distance'], bins=20, color='green', alpha=0.7)
+    axs[1, 0].set_title('最近一个月单次移动距离分布')
+
+    # 常去区域
+    stay_points = last_month_data[last_month_data['distance'] < 0.1]
+    axs[1, 1].scatter(stay_points['longi'], stay_points['lati'], c='red', alpha=0.5)
+    axs[1, 1].set_title('最近一个月常去区域')
+
+    # 移动速度趋势
+    axs[2, 0].plot(last_month_data.index, last_month_data['speed'], color='purple')
+    axs[2, 0].set_title('最近一个月移动速度变化')
+
+    axs[2, 1].axis('off')  # 隐藏最后一个子图
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    # 定义图像保存路径
+    img_file = os.path.abspath(getdirmain() / 'img' / "last_month_dashboard.png")
+    plt.savefig(img_file)  # 这里保存图像
+    plt.close(fig)
+
+    return last_month_data, stats_markdown
+
+
+# %% [markdown]
 # ### publish_to_joplin(df)
 
 # %%
 def publish_to_joplin(df):
     """将分析结果发布到Joplin"""
-    # 生成所有可视化内容
     updated_df = enhanced_visualization(df)
 
+    # 处理最近一个月的数据
+    last_month_data, last_month_stats = process_last_month_data(updated_df)
+
     img_ids = []
-    for img_file in ['location_dashboard.png', 'trail_map.html']:
+    for img_file in ['location_dashboard.png', 'trail_map.html', 'last_month_dashboard.png']:
         res_id = createresource(str((getdirmain() / "img" / img_file).absolute()), img_file)
         img_ids.append(res_id)
 
     # 计算统计数据
-    stats, stats_markdown = calculate_metrics(updated_df)  # 计算统计数据
+    stats, stats_markdown = calculate_metrics(updated_df)  # 计算总体统计数据
 
     # 构建笔记内容
     body = f"""
+{last_month_stats}
+![最近一个月综合仪表盘](:/{img_ids[2]})
+
 {stats_markdown}
 ![综合仪表盘](:/{img_ids[0]})
 <iframe src=":/{img_ids[1]}" width="100%" height="500"></iframe>
