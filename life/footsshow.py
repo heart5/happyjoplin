@@ -234,15 +234,25 @@ def foot2show(df4dis):
 # ### enhanced_visualization(df)
 
 # %%
-def enhanced_visualization(dfin: pd.DataFrame) -> Tuple:
+def enhanced_visualization(dfin: pd.DataFrame) -> pd.DataFrame:
     """综合可视化仪表盘"""
 
+    print("输入数据的前几行：")
     print(dfin.head())
+    print("数据框信息：")
     print(dfin.info())
+
     df = dfin.reset_index()
     # 数据清洗
     df.dropna(subset=['longi', 'lati'], inplace=True)
     df = df[(df['longi'].between(73.0, 135.0)) & (df['lati'].between(18.0, 54.0))]
+
+    print("经过数据清洗后的数据：")
+    print(df)
+
+    if df.empty:
+        print("数据框为空，无法生成图形。")
+        return None, None
 
     # 计算移动速度和距离
     df['distance'] = df['longi'].shift().combine_first(df['longi']).diff()**2 + df['lati'].shift().combine_first(df['lati']).diff()**2
@@ -287,7 +297,7 @@ def enhanced_visualization(dfin: pd.DataFrame) -> Tuple:
     plt.savefig(img_file)  # 这里保存图像
     plt.close(fig)
 
-    return fig, df.set_index('time')
+    return df.set_index('time')
 
 
 # %% [markdown]
@@ -330,6 +340,9 @@ def create_interactive_map(df: pd.DataFrame) -> folium.Map:
 # %%
 def calculate_metrics(df):
     """生成多维统计指标"""
+    print("计算统计数据，检查输入数据：")
+    print(df.head())
+
     stats = {
         'total_distance': df['distance'].sum(),
         'daily_avg': df.resample('D')['distance'].sum().mean(),
@@ -337,7 +350,7 @@ def calculate_metrics(df):
         'max_speed': df['speed'].max(),
         'stay_points': len(df[df['speed'] < 1])  # 速度<1km/h视为停留
     }
-    
+
     # 生成统计面板
     stats_markdown = f"""
 ### 移动数据统计
@@ -347,6 +360,9 @@ def calculate_metrics(df):
 - 最高移动速度：{stats['max_speed']:.1f} km/h
 - 重要停留点：{stats['stay_points']} 处
     """
+    print("统计数据：")
+    print(stats)
+
     return stats, stats_markdown
 
 
@@ -357,15 +373,10 @@ def calculate_metrics(df):
 def publish_to_joplin(df):
     """将分析结果发布到Joplin"""
     # 生成所有可视化内容
-    fig, updated_df = enhanced_visualization(df)
-
-    # 保存 Matplotlib 图像
-    img_file = (getdirmain() / 'img' / 'dashboard.png').absolute()
-    plt.savefig(img_file)  # 使用 Matplotlib 的 savefig
-    plt.close(fig)  # 关闭图像以释放内存
+    updated_df = enhanced_visualization(df)
 
     img_ids = []
-    for img_file in ['dashboard.png', 'trail_map.html']:
+    for img_file in ['location_dashboard.png', 'trail_map.html']:
         res_id = createresource(str((getdirmain() / "img" / img_file).absolute()), img_file)
         img_ids.append(res_id)
 
