@@ -153,15 +153,6 @@ def chuli_datasource() -> pd.DataFrame:
     return df.set_index(['time'])[['longi', 'lati', 'alti', 'provider', 'jiange', 'distance']]
 
 
-# %%
-today = arrow.now(get_localzone())
-print(today)
-start_time = pd.Timestamp(today.strftime("%F"))
-end_time = pd.Timestamp(today.shift(days=1).strftime("%F"))
-print(start_time, end_time)
-print(type(start_time))
-
-
 # %% [markdown]
 # ### foot2show(df4dis)
 
@@ -202,29 +193,37 @@ def foot2show(df4dis):
     except KeyError:
         log.warning(f"{today}无有效数据")
         dstoday = pd.Series(dtype=float)
-    print(dstoday)
+
     if dstoday.shape[0] > 1:
+        plt.figure(figsize=(10, 5))
         dstoday.plot()
         imgpathtoday = dirmainpath / 'img' / 'gpstoday.png'
         touchfilepath2depth(imgpathtoday)
-        plt.tight_layout() # 紧缩排版，缩小默认的边距
+        plt.title('今日移动距离')
+        plt.xlabel('时间')
+        plt.ylabel('累计距离 (km)')
+        plt.tight_layout()
         plt.savefig(str(imgpathtoday))
         plt.close()
         res_title = str(imgpathtoday).split("/")[-1]
         res_id = createresource(str(imgpathtoday), title=res_title)
         imglst.append([res_title, res_id])
+
     dsdays = ds.resample('D').sum()
-    print(dsdays)
-    dsdays.plot()
-    imgpathdays = dirmainpath / 'img' / 'gpsdays.png'
-    touchfilepath2depth(imgpathdays)
-    plt.tight_layout() # 紧缩排版，缩小默认的边距
-    plt.savefig(str(imgpathdays))
-    plt.close()
-    res_title = str(imgpathdays).split("/")[-1]
-    res_id = createresource(str(imgpathdays), title=res_title)
-    imglst.append([res_title, res_id])
-    print(imglst)
+    if not dsdays.empty:
+        plt.figure(figsize=(10, 5))
+        dsdays.plot()
+        imgpathdays = dirmainpath / 'img' / 'gpsdays.png'
+        touchfilepath2depth(imgpathdays)
+        plt.title('每日移动距离')
+        plt.xlabel('日期')
+        plt.ylabel('移动距离 (km)')
+        plt.tight_layout()
+        plt.savefig(str(imgpathdays))
+        plt.close()
+        res_title = str(imgpathdays).split("/")[-1]
+        res_id = createresource(str(imgpathdays), title=res_title)
+        imglst.append([res_title, res_id])
 
     bodystr = "\n".join(f"![{son[0]}](:/{son[1]})" for son in imglst)
     deleteresourcesfromnote(loc_cloud_id)
@@ -235,74 +234,59 @@ def foot2show(df4dis):
 # ### enhanced_visualization(df)
 
 # %%
-def enhanced_visualization(dfin: pd.DataFrame) -> Tuple[go.Figure, pd.DataFrame]:
+def enhanced_visualization(dfin: pd.DataFrame) -> Tuple:
     """综合可视化仪表盘"""
 
+    print(dfin.head())
+    print(dfin.info())
     df = dfin.reset_index()
-    # 数据清洗: 去掉缺失值和不合理的记录
-    df.dropna(subset=['longi', 'lati'], inplace=True)  # 去除缺失经纬度或时间的记录
-    df = df[(df['longi'].between(73.0, 135.0)) & (df['lati'].between(18.0, 54.0))]  # 只保留在中国范围内的坐标
+    # 数据清洗
+    df.dropna(subset=['longi', 'lati'], inplace=True)
+    df = df[(df['longi'].between(73.0, 135.0)) & (df['lati'].between(18.0, 54.0))]
 
     # 计算移动速度和距离
     df['distance'] = df['longi'].shift().combine_first(df['longi']).diff()**2 + df['lati'].shift().combine_first(df['lati']).diff()**2
-    df['distance'] = (df['distance'].pow(0.5) * 111.32)  # 将弧度转换为公里
-    df['speed'] = df['distance'] / (df['jiange'].dt.seconds / 3600).replace(0, np.nan)  # 小时速度
+    df['distance'] = (df['distance'].pow(0.5) * 111.32)
+    df['speed'] = df['distance'] / (df['jiange'].dt.seconds / 3600).replace(0, np.nan)
 
     # 处理时间数据
     df['hour'] = df['time'].dt.hour
-    df['weekday'] = df['time'].dt.weekday
 
-    # 创建仪表盘
-    fig = make_subplots(
-        rows=3, cols=2,
-        specs=[[{"type": "xy"}, {"type": "xy"}],
-               [{"type": "xy"}, {"type": "scattergeo"}],
-               [{"colspan": 2}, None]],
-        subplot_titles=('移动轨迹热力图', '时段活跃度', '移动距离分布', '常去区域', '移动速度趋势')
-    )
+    fig, axs = plt.subplots(3, 2, figsize=(15, 15))
+    fig.suptitle('移动数据综合可视化仪表盘', fontsize=20)
 
     # 轨迹热力图
-    fig.add_trace(px.density_heatmap(
-        df, x='longi', y='lati', z='hour',
-        nbinsx=30, nbinsy=30,
-        title='移动轨迹热力图'
-    ).data[0], row=1, col=1)
+    hb = axs[0, 0].hexbin(df['longi'], df['lati'], gridsize=30, cmap='Blues')
+    axs[0, 0].set_title('移动轨迹热力图')
+    plt.colorbar(hb, ax=axs[0, 0], label='频率')
 
     # 时段活跃度
     hour_dist = df.groupby('hour').size().reset_index(name='counts')
-    fig.add_trace(px.bar(
-        hour_dist, x='hour', y='counts',
-        color='counts', title='时段分布'
-    ).data[0], row=1, col=2)
+    axs[0, 1].bar(hour_dist['hour'], hour_dist['counts'], color='orange')
+    axs[0, 1].set_title('时段活跃度')
 
     # 移动距离分布
-    fig.add_trace(px.histogram(
-        df, x='distance', nbins=20,
-        title='单次移动距离分布'
-    ).data[0], row=2, col=1)
+    axs[1, 0].hist(df['distance'], bins=20, color='green', alpha=0.7)
+    axs[1, 0].set_title('单次移动距离分布')
 
-    # 常去区域（中国地图）
+    # 常去区域
     stay_points = df[df['distance'] < 0.1]
-    fig.add_trace(px.scatter_geo(
-        stay_points, lat='lati', lon='longi',
-        color='hour', size='hour',
-        projection="natural earth",
-        title='常去区域',
-        scope='asia',  # 设置为亚洲地图
-        center={"lat": 35.0, "lon": 105.0},  # 中心点为中国
-        # projection_type="natural earth",  # 设置投影类型
-    ).data[0], row=2, col=2)
+    axs[1, 1].scatter(stay_points['longi'], stay_points['lati'], c='red', alpha=0.5)
+    axs[1, 1].set_title('常去区域')
 
     # 移动速度趋势
-    df['speed'] = df['distance'] / (df['jiange'].dt.seconds / 3600).replace(0, np.nan)  # 小时速度
-    fig.add_trace(px.line(
-        df, x='time', y='speed',
-        title='移动速度变化'
-    ).data[0], row=3, col=1)
+    axs[2, 0].plot(df['time'], df['speed'], color='purple')
+    axs[2, 0].set_title('移动速度变化')
 
-    fig.update_layout(height=1200)
-    outfile = os.path.abspath(getdirmain() / 'img' / "location_dashboard.html")
-    pio.write_html(fig, outfile)
+    axs[2, 1].axis('off')  # 隐藏最后一个子图
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+    # 定义图像保存路径
+    img_file = os.path.abspath(getdirmain() / 'img' / "location_dashboard.png")
+    plt.savefig(img_file)  # 这里保存图像
+    plt.close(fig)
+
     return fig, df.set_index('time')
 
 
@@ -374,18 +358,20 @@ def publish_to_joplin(df):
     """将分析结果发布到Joplin"""
     # 生成所有可视化内容
     fig, updated_df = enhanced_visualization(df)
-    create_interactive_map(updated_df)
-    stats, stats_markdown = calculate_metrics(updated_df)
-    
-    # 转换图表为图片
-    img_file = (getdirmain() / 'img' / 'dashboard.png').absolute() # Only include the Plotly image
-    # fig.write_image(img_file)
-    pio.write_image(fig, str(img_file))
+
+    # 保存 Matplotlib 图像
+    img_file = (getdirmain() / 'img' / 'dashboard.png').absolute()
+    plt.savefig(img_file)  # 使用 Matplotlib 的 savefig
+    plt.close(fig)  # 关闭图像以释放内存
+
     img_ids = []
     for img_file in ['dashboard.png', 'trail_map.html']:
-        res_id = createresource(str((getdirmain() /"img" / img_file).absolute()), img_file)
+        res_id = createresource(str((getdirmain() / "img" / img_file).absolute()), img_file)
         img_ids.append(res_id)
-    
+
+    # 计算统计数据
+    stats, stats_markdown = calculate_metrics(updated_df)  # 计算统计数据
+
     # 构建笔记内容
     body = f"""
 {stats_markdown}
@@ -398,7 +384,7 @@ def publish_to_joplin(df):
     if not note_id:
         note_id = createnote(title="高级位置分析报告")
         setcfpoptionvalue('happyjp_life', 'hjloc', 'analytics_note', note_id)
-    
+
     updatenote_body(note_id, body)
 
 
