@@ -153,8 +153,7 @@ def update_note_metadata(note_id, df, resource_id, is_new_device=False):
     # 更新总记录数
     total_match = re.search(r"\*\*总记录数\*\*：(\d+)", content)
     if total_match:
-        new_total = int(total_match.group(1)) + len(df)
-        content = re.sub(r"\*\*总记录数\*\*：\d+", f"**总记录数**：{new_total}", content)
+        content = re.sub(r"\*\*总记录数\*\*：\d+", f"**总记录数**：{len(df)}", content)
     else:
         content += f"\n- **总记录数**：{len(df)}"
     
@@ -204,7 +203,6 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             old_len_from_note = re.search(
                 rf"设备：{device_id} 记录数：(\d+)", note_content
             )
-            print(old_len_from_note)
             
             if old_len_from_note:
                 old_len = int(old_len_from_note.group(1))
@@ -214,6 +212,14 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
                 if old_len == merged_len:
                     log.info(f"设备 {device_id} 数据未变化，跳过更新")
                     return
+            else:
+                oldstr =  re.search(
+                    rf"设备：\w+ 记录数：\d+", note_content
+                ).group(0)
+                print(oldstr)
+                newstr = oldstr + f"\n- 设备：{device_id} 记录数：{merged_len}"
+                new_content = re.sub(oldstr, newstr, note_content)
+                updatenote_body(note.id, new_content)
             
             # 生成新附件
             new_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
