@@ -91,6 +91,23 @@ def register_new_device(new_id):
         log.info(f"新设备 {new_id} 注册成功")
 
 
+# %%
+def register_new_device(new_id):
+    """注册新设备"""
+    getdeviceid()
+    current_ids = [
+        did
+        for did in getcfpoptionvalue("hjdevices", "DEVICES", "ids").split(",")
+        if len(did) != 0
+    ] or []
+    new_id_not_in_current_ids = not (new_id in current_ids)
+
+    if new_id_not_in_current_ids:
+        current_ids.append(new_id)
+        setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(current_ids))
+        log.info(f"新设备 {new_id} 注册成功")
+
+
 # %% [markdown]
 # ### parse_location_txt(fl)
 
@@ -148,6 +165,21 @@ def locationfiles2dfdict(dpath):
                     dfdict[device_id] = df
                     log.info(f"加载设备 {device_id} 数据 {len(df)} 条")
     return dfdict
+
+
+# %%
+pattern = re.compile(r"location_(\w{18})_?\w*.txt")  # 匹配所有设备
+dpath = getdirmain() / "data" / "ifttt"
+for f in os.listdir(dpath):
+    match = pattern.match(f)
+    if match:
+        device_id = match.group(1)
+        print(match.group(0), device_id, len(device_id))
+        # if device_id in device_ids:  # 只处理已知设备
+        #     df = parse_location_txt(dpath / f)
+        #     if not df.empty:
+        #         dfdict[device_id] = df
+        #         log.info(f"加载设备 {device_id} 数据 {len(df)} 条")
 
 
 # %% [markdown]

@@ -17,27 +17,35 @@
 # ## 引入重要库
 
 # %%
-import re
-import os
 import base64
 import io
-import pandas as pd
+import os
+import re
 from datetime import datetime
 from pathlib import Path
+
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # %%
 import pathmagic
+
 with pathmagic.context():
     # from func.first import getdirmain
-    from func.logme import log
     from etc.getid import getdevicename, gethostuser
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue, is_log_details
-    from func.jpfuncs import searchnotes, createnote, updatenote_imgdata, \
-        noteid_used, searchnotebook
-    from func.wrapfuncs import timethis
+    from func.configpr import getcfpoptionvalue, is_log_details, setcfpoptionvalue
+    from func.jpfuncs import (
+        createnote,
+        noteid_used,
+        searchnotebook,
+        searchnotes,
+        updatenote_imgdata,
+    )
+    from func.logme import log
+
     # from func.termuxtools import termux_telephony_deviceinfo
     from func.sysfunc import execcmd, not_IPython
+    from func.wrapfuncs import timethis
 
 
 # %% [markdown]
@@ -71,16 +79,29 @@ def getmemdf():
     totalmem = int(lineslst[0].split("=")[-1])
     memlst = [x.split("\t") for x in lineslst[1:]]
     # 时间精确到分，方便后面去重
-    memlstdone = [[datetime.fromtimestamp(int(x[0])).strftime("%F %H:%M"),
-                   int(x[1]), int(x[2]), int(x[3])]
-                  for x in memlst if len(x[0]) > 0]
-    memdf = pd.DataFrame(memlstdone, columns=['time', 'freepercent', 'swaptotal', 'swapfree'])
-    memdf['time'] = pd.to_datetime(memdf['time'])
+    memlstdone = [
+        [
+            datetime.fromtimestamp(int(x[0])).strftime("%F %H:%M"),
+            int(x[1]),
+            int(x[2]),
+            int(x[3]),
+        ]
+        for x in memlst
+        if len(x[0]) > 0
+    ]
+    memdf = pd.DataFrame(
+        memlstdone, columns=["time", "freepercent", "swaptotal", "swapfree"]
+    )
+    memdf["time"] = pd.to_datetime(memdf["time"])
     print(memdf.dtypes)
     num_all = memdf.shape[0]
-    memdf.drop_duplicates(['time'], inplace=True)
-    log.info(f"{gethostuser()}内存占用记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条")
-    log.info(f"{gethostuser()}内存占用记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}")
+    memdf.drop_duplicates(["time"], inplace=True)
+    log.info(
+        f"{gethostuser()}内存占用记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条"
+    )
+    log.info(
+        f"{gethostuser()}内存占用记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}"
+    )
     # 重置索引，使其为连续的整数，方便后面精准切片
     memdfdone = memdf.reset_index()
 
@@ -99,20 +120,24 @@ def gap2img(gap=30):
     totalmem, memdfdone = getmemdf()
     tmemg = totalmem / (1024 * 1024)
 
-    time_elasp = memdfdone['time'] - memdfdone['time'].shift(1)
+    time_elasp = memdfdone["time"] - memdfdone["time"].shift(1)
     tm_gap = time_elasp[time_elasp > pd.Timedelta(f"{gap}m")]
     print(gap, tm_gap, pd.Timedelta(f"{gap}m"))
 
     gaplst = list()
     for ix in tm_gap.index:
         gaplst.append(f"{ix}\t{memdfdone['time'].loc[ix]}\t{tm_gap[ix]}")
-    log.info(f"{gethostuser()}的内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}")
+    log.info(
+        f"{gethostuser()}的内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}"
+    )
 
     # 处理无断点的情况
     if len(gaplst) == 0:
-        last_gap = memdfdone.set_index(['time'])['freepercent']
+        last_gap = memdfdone.set_index(["time"])["freepercent"]
     else:
-        last_gap = memdfdone.loc[list(tm_gap.index)[-1]:].set_index(['time'])['freepercent']
+        last_gap = memdfdone.loc[list(tm_gap.index)[-1] :].set_index(["time"])[
+            "freepercent"
+        ]
 
     plt.figure(figsize=(16, 40), dpi=300)
 
@@ -132,14 +157,18 @@ def gap2img(gap=30):
         gaplst.append(memdfdone.index.max() + 1)
         print(gaplst)
         for i in range(len(gaplst) - 1):
-            tmpdf = memdfdone.loc[gaplst[i]:gaplst[i + 1] - 1].set_index(['time'])['freepercent']
-            log.info(f"切片数据集最新日期为{tmpdf.index.max()}，最早日期为{tmpdf.index.min()}，数据项目数量为{tmpdf.shape[0]}")
+            tmpdf = memdfdone.loc[gaplst[i] : gaplst[i + 1] - 1].set_index(["time"])[
+                "freepercent"
+            ]
+            log.info(
+                f"切片数据集最新日期为{tmpdf.index.max()}，最早日期为{tmpdf.index.min()}，数据项目数量为{tmpdf.shape[0]}"
+            )
             ax2.plot(tmpdf)
     plt.title(f"全部周期内存占用动态图[{gethostuser()}]")
 
     # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
-    plt.savefig(buffer, format='png')
+    plt.savefig(buffer, format="png")
     buffer.seek(0)
     image_base64 = base64.b64encode(buffer.read()).decode()
     # now, 'image_base64' contains the base64 encoded image
@@ -166,39 +195,44 @@ def freemem2note():
     section = f"health_{getdevicename()}_{login_user}"
     notestat_title = f"内存动态图【{gethostuser()}】"
 
-    if not (gapinmin := getcfpoptionvalue(namestr, section, 'gapinmin')):
+    if not (gapinmin := getcfpoptionvalue(namestr, section, "gapinmin")):
         gapinmin = 60
-        setcfpoptionvalue(namestr, section, 'gapinmin', "60")
+        setcfpoptionvalue(namestr, section, "gapinmin", "60")
     image_base64 = gap2img(gap=gapinmin)
     nbid = searchnotebook("ewmobile")
-    if not (freestat_cloud_id := getcfpoptionvalue(namestr, section, 'freestat_cloud_id')):
+    if not (
+        freestat_cloud_id := getcfpoptionvalue(namestr, section, "freestat_cloud_id")
+    ):
         freenotefindlist = searchnotes(f"title:{notestat_title}")
-        if (len(freenotefindlist) == 0):
-            freestat_cloud_id = createnote(title=notestat_title, parent_id=nbid,
-                                             imgdata64=image_base64)
+        if len(freenotefindlist) == 0:
+            freestat_cloud_id = createnote(
+                title=notestat_title, parent_id=nbid, imgdata64=image_base64
+            )
             log.info(f"新的内存动态图笔记“{freestat_cloud_id}”新建成功！")
         else:
             freestat_cloud_id = freenotefindlist[-1].id
-        setcfpoptionvalue(namestr, section, 'freestat_cloud_id', f"{freestat_cloud_id}")
+        setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
 
     if not noteid_used(freestat_cloud_id):
-        freestat_cloud_id = createnote(title=notestat_title, parent_id=nbid,
-                                         imgdata64=image_base64)
+        freestat_cloud_id = createnote(
+            title=notestat_title, parent_id=nbid, imgdata64=image_base64
+        )
     else:
-        freestat_cloud_id, res_lst = updatenote_imgdata(noteid=freestat_cloud_id,
-                                                          parent_id=nbid, imgdata64=image_base64)
-    setcfpoptionvalue(namestr, section, 'freestat_cloud_id', f"{freestat_cloud_id}")
+        freestat_cloud_id, res_lst = updatenote_imgdata(
+            noteid=freestat_cloud_id, parent_id=nbid, imgdata64=image_base64
+        )
+    setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
 
 
 # %% [markdown]
 # ## 主函数，main()
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython() and is_log_details:
-        log.info(f'运行文件\t{__file__}')
+        log.info(f"运行文件\t{__file__}")
 
     freemem2note()
 
     if not_IPython() and is_log_details:
-        log.info(f'文件\t{__file__}\t运行完毕。')
+        log.info(f"文件\t{__file__}\t运行完毕。")

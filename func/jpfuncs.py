@@ -18,18 +18,21 @@
 # ## 引入库
 
 # %%
+import hashlib
 import os
 import re
+
 # import requests
 # import subprocess
 import tempfile
+
 import arrow
-import hashlib
-from tzlocal import get_localzone
+
 # import joppy
 # import datetime
 # from pathlib import Path
 from joppy.client_api import ClientApi
+from tzlocal import get_localzone
 # from joppy.api import Api
 # from joppy import tools
 # from tzlocal import get_localzone
@@ -37,15 +40,16 @@ from joppy.client_api import ClientApi
 
 # %%
 import pathmagic
+
 with pathmagic.context():
-    from func.first import getdirmain
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.logme import log
-    from func.wrapfuncs import timethis
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     from etc.getid import getdevicename, gethostuser
-    from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.first import getdirmain
+    from func.logme import log
+    from func.sysfunc import after_timeout, execcmd, not_IPython, set_timeout
+    from func.wrapfuncs import timethis
 
 
 # %% [markdown]
@@ -68,8 +72,17 @@ def getapi():
         exit(1)
     splitlst = [line.split("=") for line in re.findall(".+=.*", jpcmdstr)]
     # 简化api.token为token，port类似，同时把默认的port替换为41184
-    kvdict = dict([[x.split(".")[-1].strip() if x.split(".")[-1].strip() != "null" else 41184
-                    for x in sonlst] for sonlst in splitlst])
+    kvdict = dict(
+        [
+            [
+                x.split(".")[-1].strip()
+                if x.split(".")[-1].strip() != "null"
+                else 41184
+                for x in sonlst
+            ]
+            for sonlst in splitlst
+        ]
+    )
 
     url = f"http://localhost:{kvdict.get('port')}"
     # print(kvdict.get("token"), url)
@@ -152,10 +165,16 @@ def getnote(noteid, full_analysis=False):
         # 全字段分析模式
         extended_fields = "is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, share_id, conflict_original_id, master_key_id, body_html, base_url, image_data_url, crop_rect"
         allowed_fields = _validate_fields(noteid, base_fields + ", " + extended_fields)
-        return jpapi.get_note(noteid, fields=",".join([f.strip() for f in ("id, " + allowed_fields).split(",")]))
+        return jpapi.get_note(
+            noteid,
+            fields=",".join([f.strip() for f in ("id, " + allowed_fields).split(",")]),
+        )
     else:
         # 常规模式：直接获取基础字段
-        return jpapi.get_note(noteid, fields=",".join([f.strip() for f in ("id, " + base_fields).split(",")]))
+        return jpapi.get_note(
+            noteid,
+            fields=",".join([f.strip() for f in ("id, " + base_fields).split(",")]),
+        )
 
 
 # %% [markdown]
@@ -163,12 +182,12 @@ def getnote(noteid, full_analysis=False):
 
 # %%
 def _validate_fields(noteid, fields_str):
-    """ 检查字段可用性并返回有效字段列表 """
-    flst = [f.strip() for f in fields_str.split(',')]
+    """检查字段可用性并返回有效字段列表"""
+    flst = [f.strip() for f in fields_str.split(",")]
     allowed_fields = []
 
     for field in flst:
-        if field == 'id':  # 始终包含id
+        if field == "id":  # 始终包含id
             allowed_fields.append(field)
             continue
 
@@ -180,9 +199,9 @@ def _validate_fields(noteid, fields_str):
             continue  # 跳过无效字段
 
     # 共享笔记检测逻辑
-    if 'share_id' in allowed_fields:
+    if "share_id" in allowed_fields:
         logging.debug(f"笔记（id：{noteid}）是共享笔记")
-    return ','.join(allowed_fields)
+    return ",".join(allowed_fields)
 
 
 # %% [markdown]
@@ -217,14 +236,18 @@ def resid_used(targetid):
 
 # %%
 @timethis
-def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None):
+def createnote(
+    title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None
+):
     """
     按照传入的参数值构建笔记并返回id
     """
 
     global jpapi
     if imgdata64:
-        noteid = jpapi.add_note(title=title, image_data_url=f"data:image/png;base64,{imgdata64}")
+        noteid = jpapi.add_note(
+            title=title, image_data_url=f"data:image/png;base64,{imgdata64}"
+        )
         jpapi.modify_note(noteid, body=f"{getnote(noteid).body}\n{body}")
     else:
         noteid = jpapi.add_note(title=title, body=body)
@@ -233,7 +256,9 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
     note = getnote(noteid)
     matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", note.body)
     if len(matches) > 0:
-        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。")
+        log.info(
+            f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。"
+        )
     else:
         log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
 
@@ -267,10 +292,10 @@ def createresourcefromobj(file_obj, title=None):
     os.makedirs(tmp_dir, exist_ok=True)
     # 创建一个临时文件
     with tempfile.NamedTemporaryFile(
-        mode='wb',
+        mode="wb",
         delete=False,
-        prefix="joplin_res_", # 便于识别
-        dir=tmp_dir #指定目录
+        prefix="joplin_res_",  # 便于识别
+        dir=tmp_dir,  # 指定目录
     ) as tmpfile:
         # 将 BytesIO 的内容写入临时文件
         tmpfile.write(file_obj.getvalue())
@@ -288,7 +313,9 @@ def createresourcefromobj(file_obj, title=None):
             # 使用临时文件的路径调用 add_resource
             # 使用文件描述符重定向
             res_id = jpapi.add_resource(filename=tmpfile_path, title=title)
-            log.info(f"资源文件《{title}》从file_obj创建成功，纳入笔记资源系统管理，可以正常被调用！")
+            log.info(
+                f"资源文件《{title}》从file_obj创建成功，纳入笔记资源系统管理，可以正常被调用！"
+            )
         except Exception as e:
             log.error(f"资源上传失败: {str(e)}")
             raise
@@ -317,7 +344,9 @@ def deleteresourcesfromnote(noteid):
     for i in range(len(residlst)):
         try:
             jpapi.delete_resource(residlst[i])
-            log.info(f"【{i+1}/{len(residlst)}】资源文件（{residlst[i]}）从笔记（{note.title}）中删除成功（也被从笔记资源系统中彻底删除）！")
+            log.info(
+                f"【{i + 1}/{len(residlst)}】资源文件（{residlst[i]}）从笔记（{note.title}）中删除成功（也被从笔记资源系统中彻底删除）！"
+            )
         except Exception as e:
             log.info(f"{e}")
 
@@ -327,7 +356,9 @@ def deleteresourcesfromnote(noteid):
 
 # %%
 @timethis
-def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None, filepath=None):
+def createnotewithfile(
+    title="Superman", body="Keep focus, man!", parent_id=None, filepath=None
+):
     """
     按照传入的参数值构建笔记并返回id
     """
@@ -335,7 +366,9 @@ def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None
     global jpapi
     if filepath:
         note_id = jpapi.add_note(title=title)
-        resource_id = jpapi.add_resource(filename=filepath, title=filepath.split("/")[-1])
+        resource_id = jpapi.add_resource(
+            filename=filepath, title=filepath.split("/")[-1]
+        )
         jpapi.add_resource_to_note(resource_id=resource_id, note_id=note_id)
         jpapi.modify_note(note_id, body=f"{jpapi.get_note(note_id).body}\n{body}")
     else:
@@ -345,7 +378,9 @@ def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None
     note = getnote(note_id)
     matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", note.body)
     if len(matches) > 0:
-        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。")
+        log.info(
+            f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。"
+        )
     else:
         log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
 
@@ -363,7 +398,9 @@ def updatenote_title(noteid, titlestr, parent_id=None):
     if (parent_id is not None) & (note.parent_id != parent_id):
         print(f"传入的笔记父目录id为{note.parent_id}，将被调整为{parent_id}")
         jpapi.modify_note(noteid, parent_id=parent_id)
-        log.critical(f"笔记《{titleold}》所在笔记本从《{jpapi.get_notebook(note.parent_id).title}》调整为《{jpapi.get_notebook(parent_id).title}》。")
+        log.critical(
+            f"笔记《{titleold}》所在笔记本从《{jpapi.get_notebook(note.parent_id).title}》调整为《{jpapi.get_notebook(parent_id).title}》。"
+        )
     if titlestr == titleold:
         return
     jpapi.modify_note(noteid, title=titlestr)
@@ -380,7 +417,9 @@ def updatenote_body(noteid, bodystr, parent_id=None):
     if (parent_id is not None) & (note.parent_id != parent_id):
         print(f"传入的笔记父目录id为{note.parent_id}，将被调整为{parent_id}")
         jpapi.modify_note(noteid, parent_id=parent_id)
-        log.critical(f"笔记《{note.title}》所在笔记本从《{jpapi.get_notebook(note.parent_id).title}》调整为《{jpapi.get_notebook(parent_id).title}》。")
+        log.critical(
+            f"笔记《{note.title}》所在笔记本从《{jpapi.get_notebook(note.parent_id).title}》调整为《{jpapi.get_notebook(parent_id).title}》。"
+        )
     jpapi.modify_note(noteid, body=bodystr)
     log.info(f"笔记《{note.title}》（id：{noteid}）的body内容被更新了。")
 
@@ -398,7 +437,9 @@ def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
     note = getnote(noteid)
     origin_body = note.body
     if (origin_body is None) or (len(origin_body) == 0):
-        log.critical(f"笔记《{note.title}》（id：{noteid}）的内容为空，没有包含待更新的资源文件信息。")
+        log.critical(
+            f"笔记《{note.title}》（id：{noteid}）的内容为空，没有包含待更新的资源文件信息。"
+        )
         return
     print(f"笔记《{note.title}》（id：{noteid}）的内容为：\t{origin_body}")
 
@@ -410,25 +451,33 @@ def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
         else:
             log.critical(f"资源文件（id：{resid}）不存在，无法删除，跳过。")
     jpapi.delete_note(noteid)
-    log.info(f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！")
+    log.info(
+        f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！"
+    )
 
     # notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
     if parent_id:
-        notenew_id = createnote(title=note.title, imgdata64=imgdata64, parent_id=parent_id)
+        notenew_id = createnote(
+            title=note.title, imgdata64=imgdata64, parent_id=parent_id
+        )
     else:
         notenew_id = createnote(title=note.title, imgdata64=imgdata64)
     if parent_id != note.parent_id:
         jpapi.modify_note(notenew_id, parent_id=parent_id)
         nb_title = jpapi.get_notebook(parent_id).title
         nb_old_title = jpapi.get_notebook(note.parent_id).title
-        log.critical(f"笔记《{note.title}》从笔记本《{nb_old_title}》调整到《{nb_title}》中！")
+        log.critical(
+            f"笔记《{note.title}》从笔记本《{nb_old_title}》调整到《{nb_title}》中！"
+        )
     notenew = getnote(notenew_id)
     matchesnew = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", notenew.body)
     res_id_lst = matchesnew
     if not imgtitle:
         imgtitle = f"happyjoplin {arrow.now()}"
     jpapi.modify_resource(id_=res_id_lst[0], title=f"{imgtitle}")
-    log.info(f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件{matchesnew}进入笔记系统。")
+    log.info(
+        f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件{matchesnew}进入笔记系统。"
+    )
     print(f"笔记《{notenew.title}》（id：{notenew_id}）的内容为：\t{notenew.body}")
 
     return notenew_id, res_id_lst
@@ -447,7 +496,9 @@ def test_updatenote_imgdata():
     print(newfilename)
     image_data = tools.encode_base64(newfilename)
     # print(image_data)
-    notenew_id, res_id_lst = updatenote_imgdata(noteid=noteid, imgdata64=image_data, imgtitle="QR.png")
+    notenew_id, res_id_lst = updatenote_imgdata(
+        noteid=noteid, imgdata64=image_data, imgtitle="QR.png"
+    )
     print(f"包含新资源文件的新笔记的id为：{notenew_id}")
     resfile = jpapi.get_resource_file(id_=res_id_lst[0])
     print(f"资源文件大小（二进制）为：{len(resfile)}字节。")
@@ -489,7 +540,7 @@ def modify_resource(res_id, imgdata64=None):
     else:
         datastr = f"data:image/png;base64,{imgdata64}"
         begin_str = f"curl -X PUT -F 'data=\"{datastr}\"'"
-        props_str = " -F 'props={\"title\":\"my modified title\"}'"
+        props_str = ' -F \'props={"title":"my modified title"}\''
         url_str = f" {jpapi.url}/resources/{res_id}?token={jpapi.token}"
         update_curl_str = begin_str + props_str + url_str
         print(update_curl_str)
@@ -537,11 +588,11 @@ def searchnotes(key, parent_id=None):
     """
     global jpapi
     # 经过测试，fields中不能携带的属性值有：latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect，另外shared_id对于共享笔记本下的笔记无法查询，出错
-    fields="id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, conflict_original_id"
+    fields = "id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, conflict_original_id"
     results = jpapi.search(query=key, fields=fields).items
     log.info(f"搜索“{key}”，找到{len(results)}条笔记")
     if parent_id:
-        nb= jpapi.get_notebook(parent_id)
+        nb = jpapi.get_notebook(parent_id)
         results = [note for note in results if note.parent_id == parent_id]
         log.info(f"限定笔记本《{nb.title}》后，搜索结果有{len(results)}条笔记")
 
@@ -558,16 +609,24 @@ def readinifromcloud():
     通过对比更新时间（timestamp）来判断云端配置笔记是否有更新，有更新则更新至本地ini文件，确保数据新鲜
     """
     # 在happyjpsys配置文件中查找ini_cloud_updatetimestamp，找不到则表示首次运行，置零
-    if not (ini_cloud_updatetimestamp := getcfpoptionvalue('happyjpsys', 'joplin', 'ini_cloud_updatetimestamp')):
+    if not (
+        ini_cloud_updatetimestamp := getcfpoptionvalue(
+            "happyjpsys", "joplin", "ini_cloud_updatetimestamp"
+        )
+    ):
         ini_cloud_updatetimestamp = 0
 
     # 在happyjp配置文件中查找ini_cloud_id，找不到则在云端搜索，搜不到就新建一个，无论是找到了还是新建一个，在happyjp中相应赋值
-    if (noteid_inifromcloud := getcfpoptionvalue('happyjp', 'joplin', 'ini_cloud_id')) is None:
-        if (resultitems := searchnotes("title:happyjoplin云端配置")) and (len(resultitems) > 0):
+    if (
+        noteid_inifromcloud := getcfpoptionvalue("happyjp", "joplin", "ini_cloud_id")
+    ) is None:
+        if (resultitems := searchnotes("title:happyjoplin云端配置")) and (
+            len(resultitems) > 0
+        ):
             noteid_inifromcloud = resultitems[0].id
         else:
             noteid_inifromcloud = createnote("happyjoplin云端配置", "")
-        setcfpoptionvalue('happyjp', 'joplin', 'ini_cloud_id', str(noteid_inifromcloud))
+        setcfpoptionvalue("happyjp", "joplin", "ini_cloud_id", str(noteid_inifromcloud))
     # print(noteid_inifromcloud)
 
     note = getnote(noteid_inifromcloud)
@@ -579,13 +638,22 @@ def readinifromcloud():
 
     items = note.body.split("\n")
     # print(items)
-    fileobj = open(str(getdirmain() / 'data' / 'happyjpinifromcloud.ini'), 'w', encoding='utf-8')
+    fileobj = open(
+        str(getdirmain() / "data" / "happyjpinifromcloud.ini"), "w", encoding="utf-8"
+    )
     for item in items:
-        fileobj.write(item + '\n')
+        fileobj.write(item + "\n")
     fileobj.close()
 
-    setcfpoptionvalue('happyjpsys', 'joplin', 'ini_cloud_updatetimestamp', str(noteupdatetimewithzone.timestamp()))
-    log.info(f'云端配置笔记有更新【（{noteupdatetimewithzone}）->（{arrow.get(ini_cloud_updatetimestamp).to(get_localzone())}）】，更新本地化的ini配置文件。')
+    setcfpoptionvalue(
+        "happyjpsys",
+        "joplin",
+        "ini_cloud_updatetimestamp",
+        str(noteupdatetimewithzone.timestamp()),
+    )
+    log.info(
+        f"云端配置笔记有更新【（{noteupdatetimewithzone}）->（{arrow.get(ini_cloud_updatetimestamp).to(get_localzone())}）】，更新本地化的ini配置文件。"
+    )
 
 
 # %% [markdown]
@@ -595,7 +663,7 @@ def readinifromcloud():
 def getinivaluefromcloud(section, option):
     readinifromcloud()
 
-    return getcfpoptionvalue('happyjpinifromcloud', section, option)
+    return getcfpoptionvalue("happyjpinifromcloud", section, option)
 
 
 # %% [markdown]
@@ -617,12 +685,15 @@ jpapi = getapi()
 # ## 主函数main（）
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython():
-        log.info(f'开始运行文件\t{__file__}')
+        log.info(f"开始运行文件\t{__file__}")
     # joplinport()
 
-    note_ids_to_monitor = ['ed8523d3812143e0943acd9c6cdd3ffe', '9025c19f884c40609bef2133d1a224a1']  # 需要监控的笔记ID列表，替换为实际的GUID
+    note_ids_to_monitor = [
+        "ed8523d3812143e0943acd9c6cdd3ffe",
+        "9025c19f884c40609bef2133d1a224a1",
+    ]  # 需要监控的笔记ID列表，替换为实际的GUID
     for note_id in note_ids_to_monitor:
         updated_time = getnote(note_id).updated_time
         print(updated_time)
@@ -632,7 +703,7 @@ if __name__ == '__main__':
         # local_arrow = utc_arrow.to('Asia/Shanghai')
         local_arrow = utc_arrow.to(local_tz)
         print(local_arrow)
-    
+
     # createnote(title="重生的笔记", body="some things happen", noteid_spec="3ffccc7c48fc4b25bcd7cf3841421ce5")
     # test_updatenote_imgdata()
     # test_modify_res()
@@ -657,5 +728,5 @@ if __name__ == '__main__':
     # print(result.stdout)
 
     if not_IPython():
-        log.info(f'Done.结束执行文件\t{__file__}')
+        log.info(f"Done.结束执行文件\t{__file__}")
 
