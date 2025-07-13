@@ -31,13 +31,16 @@ import uuid
 
 # %%
 import pathmagic
+
 with pathmagic.context():
+    from func.configpr import getcfpoptionvalue, is_log_details, setcfpoptionvalue
     from func.logme import log
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue, is_log_details
-#     from func.wrapfuncs import timethis, ift2phone
+    from func.sysfunc import execcmd, not_IPython
+
+    #     from func.wrapfuncs import timethis, ift2phone
     # from func.jpfuncs import getinivaluefromcloud
     from func.termuxtools import termux_telephony_deviceinfo
-    from func.sysfunc import execcmd, not_IPython
+
     try:
         import wmi
     except ImportError:
@@ -55,12 +58,15 @@ with pathmagic.context():
 # %%
 def set_devicename2ini(id, sysstr):
     from func.jpfuncs import getinivaluefromcloud
-    if (device_name := getcfpoptionvalue('happyjphard', id, 'device_name')) is None:
-        if (device_name_fromcloud := getinivaluefromcloud('device', id)):
-            setcfpoptionvalue('happyjphard', id, 'device_name', device_name_fromcloud)
+
+    if (device_name := getcfpoptionvalue("happyjphard", id, "device_name")) is None:
+        if device_name_fromcloud := getinivaluefromcloud("device", id):
+            setcfpoptionvalue("happyjphard", id, "device_name", device_name_fromcloud)
         else:
-            log.critical(f"当前主机（id：{id}）尚未在网络端配置笔记中设定名称或者是还没完成本地化设定！！！")
-            if sysstr == 'Linux':
+            log.critical(
+                f"当前主机（id：{id}）尚未在网络端配置笔记中设定名称或者是还没完成本地化设定！！！"
+            )
+            if sysstr == "Linux":
                 log.critical(f"主机信息：{execcmd('uname -a')}")
 
 
@@ -69,7 +75,7 @@ def set_devicename2ini(id, sysstr):
 
 # %%
 def get_devicenamefromini(id):
-    return getcfpoptionvalue('happyjphard', id, 'device_name')
+    return getcfpoptionvalue("happyjphard", id, "device_name")
 
 
 # %% [markdown]
@@ -84,7 +90,7 @@ def getdeviceid():
     # printDisk()
     # printMacAddress()
     # print(printBattery())
-    if (d_id_from_ini := getcfpoptionvalue('happyjphard', 'happyjphard', 'device_id')):
+    if d_id_from_ini := getcfpoptionvalue("happyjphard", "happyjphard", "device_id"):
         return str(d_id_from_ini)
     id = None
     sysstr = platform.system()
@@ -110,12 +116,12 @@ def getdeviceid():
         disks = disk_id[0].SerialNumber.strip()
         # for disk in disk_id:
         #     print(disk)
-        idstr = f'{bioss}\t{cpus}\t{boards}\t{disks}'
+        idstr = f"{bioss}\t{cpus}\t{boards}\t{disks}"
         uid = uuid.uuid3(uuid.NAMESPACE_URL, idstr)
         # print(uid)
         print(hex(hash(uid)))
         id = hex(hash(uid))
-    elif sysstr == 'Linux':
+    elif sysstr == "Linux":
         try:
             outputdict = termux_telephony_deviceinfo()
             id = hex(hash(uuid.uuid3(uuid.NAMESPACE_URL, str(outputdict))))
@@ -132,14 +138,14 @@ def getdeviceid():
                 print("天啊，命令行都不成！只好强行赋值了")
                 id = 123456789
                 type(e)
-#                 raise
+    #                 raise
     else:
-        log.critical('既不是Windows也不是Linux，那是啥啊。只好强行赋值了！！！')
+        log.critical("既不是Windows也不是Linux，那是啥啊。只好强行赋值了！！！")
         id = 123456789
-#         exit(1)
+    #         exit(1)
 
     id = str(id)
-    setcfpoptionvalue('happyjphard', 'happyjphard', 'device_id', id)
+    setcfpoptionvalue("happyjphard", "happyjphard", "device_id", id)
     set_devicename2ini(id, sysstr)
 
     return id
@@ -151,7 +157,7 @@ def getdeviceid():
 # %%
 def getdevicename():
     id = getdeviceid()
-    set_devicename2ini(id, 'Linux')
+    set_devicename2ini(id, "Linux")
 
     return get_devicenamefromini(id)
 
@@ -170,14 +176,14 @@ def gethostuser():
 # ## 主函数
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython() and is_log_details:
-        log.info(f'运行文件\t{__file__}')
+        log.info(f"运行文件\t{__file__}")
     deviceid = getdeviceid()
     print(deviceid)
-#     set_devicename2ini(id, 'Linux')
-#     devicename = get_devicenamefromini(id)
+    #     set_devicename2ini(id, 'Linux')
+    #     devicename = get_devicenamefromini(id)
     devicename = getdevicename()
     print(f"{devicename}")
     if not_IPython() and is_log_details:
-        log.info(f'文件\t{__file__}\t运行完毕。')
+        log.info(f"文件\t{__file__}\t运行完毕。")
