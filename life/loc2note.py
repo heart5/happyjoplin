@@ -22,6 +22,7 @@ import hashlib
 import os
 import re
 import sqlite3 as lite
+from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -59,6 +60,7 @@ with pathmagic.context():
 # %% [markdown]
 # ### get_all_device_ids()
 
+
 # %%
 def get_all_device_ids():
     """从配置文件获取所有设备ID"""
@@ -75,26 +77,11 @@ def get_all_device_ids():
 # %% [markdown]
 # ### register_new_device(new_id)
 
-# %%
-def register_new_device(new_id):
-    """注册新设备"""
-    if (
-        current_ids_str := getcfpoptionvalue("hjdevices", "DEVICES", "ids")
-    ) is not None:
-        current_ids = [did for did in current_ids_str.split(",") if len(did) != 0]
-    else:
-        current_ids = []
-    if new_id not in current_ids:
-        current_ids.append(new_id)
-        setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(current_ids))
-
-        log.info(f"新设备 {new_id} 注册成功")
-
 
 # %%
 def register_new_device(new_id):
     """注册新设备"""
-    getdeviceid()
+    # Extract device IDs from string if available
     current_ids = [
         did
         for did in getcfpoptionvalue("hjdevices", "DEVICES", "ids").split(",")
@@ -102,6 +89,7 @@ def register_new_device(new_id):
     ] or []
     new_id_not_in_current_ids = not (new_id in current_ids)
 
+    # Register new device if it's not already present
     if new_id_not_in_current_ids:
         current_ids.append(new_id)
         setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(current_ids))
@@ -110,6 +98,7 @@ def register_new_device(new_id):
 
 # %% [markdown]
 # ### parse_location_txt(fl)
+
 
 # %%
 def parse_location_txt(fl):
@@ -141,108 +130,110 @@ def parse_location_txt(fl):
         log.error(f"解析位置文件失败: {str(e)}")
         return pd.DataFrame()
 
+
 # %% [markdown]
 # ### locationfiles2dfdict(dpath)
+
 
 # %%
 @timethis
 def locationfiles2dfdict(dpath):
-    """
-    读取位置数据目录生成设备数据字典
-    支持多设备
-    """
-    device_ids = get_all_device_ids()  # 新增函数获取所有设备ID
-    pattern = re.compile(r"location_(\w+).txt")  # 匹配所有设备
+    device_ids = set(get_all_device_ids())  # 使用集合加速查找
+    pattern = re.compile(r"location_(\w{18})(?:_\w+)?\.txt$")
+    dfdict = defaultdict(pd.DataFrame)  # 自动处理空DataFrame
 
-    dfdict = {}
     for f in os.listdir(dpath):
-        match = pattern.match(f)
-        if match:
-            device_id = match.group(1)
-            if device_id in device_ids:  # 只处理已知设备
-                df = parse_location_txt(dpath / f)
-                if not df.empty:
-                    dfdict[device_id] = df
-                    log.info(f"加载设备 {device_id} 数据 {len(df)} 条")
-    return dfdict
+        if not pattern.match(f):
+            continue
 
+        device_id = pattern.match(f).group(1)
+        if device_id not in device_ids:
+            register_new_device(device_id)
+            device_ids.add(device_id)  # 更新本地缓存
 
-# %%
-pattern = re.compile(r"location_(\w{18})_?\w*.txt")  # 匹配所有设备
-dpath = getdirmain() / "data" / "ifttt"
-for f in os.listdir(dpath):
-    match = pattern.match(f)
-    if match:
-        device_id = match.group(1)
-        print(match.group(0), device_id, len(device_id))
-        # if device_id in device_ids:  # 只处理已知设备
-        #     df = parse_location_txt(dpath / f)
-        #     if not df.empty:
-        #         dfdict[device_id] = df
-        #         log.info(f"加载设备 {device_id} 数据 {len(df)} 条")
+        try:
+            df = parse_location_txt(dpath / f)
+            if df.empty:
+                continue
+
+            if not dfdict[device_id].empty:
+                chunks = [dfdict[device_id], df]
+                dfdict[device_id] = (
+                    pd.concat(chunks, ignore_index=True)
+                    .sort_values("time")
+                    .drop_duplicates(subset=["time", "latitude"], keep="last")
+                )
+            else:
+                dfdict[device_id] = df
+
+            log.info(f"加载 {f} → 设备 {device_id} 数据: {len(df)}条")
+        except Exception as e:
+            log.error(f"处理文件 {f} 错误: {str(e)}")
+
+    return dict(dfdict)  # 转回普通dict
 
 
 # %% [markdown]
 # ### update_note_metadata(note_id, df, resource_id, is_new_device=False)
 
+
 # %%
-def update_note_metadata(note_id, df, resource_id, is_new_device=False):
+def update_note_metadata(note_id, df, resource_id):
     """更新笔记中的设备id和统计信息"""
     note = getnote(note_id)
-    content = note.body
+    # 0: 位置数据元信息， 2：位置设备列表， 4： 分设备位置记录数量， 6 ：位置记录总量， 8： 数据文件
+    struct_body = [
+        line.strip()
+        for line in re.split(r"##\s+(\S+)\n", note.body)
+        if len(line.strip()) != 0
+    ]
 
-    # 更新设备哈希值
     device_id = df["device_id"].iloc[0]
     thedf = df[df["device_id"] == device_id]
-    print(thedf.tail())
-    print(thedf.info())
+    # print(thedf.tail())
+    # print(thedf.info())
 
-    if is_new_device:
-        # 添加新设备信息
-        content += f"\n- 设备：{device_id} 记录数：{len(thedf)}"
-    else:
-        # 更新现有设备信息
-        content = re.sub(
-            rf"设备：{device_id} 记录数：\d+",
-            f"设备：{device_id} 记录数：{len(thedf)}",
-            content,
-        )
+    # 更新设备列表
+    device_lst = re.findall(r"-\s+(?:包含设备[：:])?\s*(\w{18})", struct_body[3], re.M)
+    if device_id not in device_lst:
+        device_lst.append(device_id)
+    struct_body[3] = "\n".join([f"- {item}" for item in device_lst])
 
     # 更新总记录数
-    total_match = re.search(r"\*\*总记录数\*\*：(\d+)", content)
+    total_match = re.search(r"\*\*总记录数\*\*[：:](\d+)", struct_body[7])
     if total_match:
-        content = re.sub(r"\*\*总记录数\*\*：\d+", f"**总记录数**：{len(df)}", content)
+        struct_body[7] = re.sub(
+            r"\*\*总记录数\*\*[：:]\d+", f"**总记录数**：{len(df)}", struct_body[7]
+        )
     else:
-        content += f"\n- **总记录数**：{len(thedf)}"
+        struct_body[7] = f"- **总记录数**：{len(df)}"
 
     # 更新起止时间
-    start2end = re.compile(
-        r"时间范围：\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d+ 至 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d+(\.\d+)?"
-    )
-    content = re.sub(
-        start2end, f"时间范围：{thedf['time'].min()} 至 {thedf['time'].max()}", content
-    )
+    struct_body[1] = f"时间范围：{thedf['time'].min()} 至 {thedf['time'].max()}"
 
     # 更新附件链接
-    content = re.sub(
-        r"\[\S+\]\(:/\w+\)",
-        f"[下载数据文件{jpapi.get_resource(resource_id).title}](:/{resource_id})",
-        content,
+    struct_body[9] = (
+        f"[下载数据文件{jpapi.get_resource(resource_id).title}](:/{resource_id})"
+    )
+
+    new_content = "\n".join(
+        [f"## {item}" if i % 2 == 0 else item for i, item in enumerate(struct_body)]
     )
 
     # 更新笔记
-    updatenote_body(note_id, content)
+    updatenote_body(note_id, new_content)
 
 
 # %% [markdown]
 # ### upload_to_joplin(file_path, device_id, period, save_dir)
 
+
 # %%
 def upload_to_joplin(file_path, device_id, period, save_dir):
-    """带版本控制的文件上传，支持多设备数据合并与精确哈希校验"""
+    """文件上传至笔记，支持多设备数据合并与数据表大小校验"""
     # 读取当前设备的新数据
-    new_df = pd.read_excel(file_path)
-    new_df["device_id"] = device_id  # 添加设备标识列
+    local_df = pd.read_excel(file_path)
+    local_df["device_id"] = device_id  # 添加设备标识列
 
     note_title = f"位置数据_{period.strftime('%Y%m')}"
     existing_notes = searchnotes(f"title:{note_title}")
@@ -251,77 +242,86 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         note = existing_notes[0]
         resources = jpapi.get_resources(note.id).items
 
-        if resources:
-            device_resource = resources[0]
-            save_dir.mkdir(parents=True, exist_ok=True)
-            # 下载附件中的历史数据
-            old_data = jpapi.get_resource_file(device_resource.id)
-            old_df = pd.read_excel(BytesIO(old_data))
+        device_resource = resources[0]
+        save_dir.mkdir(parents=True, exist_ok=True)
+        # 下载附件中的云端笔记附件数据
+        cloud_data = jpapi.get_resource_file(device_resource.id)
+        cloud_df = pd.read_excel(BytesIO(cloud_data))
 
-            # 合并新旧数据
-            merged_df = pd.concat([old_df, new_df])
-            merged_df = merged_df.sort_values("time").drop_duplicates(
-                subset=["time", "device_id", "latitude", "longitude"],
-                keep="last",  # 保留最新记录
-            )
+        # 合并云端和本地数据
+        merged_df = pd.concat([cloud_df, local_df])
+        merged_df = merged_df.sort_values("time").drop_duplicates(
+            subset=["time", "device_id", "latitude", "longitude"],
+            keep="last",  # 保留最新记录
+        )
 
-            # 计算合并后的哈希值
-            merged_len = len(merged_df)
+        # 计算合并后的大小
+        merged_len = len(merged_df)
 
-            # 从笔记正文提取该设备的历史哈希值
-            note_content = getnote(note.id).body
-            old_len_from_note = re.search(
-                rf"设备：{device_id} 记录数：(\d+)", note_content
-            )
+        # 从笔记正文提取该设备的历史大小
+        note_content = getnote(note.id).body
+        cloud_len_from_note = re.search(
+            rf"-\s+设备[：:]{device_id}\s+记录数[：:](\d+)", note_content
+        )
 
-            if old_len_from_note:
-                old_len = int(old_len_from_note.group(1))
-                log.info(f"旧记录数（笔记）: {old_len}, 新记录数: {merged_len}")
+        if cloud_len_from_note:
+            cloud_len = int(cloud_len_from_note.group(1))
+            log.info(f"旧记录数（笔记）: {cloud_len}, 新记录数: {merged_len}")
 
-                # 仅当数据发生变化时才更新
-                if old_len == merged_len:
-                    log.info(f"设备 {device_id} 数据未变化，跳过更新")
-                    return
+            # 仅当数据发生变化时才更新
+            if cloud_len == merged_len:
+                log.info(f"设备 {device_id} 数据未变化，跳过更新")
+                return
             else:
-                oldstr = re.search(rf"设备：\w+ 记录数：\d+", note_content).group(0)
-                print(oldstr)
-                newstr = oldstr + f"\n- 设备：{device_id} 记录数：{merged_len}"
-                new_content = re.sub(oldstr, newstr, note_content)
+                ptn_special = rf"^-\s+设备[:：]{device_id}\s+记录数[:：](\d+)$"
+                find_line = re.search(ptn_special, note_content, re.M).group()
+                new_content = re.sub(
+                    find_line,
+                    re.sub(r"记录数[:：]\s*\d+", f"记录数：{merged_len}", find_line),
+                    note_content,
+                )
                 updatenote_body(note.id, new_content)
-
-            # 生成新附件
-            new_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
-            new_file = save_dir / new_file_name
-            merged_df.to_excel(new_file, index=False)
-
-            # 更新附件
-            jpapi.delete_resource(device_resource.id)
-            resource_title = re.sub(f"_{device_id}", "", new_file_name)
-            new_resource_id = jpapi.add_resource(str(new_file), title=resource_title)
-
-            # 更新笔记元数据
-            update_note_metadata(note.id, merged_df, new_resource_id)
         else:
-            # 添加新设备数据
-            resource_title = re.sub(f"_{device_id}", "", file_path.name)
-            new_resource_id = jpapi.add_resource(str(file_path), title=resource_title)
-            jpapi.add_resource_to_note(new_resource_id, note.id)
-            update_note_metadata(note.id, new_df, new_resource_id, is_new_device=True)
+            newstr = re.findall(
+                r"^-\s+设备[：:]\w{18}\s+记录数[：:]\d+$", note_content, re.M
+            )
+            newstrdone = (
+                "\n".join(newstr) + f"\n- 设备：{device_id} 记录数：{merged_len}"
+            )
+            new_content = re.sub("\n".join(newstr), newstrdone, note_content)
+            updatenote_body(note.id, new_content)
+
+        # 生成新附件
+        local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
+        local_file = save_dir / local_file_name
+        merged_df.to_excel(local_file, index=False)
+
+        # 更新附件
+        jpapi.delete_resource(device_resource.id)
+        resource_title = re.sub(f"_{device_id}", "", local_file_name)
+        new_resource_id = jpapi.add_resource(str(local_file), title=resource_title)
+
+        # 更新笔记元数据
+        update_note_metadata(note.id, merged_df, new_resource_id)
     else:
         # 创建新笔记
         note_body = f"""
 ## 位置数据元信息
-- 时间范围：{newdf["time"].min()} 至 {newdf["time"].max()}
+- 时间范围：{local_df["time"].min()} 至 {local_df["time"].max()}
+## 位置设备列表
 - 包含设备: {device_id}
-- 设备：{device_id} 记录数：{len(new_df)}
-- **总记录数**：{len(new_df)}
+## 分设备位置记录数量
+- 设备：{device_id} 记录数：{len(local_df)}
+## 位置记录总数量
+- **总记录数**：{len(local_df)}
+## 数据文件
         """
         parent_id = searchnotebook("位置信息数据仓")
-        new_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
-        new_file = save_dir / new_file_name
-        new_df.to_excel(new_file, index=False)
-        resource_title = re.sub(f"_{device_id}", "", new_file_name)
-        resource_id = jpapi.add_resource(str(new_file), title=resource_title)
+        local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
+        local_file = save_dir / local_file_name
+        local_df.to_excel(local_file, index=False)
+        resource_title = re.sub(f"_{device_id}", "", local_file_name)
+        resource_id = jpapi.add_resource(str(local_file), title=resource_title)
         newnote_id = createnote(title=note_title, body=note_body, parent_id=parent_id)
         jpapi.add_resource_to_note(resource_id, newnote_id)
 
@@ -329,7 +329,52 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 
 
 # %% [markdown]
+# ### fix_content_location_notes()
+
+# %%
+def fix_content_location_notes():
+    find_notes = searchnotes("title:位置数据_")
+    for note in find_notes:
+        content = note.body
+
+        section_devices_list = "## 位置设备列表\n"
+        section_multi_devices = "## 分设备位置记录数量\n"
+        section_total_records = "## 位置记录总数量\n"
+        section_data_download = "## 数据文件\n"
+
+        ptn_devices_list = rf"({section_devices_list})?(-\s+包含设备[：:]\s*\w{{18}})"
+        devices_list_lines = re.search(ptn_devices_list, content).group()
+        devices_list_content = re.sub(
+            ptn_devices_list, section_devices_list + devices_list_lines, content
+        )
+        # print(devices_list_content)
+
+        ptn_multi_devices = rf"({section_multi_devices})?(-\s+设备[：:]\s*\w{{18}}\s+记录数[：:]\s*\d+\n)+(?:##\s\w+)?"
+        multi_devices_lines = re.search(ptn_multi_devices, devices_list_content).group()
+        multi_devices_content = re.sub(
+            ptn_multi_devices,
+            section_multi_devices + multi_devices_lines + section_total_records,
+            devices_list_content,
+        )
+        # print(multi_devices_content)
+
+        ptn_data_download = rf"({section_data_download})?(\[\S+\])\(:/\S+\)"
+        data_download_lines = re.search(
+            ptn_data_download, multi_devices_content
+        ).group()
+        # print(f"下载链接字符串为：\t{data_download_lines}")
+        data_download_content = re.sub(
+            ptn_data_download,
+            section_data_download + data_download_lines,
+            multi_devices_content,
+        )
+        # print(data_download_content)
+        updatenote_body(note.id, data_download_content)
+        log.info(f"笔记《{note.title}》内容已规整为结构化文档。")
+
+# %% [markdown]
 # ### locationsplit2xlsx(dfdict, save_path)
+
 
 # %%
 def locationsplit2xlsx(dfdict, save_path):
@@ -362,8 +407,10 @@ def locationsplit2xlsx(dfdict, save_path):
         merged_df.to_excel(filepath, index=False)
         upload_to_joplin(filepath, ",".join(merged_df["device_id"].unique()), period)
 
+
 # %% [markdown]
 # ### update_location_note(device_id, notebook_guid)
+
 
 # %%
 def update_location_note(device_id, notebook_guid):
@@ -411,8 +458,10 @@ def update_location_note(device_id, notebook_guid):
     else:
         createnote(title=note_title, body="\n".join(content), parent_id=parent_id)
 
+
 # %% [markdown]
 # ### sync_location_data()
+
 
 # %%
 @timethis
@@ -424,6 +473,7 @@ def sync_location_data():
     dfdict = locationfiles2dfdict(data_dir)
 
     for device_id, df in dfdict.items():
+        print(device_id, df.shape)
         if not df.empty:
             # 添加月份分组
             df["month"] = df["time"].dt.to_period("M")
@@ -438,6 +488,7 @@ def sync_location_data():
 
                 # 删除临时文件
                 temp_file.unlink()
+
 
 # %% [markdown]
 # ## 主执行流程
