@@ -31,6 +31,7 @@ import pandas as pd
 
 # %%
 import pathmagic
+
 with pathmagic.context():
     from func.first import getdirmain, touchfilepath2depth
     from func.logme import log
@@ -47,6 +48,7 @@ with pathmagic.context():
 # %% [markdown]
 # ### def get_filesize(filepath)
 
+
 # %%
 def get_filesize(filepath):
     fsize = os.path.getsize(filepath)
@@ -56,6 +58,7 @@ def get_filesize(filepath):
 
 # %% [markdown]
 # ### def istableindb(tablein, dbname)
+
 
 # %%
 def istableindb(tablenin: str, dbname: str):
@@ -72,7 +75,7 @@ def istableindb(tablenin: str, dbname: str):
     except Exception as eee:
         log.critical(f"查询数据表是否存在时出错。{eee}")
     finally:
-        if 'conn' in locals():
+        if "conn" in locals():
             conn.close()
 
     return result
@@ -80,6 +83,7 @@ def istableindb(tablenin: str, dbname: str):
 
 # %% [markdown]
 # ### def ifnotcreate(tablein, createsql, dbn)
+
 
 # %%
 def ifnotcreate(tablen: str, createsql: str, dbn: str):
@@ -104,12 +108,13 @@ def ifnotcreate(tablen: str, createsql: str, dbn: str):
     except Exception as eee:
         log.critical(f"操作数据库时出现错误。{dbn}\t{eee}")
     finally:
-        if 'conn' in locals():
+        if "conn" in locals():
             conn.close()
 
 
 # %% [markdown]
 # ### def ifclexists(dbin, tb, cl)
+
 
 # %%
 def ifclexists(dbin, tb, cl):
@@ -127,11 +132,11 @@ def ifclexists(dbin, tb, cl):
         print(f"数据表{tb}不存在")
         return False
 
-    createsql =  [name for x in tablefd for name in x][0]
+    createsql = [name for x in tablefd for name in x][0]
     print(createsql)
     ptn = re.compile(r"\((.+)\)")
     print(re.findall(ptn, createsql)[0])
-    rstsplst = re.findall(ptn, createsql)[0].split(',')
+    rstsplst = re.findall(ptn, createsql)[0].split(",")
     print([x.strip() for x in rstsplst])
     finallst = [x.strip().split()[:2] for x in rstsplst]
     print(finallst)
@@ -147,19 +152,20 @@ def ifclexists(dbin, tb, cl):
 # %% [markdown]
 # ### def shwotableindb(dbname)
 
+
 # %%
 def showtablesindb(dbname: str):
     conn = lite.connect(dbname)
     cursor = conn.cursor()
     tbnsql = f"SELECT tbl_name FROM sqlite_master WHERE type = 'table';"
     tablefd = cursor.execute(tbnsql).fetchall()
-#     print(tablefd)
+    #     print(tablefd)
     tablesnamelst = [name for x in tablefd for name in x]
     print(tablesnamelst)
     for tname in tablesnamelst:
         structsql = f"SELECT sql FROM sqlite_master WHERE type = 'table' AND tbl_name = '{tname}';"
         tablefd = cursor.execute(structsql).fetchall()
-        print(tname+":\t", [name for x in tablefd for name in x][0])
+        print(tname + ":\t", [name for x in tablefd for name in x][0])
     conn.commit()
     tcs = conn.total_changes
     print(tcs)
@@ -169,6 +175,7 @@ def showtablesindb(dbname: str):
 # %% [markdown]
 # ### def droptablefromdb(dbname, tablename, confirm=False)
 
+
 # %%
 def droptablefromdb(dbname: str, tablename: str, confirm=False):
     if not confirm:
@@ -177,7 +184,7 @@ def droptablefromdb(dbname: str, tablename: str, confirm=False):
     else:
         conn = lite.connect(dbname)
         cursor = conn.cursor()
-        cursor.execute(f'drop table {tablename}')
+        cursor.execute(f"drop table {tablename}")
         # cursor.execute(f'drop table cinfo')
         conn.commit()
         logstr = f"【警告】：数据表{tablename}已经从{dbname}中删除，谨以记！！！"
@@ -189,12 +196,13 @@ def droptablefromdb(dbname: str, tablename: str, confirm=False):
 # %% [markdown]
 # ### def checktableindb(ininame, dbpath, tablename, creattablesql, confirm=False)
 
+
 # %%
 def checktableindb(ininame: str, dbpath: str, tablename: str, creattablesql: str, confirm=False):
     """
     检查数据表（ini登记，物理存储）是否存在并根据情况创建
     """
-    absdbpath = os.path.abspath(dbpath) # 取得绝对路径，用于作为section名称
+    absdbpath = os.path.abspath(dbpath)  # 取得绝对路径，用于作为section名称
     if not (ifcreated := getcfpoptionvalue(ininame, absdbpath, tablename)):
         print(ifcreated)
         if istableindb(tablename, dbpath) and confirm:
@@ -210,13 +218,14 @@ def checktableindb(ininame: str, dbpath: str, tablename: str, creattablesql: str
 # %% [markdown]
 # ### def convert_intstr_datetime(value)
 
+
 # %%
 def convert_intstr_datetime(value):
     """
     将时间值转换为 datetime ，支持字符串和整数(timestamp)格式。
     """
     if pd.isna(value):
-        return None # 如果值是 NaN，返回 None
+        return None  # 如果值是 NaN，返回 None
     if isinstance(value, str):
         try:
             # 将字符串转换为 datetime 对象
@@ -224,13 +233,14 @@ def convert_intstr_datetime(value):
         except Exception:
             return None  # 如果转换失败，返回 None
     elif isinstance(value, (int, float)):
-        return arrow.get(value).to('Asia/Shanghai').datetime
+        return arrow.get(value).to("Asia/Shanghai").datetime
     else:
         return None  # 对于其他类型返回 None
 
 
 # %% [markdown]
 # ### clean4timecl(name, dbname, confirm)
+
 
 # %%
 @timethis
@@ -240,36 +250,46 @@ def clean4timecl(name, dbname, confirm):
         df = pd.read_sql(sql, conn)
 
     # 调用函数转换为datetime
-    df['time'] = df['time'].apply(convert_intstr_datetime)
-    df['time'] = pd.to_datetime(df['time'], errors='coerce')
+    df["time"] = df["time"].apply(convert_intstr_datetime)
+    df["time"] = pd.to_datetime(df["time"], errors="coerce")
     df1 = df[~df.time.isnull()]
-    df2 = df1.set_index('id')
+    df2 = df1.set_index("id")
 
     # 处理成相对路径，逻辑是准备把所有音频等文件集中到主运行环境
     ptn = re.compile(r"^/.+happyjoplin/")
-    df2.loc[:, 'content'] = df2['content'].apply(lambda x: re.sub(ptn, '', x) if isinstance(x, str) and ptn.match(x) else x)
+    df2.loc[:, "content"] = df2["content"].apply(
+        lambda x: re.sub(ptn, "", x) if isinstance(x, str) and ptn.match(x) else x
+    )
 
     outdf = df2.drop_duplicates()
-    outdf = outdf.sort_values('time')
-    log.info(f"从数据库【{dbname}】的数据表《wc_{name}》中读出记录总数{df.shape[0]}条，去掉(time经过转换后为空的)后还有{df1.shape[0]}条，去重(文件路径已经转换为相对路径)后还有{outdf.shape[0]}条")
+    outdf = outdf.sort_values("time")
+    log.info(
+        f"从数据库【{dbname}】的数据表《wc_{name}》中读出记录总数{df.shape[0]}条，去掉(time经过转换后为空的)后还有{df1.shape[0]}条，去重(文件路径已经转换为相对路径)后还有{outdf.shape[0]}条"
+    )
 
-    if confirm == 'yes':
-        log.critical(f"重大操作，向数据库【{dbname}】的数据表《wc_{name}》写回大量数据，原数据将被覆盖，但是表结构保持不变！！！")
+    if confirm == "yes":
+        log.critical(
+            f"重大操作，向数据库【{dbname}】的数据表《wc_{name}》写回大量数据，原数据将被覆盖，但是表结构保持不变！！！"
+        )
         with lite.connect(dbname) as conn:
             cursor = conn.cursor()
             # 创建一个新的临时表，结构与原数据表相同
             cursor.execute(f"CREATE TABLE wc_{name}_temp AS SELECT * FROM wc_{name} WHERE 1=0")
             # outdf覆盖导出到临时数据表
-            outdf.to_sql(f"wc_{name}_temp", conn, if_exists='append', index=False)
+            outdf.to_sql(f"wc_{name}_temp", conn, if_exists="append", index=False)
             # 清空原数据表
             cursor.execute(f"DELETE FROM wc_{name}")
             # 将临时表的数据插入原数据表
-            cursor.execute(f""" INSERT INTO wc_{name} (time, send, sender, type, content) SELECT time, send, sender, type, content FROM wc_{name}_temp """)
+            cursor.execute(
+                f""" INSERT INTO wc_{name} (time, send, sender, type, content) SELECT time, send, sender, type, content FROM wc_{name}_temp """
+            )
             # 删除临时表
             cursor.execute(f"DROP TABLE wc_{name}_temp")
             # 提交更改并关闭数据库连接
             conn.commit()
-        log.critical(f"数据库【{dbname}】的数据表《wc_{name}》数据清洗完成后有{outdf.shape[0]}条记录，并已成功覆盖回去，表结构保持了不变！！！")
+        log.critical(
+            f"数据库【{dbname}】的数据表《wc_{name}》数据清洗完成后有{outdf.shape[0]}条记录，并已成功覆盖回去，表结构保持了不变！！！"
+        )
         compact_sqlite3_db(dbname)
 
     return outdf
@@ -277,6 +297,7 @@ def clean4timecl(name, dbname, confirm):
 
 # %% [markdown]
 # ### def compact_sqlite3_db(dbpath)
+
 
 # %%
 @timethis
@@ -307,4 +328,3 @@ if __name__ == "__main__":
     if not_IPython():
         logstr = f"文件\t{__file__}\t运行完毕。"
         log.info(logstr)
-

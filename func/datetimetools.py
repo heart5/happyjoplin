@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 
 # %%
 import pathmagic
+
 with pathmagic.context():
     from func.logme import log
     from func.sysfunc import not_IPython
@@ -38,6 +39,7 @@ with pathmagic.context():
 # %% [markdown]
 # ## datecn2utc()
 
+
 # %%
 def datecn2utc(datestr):
     # datestr = '2023年9月22日'
@@ -48,13 +50,15 @@ def datecn2utc(datestr):
 # %% [markdown]
 # ## timestamp2str(timestamp)
 
+
 # %%
 def timestamp2str(timestamp):
-    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamp))
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
 
 
 # %% [markdown]
 # ## normalize_timestamp(ts)
+
 
 # %%
 def normalize_timestamp(ts):
@@ -63,12 +67,13 @@ def normalize_timestamp(ts):
         try:
             return arrow.get(ts).to(get_localzone()).datetime
         except:
-            return datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
+            return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
     return ts
 
 
 # %% [markdown]
 # ## getstartdate(period, thedatetime)
+
 
 # %%
 def getstartdate(period, thedatetime):
@@ -76,19 +81,19 @@ def getstartdate(period, thedatetime):
     return date depend on period idicated for certain datetime input
     period list: ['日', '周', '旬', '月', '年', '全部']
     """
-    if period == '日':
+    if period == "日":
         zuijindatestart = arrow.get(arrow.get(thedatetime).date()).naive
-    elif period == '周':
+    elif period == "周":
         weekstarttime = thedatetime - timedelta(days=thedatetime.weekday())  # Monday
         zuijindatestart = arrow.get(arrow.get(weekstarttime).date()).naive
-    elif period == '旬':
+    elif period == "旬":
         # 连用两次三元操作，减缩代码行数
         frtday = 1 if thedatetime.day < 10 else (10 if thedatetime.day < 20 else 20)
         tmpdt = arrow.get(thedatetime).replace(day=frtday)
         zuijindatestart = arrow.get(tmpdt.date()).naive
-    elif period == '月':
+    elif period == "月":
         zuijindatestart = arrow.get(arrow.get(thedatetime).replace(day=1).date()).naive
-    elif period == '年':
+    elif period == "年":
         zuijindatestart = arrow.get(arrow.get(thedatetime).replace(month=1, day=1).date()).naive
     else:
         zuijindatestart = thedatetime
@@ -99,9 +104,10 @@ def getstartdate(period, thedatetime):
 # %% [markdown]
 # ## test_getstartdate()
 
+
 # %%
 def test_getstartdate():
-    periodlst = ['日', '周', '旬', '月', '年', '全部']
+    periodlst = ["日", "周", "旬", "月", "年", "全部"]
     for pr in periodlst:
         tned = getstartdate(pr, datetime.now())
         print(f"{datetime.now()}\t{pr}:\t{tned}\t{type(tned)}")
@@ -109,6 +115,7 @@ def test_getstartdate():
 
 # %% [markdown]
 # ## gethumantimedelay(inputlocaltime, intervalseconds=120)
+
 
 # %%
 def gethumantimedelay(inputlocaltime, intervalseconds=120):
@@ -120,7 +127,7 @@ def gethumantimedelay(inputlocaltime, intervalseconds=120):
     intime = arrow.get(inputlocaltime, tzinfo="local")
     if (elasptime := arrow.now() - intime) and (elasptime.seconds > intervalseconds):
         # print(elasptime, elasptime.seconds)
-        return intime.humanize(locale='zh_cn')
+        return intime.humanize(locale="zh_cn")
     else:
         return False
 
@@ -128,10 +135,10 @@ def gethumantimedelay(inputlocaltime, intervalseconds=120):
 # %% [markdown]
 # ## test_gethumantimedelay()
 
+
 # %%
 def test_gethumantimedelay():
-    hmtimetestlst = ["20210227 01:04:23", arrow.get("20210227 02:04:23",
-                                        tzinfo="local"), "19761006"]
+    hmtimetestlst = ["20210227 01:04:23", arrow.get("20210227 02:04:23", tzinfo="local"), "19761006"]
     for htt in hmtimetestlst:
         hmstr = gethumantimedelay(htt)
         print(hmstr)
@@ -141,9 +148,9 @@ def test_gethumantimedelay():
 # # 运行主函数main
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython():
-        log.info(f'运行文件\t{__file__}')
+        log.info(f"运行文件\t{__file__}")
 
     test_gethumantimedelay()
     test_getstartdate()

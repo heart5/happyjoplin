@@ -24,10 +24,11 @@ import sys
 # %% [markdown]
 # ## context类
 
+
 # %%
 class context:
     def __enter__(self):
-        sys.path.extend(['..', '.'])
+        sys.path.extend(["..", "."])
 
     def __exit__(self, *args):
         pass
@@ -40,12 +41,12 @@ class context:
 # ## 主函数main()
 
 # %%
-if __name__ == '__main__':
-    if '__file__' in list(locals()):
-        print(f'运行文件\t{__file__}')
+if __name__ == "__main__":
+    if "__file__" in list(locals()):
+        print(f"运行文件\t{__file__}")
 
     for pp in sys.path:
         print(pp)
 
     print("It's man, very good.")
-    print('Done.完毕。')
+    print("Done.完毕。")

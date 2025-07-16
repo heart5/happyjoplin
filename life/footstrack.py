@@ -23,6 +23,7 @@ import datetime
 # import subprocess
 
 import pathmagic
+
 with pathmagic.context():
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue, is_log_details
     from func.first import dirmainpath
@@ -40,6 +41,7 @@ with pathmagic.context():
 # %% [markdown]
 # ### foot2record()
 
+
 # %%
 @set_timeout(240, after_timeout)
 @timethis
@@ -47,40 +49,39 @@ def foot2record():
     """
     记录位置数据（经纬度等）
     """
-    namestr = 'happyjp_life'
-    section = 'hjloc'
+    namestr = "happyjp_life"
+    section = "hjloc"
 
-    if (device_id := getcfpoptionvalue(namestr, section, 'device_id')):
+    if device_id := getcfpoptionvalue(namestr, section, "device_id"):
         device_id = str(device_id)
     else:
         device_id = getdeviceid()
-        setcfpoptionvalue(namestr, section, 'device_id', device_id)
+        setcfpoptionvalue(namestr, section, "device_id", device_id)
 
-    txtfilename = str(dirmainpath / 'data' / 'ifttt' /
-                      f'location_{device_id}.txt')
+    txtfilename = str(dirmainpath / "data" / "ifttt" / f"location_{device_id}.txt")
     print(txtfilename)
     itemread = readfromtxt(txtfilename)
-    numlimit = 5    # 显示项目数
+    numlimit = 5  # 显示项目数
     print(itemread[:numlimit])
     locinfo = termux_location()
     print(locinfo)
-    nowstr = datetime.datetime.now().strftime('%F %T')
+    nowstr = datetime.datetime.now().strftime("%F %T")
     itemnewr = [nowstr]
     if locinfo == False:
         itemnewr.extend[f"{str(locinfo)}"]
     else:
         itemnewr.extend(locinfo.values())
     itemnewr = [str(x) for x in itemnewr]
-    itemline = ['\t'.join(itemnewr)]
+    itemline = ["\t".join(itemnewr)]
     itemline.extend(itemread)
     print(itemline[:numlimit])
     write2txt(txtfilename, itemline)
 
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython():
-        log.info(f'运行文件\t{__file__}……')
+        log.info(f"运行文件\t{__file__}……")
     foot2record()
     if not_IPython():
         print(f"完成文件{__file__}\t的运行")

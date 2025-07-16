@@ -12,8 +12,9 @@
 # %%
 import subprocess
 
+
 # %%
-def execute(cmd, encoding='UTF-8', timeout=None, shell=False):
+def execute(cmd, encoding="UTF-8", timeout=None, shell=False):
     """Execute a shell command/binary.
     If you are using this function in a script ran by a priviliged user,
     be careful as to what your are executing.
@@ -24,8 +25,7 @@ def execute(cmd, encoding='UTF-8', timeout=None, shell=False):
     result: a tuple coontaining stdout, the returncode and stderr
     """
 
-    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
-    stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=shell)
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=shell)
     output, error = proc.communicate(timeout=timeout)
     # rstrip('\n') may be more accurate, actually nothing may be better
     output = output.decode(encoding).rstrip()
