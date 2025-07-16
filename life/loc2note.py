@@ -195,9 +195,11 @@ def update_note_metadata(note_id, df, resource_id):
 
     # 更新设备列表
     device_lst = re.findall(r"-\s+(?:包含设备[：:])?\s*(\w{18})", struct_body[3], re.M)
+    print(device_lst)
     if device_id not in device_lst:
         device_lst.append(device_id)
     struct_body[3] = "\n".join([f"- {item}" for item in device_lst])
+    print(device_lst)
 
     # 更新总记录数
     total_match = re.search(r"\*\*总记录数\*\*[：:](\d+)", struct_body[7])
@@ -242,18 +244,21 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         note = existing_notes[0]
         resources = jpapi.get_resources(note.id).items
 
-        device_resource = resources[0]
-        save_dir.mkdir(parents=True, exist_ok=True)
-        # 下载附件中的云端笔记附件数据
-        cloud_data = jpapi.get_resource_file(device_resource.id)
-        cloud_df = pd.read_excel(BytesIO(cloud_data))
+        if resources:
+            device_resource = resources[0]
+            save_dir.mkdir(parents=True, exist_ok=True)
+            # 下载附件中的云端笔记附件数据
+            cloud_data = jpapi.get_resource_file(device_resource.id)
+            cloud_df = pd.read_excel(BytesIO(cloud_data))
 
-        # 合并云端和本地数据
-        merged_df = pd.concat([cloud_df, local_df])
-        merged_df = merged_df.sort_values("time").drop_duplicates(
-            subset=["time", "device_id", "latitude", "longitude"],
-            keep="last",  # 保留最新记录
-        )
+            # 合并云端和本地数据
+            merged_df = pd.concat([cloud_df, local_df])
+            merged_df = merged_df.sort_values("time").drop_duplicates(
+                subset=["time", "device_id", "latitude", "longitude"],
+                keep="last",  # 保留最新记录
+            )
+        else:
+            merged_df = local_df
 
         # 计算合并后的大小
         merged_len = len(merged_df)
