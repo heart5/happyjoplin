@@ -72,6 +72,7 @@ with pathmagic.context():
 # %% [markdown]
 # ### geodistance(lng1, lat1, lng2, lat2)
 
+
 # %%
 def geodistance(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
     """
@@ -88,6 +89,7 @@ def geodistance(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
 
 # %% [markdown]
 # ### chuli_datasource()
+
 
 # %%
 @timethis
@@ -127,18 +129,14 @@ def chuli_datasource() -> pd.DataFrame:
         time1, lat1, lng1, alt1, *others, pro1 = itemfine[i]
         time2, lat2, lng2, alt2, *others, pro2 = itemfine[i + 1]
         # print(f'{lng1}\t{lat1}\t\t{lng2}\t{lat2}')
-        dis = round(
-            geodistance(eval(lng1), eval(lat1), eval(lng2), eval(lat2)) / 1000, 3
-        )
+        dis = round(geodistance(eval(lng1), eval(lat1), eval(lng2), eval(lat2)) / 1000, 3)
         #         dis = round(geodistance(eval(lng1), eval(lat1), eval(lng2), eval(lat2)), 3)
         try:
             itemtime = pd.to_datetime(time1)
             itemtimeend = pd.to_datetime(time2)
             timedelta = itemtime - itemtimeend
         except ValueErrors as eep:
-            log.critical(
-                f"{time1}\t{time2}，处理此时间点处数据出现问题。跳过此组（两个）数据条目！！！{eep}"
-            )
+            log.critical(f"{time1}\t{time2}，处理此时间点处数据出现问题。跳过此组（两个）数据条目！！！{eep}")
             continue
         while timedelta.seconds == 0:
             log.info(f"位置记录时间戳相同：{itemtime}\t{itemtimeend}")
@@ -161,13 +159,9 @@ def chuli_datasource() -> pd.DataFrame:
             continue
         timesr.append(itemtime)
         dissr.append(round(dis, 3))
-        outlst.append(
-            [pd.to_datetime(time1), float(lng1), float(lat1), float(alt1), pro1]
-        )
+        outlst.append([pd.to_datetime(time1), float(lng1), float(lat1), float(alt1), pro1])
 
-    df = pd.DataFrame(
-        outlst, columns=["time", "longi", "lati", "alti", "provider"]
-    ).sort_values(["time"])
+    df = pd.DataFrame(outlst, columns=["time", "longi", "lati", "alti", "provider"]).sort_values(["time"])
     df["jiange"] = df["time"].diff()
     df["longi1"] = df["longi"].shift()
     df["lati1"] = df["lati"].shift()
@@ -178,13 +172,12 @@ def chuli_datasource() -> pd.DataFrame:
     #     df['distance'] = df.apply(lambda x: round(geodistance(x.longi1, x.lati1, x.longi, x.lati), 3), axis=1)
 
     log.info(f"位置数据大小为：{df.shape[0]}")
-    return df.set_index(["time"])[
-        ["longi", "lati", "alti", "provider", "jiange", "distance"]
-    ]
+    return df.set_index(["time"])[["longi", "lati", "alti", "provider", "jiange", "distance"]]
 
 
 # %% [markdown]
 # ### foot2show(df4dis)
+
 
 # %%
 @set_timeout(360, after_timeout)
@@ -263,6 +256,7 @@ def foot2show(df4dis):
 # %% [markdown]
 # ### enhanced_visualization(df)
 
+
 # %%
 def enhanced_visualization(dfin: pd.DataFrame) -> pd.DataFrame:
     """综合可视化仪表盘"""
@@ -336,6 +330,7 @@ def enhanced_visualization(dfin: pd.DataFrame) -> pd.DataFrame:
 # %% [markdown]
 # ### create_interactive_map(df)
 
+
 # %%
 def create_interactive_map(df: pd.DataFrame) -> folium.Map:
     """生成可交互的轨迹地图"""
@@ -371,6 +366,7 @@ def create_interactive_map(df: pd.DataFrame) -> folium.Map:
 # %% [markdown]
 # ### calculate_metrics(df)
 
+
 # %%
 def calculate_metrics(df):
     """生成多维统计指标"""
@@ -403,6 +399,7 @@ def calculate_metrics(df):
 # %% [markdown]
 # ### process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]
 
+
 # %%
 # 增加一个处理最近一个月数据的函数
 def process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
@@ -425,9 +422,7 @@ def process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
         "daily_avg": last_month_data.resample("D")["distance"].sum().mean(),
         "frequent_hour": last_month_data["hour"].mode()[0],
         "max_speed": last_month_data["speed"].max(),
-        "stay_points": len(
-            last_month_data[last_month_data["speed"] < 1]
-        ),  # 速度<1km/h视为停留
+        "stay_points": len(last_month_data[last_month_data["speed"] < 1]),  # 速度<1km/h视为停留
     }
 
     stats_markdown = f"""
@@ -444,9 +439,7 @@ def process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
     fig.suptitle("最近一个月移动数据综合可视化", fontsize=20)
 
     # 轨迹热力图
-    hb = axs[0, 0].hexbin(
-        last_month_data["longi"], last_month_data["lati"], gridsize=30, cmap="Blues"
-    )
+    hb = axs[0, 0].hexbin(last_month_data["longi"], last_month_data["lati"], gridsize=30, cmap="Blues")
     axs[0, 0].set_title("最近一个月移动轨迹热力图")
     plt.colorbar(hb, ax=axs[0, 0], label="频率")
 
@@ -483,6 +476,7 @@ def process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
 # %% [markdown]
 # ### publish_to_joplin(df)
 
+
 # %%
 def publish_to_joplin(df):
     """将分析结果发布到Joplin"""
@@ -497,9 +491,7 @@ def publish_to_joplin(df):
         "trail_map.html",
         "last_month_dashboard.png",
     ]:
-        res_id = createresource(
-            str((getdirmain() / "img" / img_file).absolute()), img_file
-        )
+        res_id = createresource(str((getdirmain() / "img" / img_file).absolute()), img_file)
         img_ids.append(res_id)
 
     # 计算统计数据

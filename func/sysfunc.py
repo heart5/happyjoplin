@@ -12,7 +12,7 @@
 # ---
 
 # %% [markdown]
-# # 系统函数 
+# # 系统函数
 
 # %% [markdown]
 # ## 引入库
@@ -32,6 +32,7 @@ import logging
 import subprocess
 from IPython import get_ipython
 from hashlib import sha256
+
 # import wmi_client_wrapper as wmi
 from matplotlib.font_manager import FontManager
 from collections import deque
@@ -39,6 +40,7 @@ import matplotlib
 
 # %%
 import pathmagic
+
 with pathmagic.context():
     from func.logme import log
 
@@ -49,9 +51,10 @@ with pathmagic.context():
 # %% [markdown]
 # ### nooutput2false(output)
 
+
 # %%
 def nooutput2false(output):
-    if (output is None) or (output == 'null') or (len(output) == 0):
+    if (output is None) or (output == "null") or (len(output) == 0):
         return False
     else:
         return output
@@ -60,6 +63,7 @@ def nooutput2false(output):
 # %% [markdown]
 # ### extract_traceback4exception(tbtuple, func_name, sleeptime=None)
 
+
 # %%
 def extract_traceback4exception(tbtuple, func_name, sleeptime=None):
     """
@@ -67,6 +71,7 @@ def extract_traceback4exception(tbtuple, func_name, sleeptime=None):
     """
     # by pass the recyle import, nit recommendded
     from func.configpr import getcfpoptionvalue
+
     # 通sys函数获取eee的相关信息
     eee_type, eee_value, tblst = tbtuple
     if not (brief := getcfpoptionvalue("everinifromnote", "nettools", "brief")):
@@ -79,14 +84,14 @@ def extract_traceback4exception(tbtuple, func_name, sleeptime=None):
         rsttb = tblst
     else:
         rsttb = [x for x in tblst[:shownums]]
-        rsttb.append('\t...\t')
-        rsttb.extend([x for x in tblst[(-1 * shownums):]])
+        rsttb.append("\t...\t")
+        rsttb.extend([x for x in tblst[(-1 * shownums) :]])
     if brief:
         rsttb = [x.replace("/data/data/com.termux/files", "/d/d/c/f") for x in rsttb]
     nowstr = datetime.datetime.strftime(datetime.datetime.now(), "%F %T")
     rststr = f"&&&\t{sleeptime}\t&&& in [{func_name}] at {nowstr},\t"
     rststr += f"type is\t[{eee_type}]\t, value is \t[{eee_value}],\t"
-    tbstr = '\t'.join(rsttb)
+    tbstr = "\t".join(rsttb)
     rststr += f"traceback is \t{tbstr}"
 
     return rststr
@@ -94,6 +99,7 @@ def extract_traceback4exception(tbtuple, func_name, sleeptime=None):
 
 # %% [markdown]
 # ### not_IPython()
+
 
 # %%
 def not_IPython():
@@ -105,6 +111,7 @@ def not_IPython():
 
 # %% [markdown]
 # ### convertframe2dict(frame)
+
 
 # %%
 def convertframe2dic(frame):
@@ -119,24 +126,28 @@ def convertframe2dic(frame):
 # %% [markdown]
 # ### set_timeout(num, callback)
 
+
 # %%
 def set_timeout(num, callback):
     """
     设定运行时间的装饰器
     """
+
     def wrap(func):
-        def handle(signum, frame):  # 收到信号 SIGALRM 后的回调函数，第一个参数是信号的数字，第二个参数是the interrupted stack frame.
+        def handle(
+            signum, frame
+        ):  # 收到信号 SIGALRM 后的回调函数，第一个参数是信号的数字，第二个参数是the interrupted stack frame.
             raise RuntimeError
 
         def to_do(*args, **kwargs):
             try:
                 if (sysstr := platform.system()) == "Linux":
-#                     print(sysstr)
+                    #                     print(sysstr)
                     signal.signal(signal.SIGALRM, handle)  # 设置信号和回调函数
                     signal.alarm(num)  # 设置 num 秒的闹钟
-#                     print('start alarm signal.')
+                    #                     print('start alarm signal.')
                     r = func(*args, **kwargs)
-#                     print('close alarm signal.')
+                    #                     print('close alarm signal.')
                     signal.alarm(0)  # 关闭闹钟
                     return r
                 else:
@@ -158,6 +169,7 @@ def set_timeout(num, callback):
 # %% [markdown]
 # ### after_timeout()
 
+
 # %%
 def after_timeout():
     """
@@ -169,6 +181,7 @@ def after_timeout():
 # %% [markdown]
 # ### uuid3hexstr(iniputo: object)
 
+
 # %%
 def uuid3hexstr(inputo: object):
     inputstr = str(inputo)
@@ -179,12 +192,13 @@ def uuid3hexstr(inputo: object):
 # %% [markdown]
 # ### sha2hexstr(inputo: object)
 
+
 # %%
 def sha2hexstr(inputo: object):
     if type(inputo) == bytes:
         targetb = inputo
     else:
-        targetb = str(inputo).encode('utf-8')
+        targetb = str(inputo).encode("utf-8")
     hhh = sha256(targetb)
 
     return hhh.hexdigest().upper()
@@ -192,6 +206,7 @@ def sha2hexstr(inputo: object):
 
 # %% [markdown]
 # ### is_tool_valid(name)
+
 
 # %%
 def is_tool_valid(name):
@@ -207,6 +222,7 @@ def is_tool_valid(name):
 
 # %% [markdown]
 # ### execcmd(cmd)
+
 
 # %%
 @set_timeout(29, after_timeout)
@@ -227,6 +243,7 @@ def execcmd(cmd):
 # %% [markdown]
 # ### showfonts()
 
+
 # %%
 def showfonts():
     """
@@ -239,32 +256,33 @@ def showfonts():
     print(fclistzh)
 
     mpl_fonts = set(f.name for f in FontManager().ttflist)
-    print('all font list get from matplotlib.font_manager:')
+    print("all font list get from matplotlib.font_manager:")
     for f in sorted(mpl_fonts):
-        print('\t' + f)    
+        print("\t" + f)
 
 
 # %% [markdown]
 # ### testdeque()
 
+
 # %%
 def testdeque():
     myque = deque(maxlen=4)
     msgcontainer = {}
-    numstr = ['one', 'two', 'three', 'four', 'five', 'six', 'seven']
+    numstr = ["one", "two", "three", "four", "five", "six", "seven"]
     for i in range(len(numstr)):
-        msgcontainer[i] = {i+1:numstr[i]}
+        msgcontainer[i] = {i + 1: numstr[i]}
         myque.append(msgcontainer[i])
     print(msgcontainer)
     print(myque)
 
-
     from func.nettools import get_host_ip
+
     try:
         testerror = 5 / 0
         print(testerror)
     except Exception:
-        extra_d = {"hostip":f"{get_host_ip()}", "user":f"{execcmd('whoami')}"}
+        extra_d = {"hostip": f"{get_host_ip()}", "user": f"{execcmd('whoami')}"}
         print(extra_d)
         # log.critical('测试stack_info参数 %s', "with extra info", stack_info=True)
         log.critical("出错拉，这里->", exc_info=True)
@@ -281,6 +299,7 @@ def testdeque():
 # %% [markdown]
 # ### listallloghandler()
 
+
 # %%
 def listallloghander():
     console = logging.StreamHandler()
@@ -289,7 +308,7 @@ def listallloghander():
 
     # 列出所有现有的日志记录器
     all_loggers = logging.Logger.manager.loggerDict
-    all_loggers.get('hjer').addHandler(console)
+    all_loggers.get("hjer").addHandler(console)
     for k, v in all_loggers.items():
         try:
             if hasattr(v, "handlers"):
@@ -309,9 +328,9 @@ def listallloghander():
 # ## main主函数
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython():
-        log.info(f'运行文件\t{__file__}')
+        log.info(f"运行文件\t{__file__}")
     # outgetstr = execcmd("uname -a")
     # listallloghander()
     testdeque()
@@ -324,4 +343,4 @@ if __name__ == '__main__':
     # log.critical(outgetstr)
     # print(execcmd("joplin config api.port"))
     if not_IPython():
-        log.info(f'文件\t{__file__}\t测试完毕。')
+        log.info(f"文件\t{__file__}\t测试完毕。")

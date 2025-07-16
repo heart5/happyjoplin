@@ -21,6 +21,7 @@
 import os
 import re
 import pandas as pd
+
 # from threading import Timer
 import pathmagic
 
@@ -28,8 +29,7 @@ import pathmagic
 with pathmagic.context():
     from func.first import getdirmain
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body,\
-        updatenote_title, searchnotebook
+    from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body, updatenote_title, searchnotebook
     from func.logme import log
     from func.wrapfuncs import timethis
     from etc.getid import getdeviceid
@@ -42,39 +42,37 @@ with pathmagic.context():
 # %% [markdown]
 # ### log2note(notetuid, loglimit, levelstr='', notetitle='happyjp日志信息')
 
+
 # %%
 @timethis
-def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
+def log2note(noteid, loglimit, levelstr="", notetitle="happyjp日志信息"):
+    namestr = "happyjplog"
 
-    namestr = 'happyjplog'
-
-    if levelstr == 'CRITICAL':
-        levelstrinner = levelstr + ':'
-        levelstr4title = '严重错误'
-        countnameinini = 'happyjplogcc'
+    if levelstr == "CRITICAL":
+        levelstrinner = levelstr + ":"
+        levelstr4title = "严重错误"
+        countnameinini = "happyjplogcc"
     else:
         levelstrinner = levelstr
-        levelstr4title = ''
-        countnameinini = 'happyjplogc'
+        levelstr4title = ""
+        countnameinini = "happyjplogc"
 
     # 查找log目录下所有有效日志文件并根据levelstrinner集合相应行
-    pathlog = getdirmain() / 'log'
+    pathlog = getdirmain() / "log"
     files = [f for f in os.listdir(str(pathlog)) if not f.startswith(".")]
     loglines = []
     for fname in files[::-1]:
         # log.info(fname)
-        if not fname.startswith('happyjoplin.log'):
-            log.warning(f'文件《{fname}》不是合法的日志文件，跳过。')
+        if not fname.startswith("happyjoplin.log"):
+            log.warning(f"文件《{fname}》不是合法的日志文件，跳过。")
             continue
-        with open(pathlog / fname, 'r', encoding='utf-8') as flog:
-            charsnum2showinline = getinivaluefromcloud(namestr, 'charsnum2showinline')
+        with open(pathlog / fname, "r", encoding="utf-8") as flog:
+            charsnum2showinline = getinivaluefromcloud(namestr, "charsnum2showinline")
             # print(f"log行最大显示字符数量为：\t{charsnum2showinline}")
-            loglines = loglines + [line.strip()[:charsnum2showinline]
-                                   for line in flog if line.find(levelstrinner) >= 0]
+            loglines = loglines + [line.strip()[:charsnum2showinline] for line in flog if line.find(levelstrinner) >= 0]
 
-    ptn = re.compile(r'\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}')
-    tmlst = [pd.to_datetime(re.match(ptn, x).group())
-             for x in loglines if re.match(ptn, x)]
+    ptn = re.compile(r"\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}")
+    tmlst = [pd.to_datetime(re.match(ptn, x).group()) for x in loglines if re.match(ptn, x)]
     loglines = [x for x in loglines if re.match(ptn, x)]
     logsr = pd.Series(loglines, index=tmlst)
     logsr = logsr.sort_index()
@@ -83,71 +81,69 @@ def log2note(noteid, loglimit, levelstr='', notetitle='happyjp日志信息'):
     loglines = list(logsr)
     # log.info(loglines[:20])
     # print(len(loglines))
-    print(f'日志的{levelstr4title}记录共有{len(loglines)}条，只取时间最近的{loglimit}条')
+    print(f"日志的{levelstr4title}记录共有{len(loglines)}条，只取时间最近的{loglimit}条")
     if not (everlogc := getcfpoptionvalue(namestr, namestr, countnameinini)):
         everlogc = 0
     if len(loglines) == everlogc:  # <=调整为==，用来应对log文件崩溃重建的情况
-        print(f'暂无新的{levelstr4title}记录，不更新“happyjoplin的{levelstr}日志笔记”。')
+        print(f"暂无新的{levelstr4title}记录，不更新“happyjoplin的{levelstr}日志笔记”。")
     else:
-        loglinesloglimit = loglines[(-1 * loglimit):]
-        loglinestr = '\n'.join(loglinesloglimit[::-1])
+        loglinesloglimit = loglines[(-1 * loglimit) :]
+        loglinestr = "\n".join(loglinesloglimit[::-1])
         log.info(f"日志字符串长度为：\t{len(loglinestr)}")
         # log.info(loglinestr[:100])
         try:
             nbid = searchnotebook("ewmobile")
             updatenote_title(noteid, notetitle, parent_id=nbid)
             updatenote_body(noteid, loglinestr, parent_id=nbid)
-            setcfpoptionvalue(namestr, namestr, countnameinini, f'{len(loglines)}')
-            print(f'新的log{levelstr4title}信息成功更新入笔记《{notetitle}》')
+            setcfpoptionvalue(namestr, namestr, countnameinini, f"{len(loglines)}")
+            print(f"新的log{levelstr4title}信息成功更新入笔记《{notetitle}》")
         except Exception as eeee:
-            errmsg = f'处理新的log{levelstr4title}信息到笔记《{notetitle}》时出现未名错误。{eeee}'
+            errmsg = f"处理新的log{levelstr4title}信息到笔记《{notetitle}》时出现未名错误。{eeee}"
             log.critical(errmsg)
 
 
 # %% [markdown]
 # ### log2notes()
 
+
 # %%
 @set_timeout(360, after_timeout)
 def log2notes():
-
-    namestr = 'happyjplog'
+    namestr = "happyjplog"
     device_id = getdeviceid()
     loginname = execcmd("whoami")
 
     nbid = searchnotebook("ewmobile")
-    if not (logid := getcfpoptionvalue(namestr, device_id, 'logid')):
-        logid = createnote(f'服务器_{device_id}_{loginname}_日志信息', "", parent_id=nbid)
-        setcfpoptionvalue(namestr, device_id, 'logid', logid)
+    if not (logid := getcfpoptionvalue(namestr, device_id, "logid")):
+        logid = createnote(f"服务器_{device_id}_{loginname}_日志信息", "", parent_id=nbid)
+        setcfpoptionvalue(namestr, device_id, "logid", logid)
 
-    if not (logcid := getcfpoptionvalue(namestr, device_id, 'logcid')):
-        logcid = createnote(f'服务器_{device_id}_{loginname}_严重错误日志信息', "", parent_id=nbid)
-        setcfpoptionvalue(namestr, device_id, 'logcid', logcid)
+    if not (logcid := getcfpoptionvalue(namestr, device_id, "logcid")):
+        logcid = createnote(f"服务器_{device_id}_{loginname}_严重错误日志信息", "", parent_id=nbid)
+        setcfpoptionvalue(namestr, device_id, "logcid", logcid)
 
-    if not (loglimitc := getinivaluefromcloud(namestr, 'loglimit')):
+    if not (loglimitc := getinivaluefromcloud(namestr, "loglimit")):
         loglimitc = 500
 
-    if not (servername := getinivaluefromcloud('device', device_id)):
+    if not (servername := getinivaluefromcloud("device", device_id)):
         servername = device_id
 
-    if getinivaluefromcloud(namestr, 'critical') == 1:
-        levelstrc = 'CRITICAL'
-        log2note(logcid, loglimitc, levelstrc,
-                 notetitle=f'服务器_{servername}_{loginname}_严重错误日志信息')
+    if getinivaluefromcloud(namestr, "critical") == 1:
+        levelstrc = "CRITICAL"
+        log2note(logcid, loglimitc, levelstrc, notetitle=f"服务器_{servername}_{loginname}_严重错误日志信息")
 
-    log2note(noteid=logid, loglimit=loglimitc,
-             notetitle=f'服务器_{servername}_{loginname}_日志信息')
+    log2note(noteid=logid, loglimit=loglimitc, notetitle=f"服务器_{servername}_{loginname}_日志信息")
 
 
 # %% [markdown]
 # ## 主函数main()
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython():
-        log.info(f'开始运行文件\t{__file__}')
+        log.info(f"开始运行文件\t{__file__}")
 
     log2notes()
 
     if not_IPython():
-        log.info(f'Done.结束执行文件\t{__file__}')
+        log.info(f"Done.结束执行文件\t{__file__}")

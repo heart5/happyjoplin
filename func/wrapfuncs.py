@@ -29,9 +29,11 @@ from inspect import signature
 
 # %%
 import pathmagic
+
 with pathmagic.context():
     from func.logme import log
     from func.nettools import ifttt_notify
+
     # from func.jpfuncs import getinivaluefromcloud
     from func.sysfunc import not_IPython
 
@@ -42,6 +44,7 @@ with pathmagic.context():
 # %% [markdown]
 # ### def logit(func)
 
+
 # %%
 def logit(func):
     """
@@ -49,6 +52,7 @@ def logit(func):
     :param func
     :return
     """
+
     @wraps(func)
     def with_logging(*args, **kwargs):
         def truncate(arg):
@@ -61,20 +65,22 @@ def logit(func):
                 truncated_dict["...(字典超长，显示截断)"] = "..."
                 return truncated_dict
             return arg
-        
+
         args4show = [truncate(x) for x in args]
         kwargs4show = {k: truncate(v) for k, v in kwargs.items()}
         if not_IPython():
-            log.info(f'{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}')
+            log.info(f"{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}")
         else:
-            print(f'{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}')
+            print(f"{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}")
 
         return func(*args, **kwargs)
+
     return with_logging
 
 
 # %% [markdown]
 # ### def ift2phone(msg=None)
+
 
 # %%
 def ift2phone(msg=None):
@@ -83,8 +89,8 @@ def ift2phone(msg=None):
     :param msg:
     :return:
     """
-    def decorate(func):
 
+    def decorate(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             result = func(*args, **kwargs)
@@ -92,7 +98,7 @@ def ift2phone(msg=None):
                 msginner = func.__doc__
             else:
                 msginner = msg
-            ifttt_notify(f'{msginner}_{args}', f'{func.__name__}')
+            ifttt_notify(f"{msginner}_{args}", f"{func.__name__}")
             return result
 
         return wrapper
@@ -101,7 +107,8 @@ def ift2phone(msg=None):
 
 
 # %% [markdown]
-# ### def timethis(func) 
+# ### def timethis(func)
+
 
 # %%
 def timethis(func):
@@ -119,11 +126,13 @@ def timethis(func):
         end = time.time()
         timelen = end - start
         if timelen >= (60 * 60):
-            timelenstr = f'{int(timelen / (60 * 60))}小时{int((timelen % (60*60)) / 60)}分钟{timelen % (60*60) % 60:.2f}秒'
+            timelenstr = (
+                f"{int(timelen / (60 * 60))}小时{int((timelen % (60 * 60)) / 60)}分钟{timelen % (60 * 60) % 60:.2f}秒"
+            )
         elif timelen >= 60:
-            timelenstr = f'{int(timelen / 60)}分钟{timelen % 60:.2f}秒'
+            timelenstr = f"{int(timelen / 60)}分钟{timelen % 60:.2f}秒"
         else:
-            timelenstr = f'{timelen % 60:.2f}秒'
+            timelenstr = f"{timelen % 60:.2f}秒"
         if not_IPython():
             log.info(f"{func.__name__}\t{timelenstr}")
         else:
@@ -136,6 +145,7 @@ def timethis(func):
 
 # %% [markdown]
 # ### def countdown(n: int) # 用于测试各种装饰器
+
 
 # %%
 @timethis
@@ -159,9 +169,9 @@ def countdown(n: int):
 # ## 主函数main
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython():
-        log.info(f'运行文件\t{__file__}')
+        log.info(f"运行文件\t{__file__}")
     countdown(10088)
     print(f"函数名\t{countdown.__name__}")
     print(f"函数文档\t{countdown.__doc__}")

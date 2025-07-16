@@ -12,7 +12,7 @@
 # ---
 
 # %% [markdown]
-# # 获取主机id和名称 
+# # 获取主机id和名称
 
 # %%
 """
@@ -55,6 +55,7 @@ with pathmagic.context():
 # %% [markdown]
 # ### def set_devicename2ini(id, sysstr)
 
+
 # %%
 def set_devicename2ini(id, sysstr):
     from func.jpfuncs import getinivaluefromcloud
@@ -63,15 +64,14 @@ def set_devicename2ini(id, sysstr):
         if device_name_fromcloud := getinivaluefromcloud("device", id):
             setcfpoptionvalue("happyjphard", id, "device_name", device_name_fromcloud)
         else:
-            log.critical(
-                f"当前主机（id：{id}）尚未在网络端配置笔记中设定名称或者是还没完成本地化设定！！！"
-            )
+            log.critical(f"当前主机（id：{id}）尚未在网络端配置笔记中设定名称或者是还没完成本地化设定！！！")
             if sysstr == "Linux":
                 log.critical(f"主机信息：{execcmd('uname -a')}")
 
 
 # %% [markdown]
 # ### def get_devicenamefromini(id)
+
 
 # %%
 def get_devicenamefromini(id):
@@ -80,6 +80,7 @@ def get_devicenamefromini(id):
 
 # %% [markdown]
 # ### def getdeviceid()
+
 
 # %%
 # @timethis
@@ -154,6 +155,7 @@ def getdeviceid():
 # %% [markdown]
 # ### getdevicename()
 
+
 # %%
 def getdevicename():
     id = getdeviceid()
@@ -164,6 +166,7 @@ def getdevicename():
 
 # %% [markdown]
 # ### gethostuser()
+
 
 # %%
 def gethostuser():

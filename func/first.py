@@ -27,6 +27,7 @@ from pathlib import Path
 
 # %%
 import pathmagic
+
 with pathmagic.context():
     import func.fordirmainonly as fdmo
 
@@ -45,13 +46,14 @@ with pathmagic.context():
 def touchfilepath2depth(filepath: Path):
     if not os.path.exists(os.path.split(str(filepath))[0]):
         os.makedirs(os.path.split(str(filepath))[0])
-        print(f'目录《{os.path.split(str(filepath))[0]}》不存在，构建之。')
+        print(f"目录《{os.path.split(str(filepath))[0]}》不存在，构建之。")
 
     return filepath
 
 
 # %% [markdown]
 # ### getdirmain()
+
 
 # %%
 def getdirmain():
@@ -68,15 +70,15 @@ def getdirmain():
 # %%
 dirmainpath = getdirmain()
 dirmain = str(getdirmain())
-dirlog = str(getdirmain() / 'log' / 'happyjoplin.log')
-dbpathworkplan = str(getdirmain() / 'data' / 'workplan.db')
-dbpathquandan = str(getdirmain() / 'data' / 'quandan.db')
-dbpathdingdanmingxi = str(getdirmain() / 'data' / 'dingdanmingxi.db')
+dirlog = str(getdirmain() / "log" / "happyjoplin.log")
+dbpathworkplan = str(getdirmain() / "data" / "workplan.db")
+dbpathquandan = str(getdirmain() / "data" / "quandan.db")
+dbpathdingdanmingxi = str(getdirmain() / "data" / "dingdanmingxi.db")
 ywananchor = 50000  # 纵轴标识万化锚点
 
 
 # %%
-path2include = ['etc', 'func', 'work', 'life', 'study']
+path2include = ["etc", "func", "work", "life", "study"]
 for p2i in path2include:
     sys.path.append(str(dirmainpath / p2i))
 # for dr in sys.path:
@@ -86,9 +88,9 @@ for p2i in path2include:
 # ## 主函数，main()
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     # print(f'开始测试文件\t{__file__}')
     print(getdirmain())
     for dr in sys.path:
         print(dr)
-    print('Done.')
+    print("Done.")

@@ -18,6 +18,7 @@
 
 # %%
 import pathmagic
+
 with pathmagic.context():
     from func.sysfunc import not_IPython
 
@@ -27,6 +28,7 @@ with pathmagic.context():
 
 # %% [markdown]
 # ### testtpdict()
+
 
 # %%
 def testtpdict():
@@ -46,10 +48,10 @@ def testtpdict():
 # ## 主函数main()
 
 # %%
-if __name__ == '__main__':
+if __name__ == "__main__":
     if not_IPython():
-        log.info(f'运行文件\t{__file__}')
+        log.info(f"运行文件\t{__file__}")
 
     testtpdict()
     if not_IPython():
-        log.info(f'{__file__}\t运行结束！')
+        log.info(f"{__file__}\t运行结束！")
