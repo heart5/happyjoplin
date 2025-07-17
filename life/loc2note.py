@@ -349,7 +349,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         # 添加到更新记录列表
         if "update_records" not in location_dict:
             location_dict["update_records"] = []
-        location_dict["update_records"].append(new_record)
+        location_dict["update_records"].insert(0, new_record)
 
         # 更新笔记内容字典
         location_dict_done = update_note_metadata(
