@@ -263,13 +263,13 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 
     if existing_notes:
         note = existing_notes[0]
-        resources = jpapi.get_resources(note.id).items
+        location_dict = parse_location_note(note.body)
+        resource_id = location_dict["metadata"]["resource_id"]
 
-        if resources:
-            device_resource = resources[0]
+        if resource_id:
             save_dir.mkdir(parents=True, exist_ok=True)
             # 下载附件中的云端笔记附件数据
-            cloud_data = jpapi.get_resource_file(device_resource.id)
+            cloud_data = jpapi.get_resource_file(resource_id)
             cloud_df = pd.read_excel(BytesIO(cloud_data))
 
             # 合并云端和本地数据
@@ -283,9 +283,6 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 
         # 计算合并后的大小
         merged_len = len(merged_df)
-
-        # 从笔记正文提取该设备的历史大小
-        location_dict = parse_location_note(getnote(note.id).body)
 
         if device_id in location_dict["record_counts"]:
             cloud_len = int(location_dict["record_counts"][f"{device_id}"])
@@ -306,7 +303,8 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         merged_df.to_excel(local_file, index=False)
 
         # 更新附件
-        jpapi.delete_resource(device_resource.id)
+        if resource_id:
+            jpapi.delete_resource(resource_id)
         resource_title = re.sub(f"_{device_id}", "", local_file_name)
         new_resource_id = jpapi.add_resource(str(local_file), title=resource_title)
 
@@ -314,7 +312,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         location_dict_done = update_note_metadata(
             merged_df, new_resource_id, location_dict
         )
-        new_content = update_location_note_content(location_dict)
+        new_content = update_location_note_content(location_dict_done)
         updatenote_body(note.id, new_content)
     else:
         # 创建新笔记
