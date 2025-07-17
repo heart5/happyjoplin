@@ -172,7 +172,7 @@ def locationfiles2dfdict(dpath):
 def parse_location_note(note_content: str) -> dict:
     """解析Joplin位置笔记为结构化字典"""
     time_range = re.search(r"时间范围[：:]\s*(.*?)\s*至\s*(.*?)(?:\n|$)", note_content)
-    data_file = re.search(r"\[(?:下载数据文件)?(\S+?)\]\((\S+?)\)", note_content)
+    data_file = re.search(r"\[(?:下载数据文件)?(\S+?)\]\(:/(\S+?)\)", note_content)
 
     device_counts = {
         match.group(1): int(match.group(2))
@@ -216,9 +216,7 @@ def update_location_note_content(data_dict: dict) -> str:
         + "\n"
     )
     content += f"\n## 位置记录总数量\n- **总记录数**：{data_dict['record_counts']['total']}\n\n"
-    content += (
-        f"## 数据文件\n[下载数据文件{metadata['data_file']}]({metadata['resource_id']})"
-    )
+    content += f"## 数据文件\n[下载数据文件{metadata['data_file']}](:/{metadata['resource_id']})"
     return content
 
 # %% [markdown]
