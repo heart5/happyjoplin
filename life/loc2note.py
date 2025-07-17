@@ -475,6 +475,9 @@ def sync_location_data():
     data_dir = getdirmain() / "data" / "ifttt"
     save_dir = getdirmain() / "data" / "processed_locations"
     save_dir.mkdir(exist_ok=True)
+
+    allmonth = getinivaluefromcloud("loc2note", "allmonth")
+    monthrange = getinivaluefromcloud("loc2note", "monthrange")
     dfdict = locationfiles2dfdict(data_dir)
 
     for device_id, df in dfdict.items():
@@ -482,8 +485,21 @@ def sync_location_data():
         if not df.empty:
             # 添加月份分组
             df["month"] = df["time"].dt.to_period("M")
+            # 获取该设备数据中的最近月份 [8](@ref)
+            latest_month = df["month"].max()  # 关键修改：使用数据中的最新时间
 
-            for period, group in df.groupby("month"):
+            # 确定要处理的月份范围
+            if allmonth:
+                months_to_process = df["month"].unique()
+            else:
+                # 以数据最新月份为基准计算范围 [3](@ref)
+                months_to_process = [latest_month - i for i in range(monthrange)]
+            print(f"根据云端配置，待处理的月份列表为：{months_to_process}")
+            # 按月份分组处理
+            grouped = df.groupby("month")
+            for period, group in grouped:
+                if period not in months_to_process:
+                    continue  # 跳过不在处理范围内的月份
                 # 保存临时文件
                 temp_file = data_dir / f"location_{device_id}_{period}.xlsx"
                 group.to_excel(temp_file, index=False)
