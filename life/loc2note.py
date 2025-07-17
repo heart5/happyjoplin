@@ -174,19 +174,77 @@ def locationfiles2dfdict(dpath):
 
 
 # %% [markdown]
+# ### parse_location_note(note_content: str) -> dict
+
+# %%
+def parse_location_note(note_content: str) -> dict:
+    """解析Joplin位置笔记为结构化字典"""
+    import re
+
+    # 元数据提取（正则匹配关键字段）
+    time_range = re.search(r"时间范围：(.*?) 至 (.*?)\n", note_content)
+    data_file = re.search(r"\[下载数据文件(.*?)\]\((.*?)\)", note_content)
+
+    # 设备记录数解析
+    device_counts = {}
+    for match in re.finditer(r"- 设备：(\w+) 记录数：(\d+)", note_content):
+        device_id, count = match.groups()
+        device_counts[device_id] = int(count)
+
+    # 构建字典结构
+    return {
+        "metadata": {
+            "time_range": (time_range.group(1), time_range.group(2)),
+            "data_file": data_file.group(1).strip(),
+            "resource_id": data_file.group(2),
+        },
+        "devices": list(device_counts.keys()),
+        "record_counts": {
+            **device_counts,
+            "total": int(re.search(r"总记录数.*?(\d+)", note_content).group(1)),
+        },
+    }
+
+
+# %% [markdown]
+# ### update_location_note_content(data_dict: dict) -> str
+
+# %%
+def update_location_note_content(data_dict: dict) -> str:
+    """将修改后的字典转换回Joplin笔记格式"""
+    # 元数据部分
+    metadata = data_dict["metadata"]
+    content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
+
+    # 设备列表
+    content += (
+        "## 位置设备列表\n"
+        + "\n".join(f"- {dev}" for dev in data_dict["devices"])
+        + "\n\n"
+    )
+
+    # 记录数统计
+    content += "## 分设备位置记录数量\n"
+    for dev, count in data_dict["record_counts"].items():
+        if dev != "total":
+            content += f"- 设备：{dev} 记录数：{count}\n"
+
+    # 总记录数
+    content += f"\n## 位置记录总数量\n- **总记录数**：{data_dict['record_counts']['total']}\n\n"
+
+    # 文件链接（保持资源ID不变）
+    content += (
+        f"## 数据文件\n[下载数据文件{metadata['data_file']}]({metadata['resource_id']})"
+    )
+    return content
+
+# %% [markdown]
 # ### update_note_metadata(note_id, df, resource_id, is_new_device=False)
 
 
 # %%
-def update_note_metadata(note_id, df, resource_id):
+def update_note_metadata(df, resource_id, location_dict):
     """更新笔记中的设备id和统计信息"""
-    note = getnote(note_id)
-    # 0: 位置数据元信息， 2：位置设备列表， 4： 分设备位置记录数量， 6 ：位置记录总量， 8： 数据文件
-    struct_body = [
-        line.strip()
-        for line in re.split(r"##\s+(\S+)\n", note.body)
-        if len(line.strip()) != 0
-    ]
 
     device_id = df["device_id"].iloc[0]
     thedf = df[df["device_id"] == device_id]
@@ -194,36 +252,28 @@ def update_note_metadata(note_id, df, resource_id):
     # print(thedf.info())
 
     # 更新设备列表
-    device_lst = re.findall(r"-\s+(?:包含设备[：:])?\s*(\w{18})", struct_body[3], re.M)
-    print(device_lst)
-    if device_id not in device_lst:
-        device_lst.append(device_id)
-    struct_body[3] = "\n".join([f"- {item}" for item in device_lst])
-    print(device_lst)
+    if device_id not in location_dict["devices"]:
+        location_dict["devices"].append(device_id)
+
+    # 更分设备记录数
+    location_dict["record_counts"][f"{device_id}"] = len(thedf)
 
     # 更新总记录数
-    total_match = re.search(r"\*\*总记录数\*\*[：:](\d+)", struct_body[7])
-    if total_match:
-        struct_body[7] = re.sub(
-            r"\*\*总记录数\*\*[：:]\d+", f"**总记录数**：{len(df)}", struct_body[7]
-        )
-    else:
-        struct_body[7] = f"- **总记录数**：{len(df)}"
+    count = 0
+    for device in [
+        device for device in location_dict["record_counts"] if device != "total"
+    ]:
+        count += int(location_dict["record_counts"][f"{device_id}"])
+    location_dict["record_counts"]["total"] = count
 
     # 更新起止时间
-    struct_body[1] = f"时间范围：{thedf['time'].min()} 至 {thedf['time'].max()}"
+    location_dict["metadata"]["time_range"] = (thedf["time"].min(), thedf["time"].max())
 
     # 更新附件链接
-    struct_body[9] = (
-        f"[下载数据文件{jpapi.get_resource(resource_id).title}](:/{resource_id})"
-    )
+    location_dict["metadata"]["resouce_id"] = resource_id
+    location_dict["metadata"]["data_file"] = jpapi.get_resource(resource_id).title
 
-    new_content = "\n".join(
-        [f"## {item}" if i % 2 == 0 else item for i, item in enumerate(struct_body)]
-    )
-
-    # 更新笔记
-    updatenote_body(note_id, new_content)
+    return location_dict
 
 
 # %% [markdown]
@@ -264,13 +314,10 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         merged_len = len(merged_df)
 
         # 从笔记正文提取该设备的历史大小
-        note_content = getnote(note.id).body
-        cloud_len_from_note = re.search(
-            rf"-\s+设备[：:]{device_id}\s+记录数[：:](\d+)", note_content
-        )
+        location_dict = parse_location_note(getnote(note.id).body)
 
-        if cloud_len_from_note:
-            cloud_len = int(cloud_len_from_note.group(1))
+        if device_id in location_dict["record_counts"]:
+            cloud_len = int(location_dict["record_counts"][f"{device_id}"])
             log.info(f"旧记录数（笔记）: {cloud_len}, 新记录数: {merged_len}")
 
             # 仅当数据发生变化时才更新
@@ -278,23 +325,9 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
                 log.info(f"设备 {device_id} 数据未变化，跳过更新")
                 return
             else:
-                ptn_special = rf"^-\s+设备[:：]{device_id}\s+记录数[:：](\d+)$"
-                find_line = re.search(ptn_special, note_content, re.M).group()
-                new_content = re.sub(
-                    find_line,
-                    re.sub(r"记录数[:：]\s*\d+", f"记录数：{merged_len}", find_line),
-                    note_content,
-                )
-                updatenote_body(note.id, new_content)
+                location_dict["record_counts"][f"{device_id}"] = merged_len
         else:
-            newstr = re.findall(
-                r"^-\s+设备[：:]\w{18}\s+记录数[：:]\d+$", note_content, re.M
-            )
-            newstrdone = (
-                "\n".join(newstr) + f"\n- 设备：{device_id} 记录数：{merged_len}"
-            )
-            new_content = re.sub("\n".join(newstr), newstrdone, note_content)
-            updatenote_body(note.id, new_content)
+            location_dict["record_counts"][f"{device_id}"] = merged_len
 
         # 生成新附件
         local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
@@ -306,8 +339,12 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         resource_title = re.sub(f"_{device_id}", "", local_file_name)
         new_resource_id = jpapi.add_resource(str(local_file), title=resource_title)
 
-        # 更新笔记元数据
-        update_note_metadata(note.id, merged_df, new_resource_id)
+        # 更新笔记内容字典
+        location_dict_done = update_note_metadata(
+            merged_df, new_resource_id, location_dict
+        )
+        new_content = update_location_note_content(location_dict)
+        updatenote_body(note.id, new_content)
     else:
         # 创建新笔记
         note_body = f"""
@@ -411,57 +448,6 @@ def locationsplit2xlsx(dfdict, save_path):
 
         merged_df.to_excel(filepath, index=False)
         upload_to_joplin(filepath, ",".join(merged_df["device_id"].unique()), period)
-
-
-# %% [markdown]
-# ### update_location_note(device_id, notebook_guid)
-
-
-# %%
-def update_location_note(device_id, notebook_guid):
-    """更新位置数据到Joplin笔记"""
-    section_name = f"定位设备_{device_id}"
-    note_title = f"位置数据汇总_{device_id}"
-
-    # 获取或创建父笔记本（返回笔记本ID字符串）
-    try:
-        # 调用searchnotebook返回的是笔记本ID字符串
-        parent_id = searchnotebook("位置信息数据仓")
-    except Exception as e:
-        # 如果不存在则创建新笔记本，返回新笔记本ID字符串
-        parent_id = searchnotebook(
-            "位置信息数据仓"
-        )  # 自动创建新笔记本的逻辑已在searchnotebook中实现
-
-    # 构建笔记内容
-    content = ["## 设备位置数据统计\n"]
-    file_list = []
-    total_records = 0
-
-    # 遍历数据文件
-    data_path = getdirmain() / "data" / "ifttt"
-    for f in os.listdir(data_path):
-        if f.startswith(f"location_{device_id}"):
-            df = parse_location_txt(data_path / f)
-            if not df.empty:
-                time_range = f"{df['time'].min()} 至 {df['time'].max()}"
-                record_count = len(df)
-                content.append(
-                    f"- 文件: {f}\n  记录数: {record_count}\n  时间范围: {time_range}"
-                )
-                total_records += record_count
-                file_list.append(f)
-
-    # 添加统计信息
-    content.insert(1, f"### 总记录数: {total_records}\n")
-
-    # 创建/更新笔记
-    note = searchnotes(f"title:{note_title}", parent_id=parent_id)
-    if note:
-        note = note[0]
-        updatenote_body(note.id, "\n".join(content))
-    else:
-        createnote(title=note_title, body="\n".join(content), parent_id=parent_id)
 
 
 # %% [markdown]
