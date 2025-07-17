@@ -64,13 +64,13 @@ with pathmagic.context():
 # %%
 def get_all_device_ids():
     """从配置文件获取所有设备ID"""
-    if (device_ids_str := getcfpoptionvalue("hjdevices", "DEVICES", "ids")) is not None:
-        device_ids = [did for did in device_ids_str.split(",") if len(did) != 0]
-    else:
-        # 默认包含当前设备
-        device_ids = [getdeviceid()]
-        setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(device_ids))
-
+    device_ids_str = getcfpoptionvalue("hjdevices", "DEVICES", "ids")
+    device_ids = (
+        [did for did in device_ids_str.split(",") if did]
+        if device_ids_str
+        else [getdeviceid()]
+    )
+    setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(device_ids))
     return device_ids
 
 
@@ -81,16 +81,8 @@ def get_all_device_ids():
 # %%
 def register_new_device(new_id):
     """注册新设备"""
-    # Extract device IDs from string if available
-    current_ids = [
-        did
-        for did in getcfpoptionvalue("hjdevices", "DEVICES", "ids").split(",")
-        if len(did) != 0
-    ] or []
-    new_id_not_in_current_ids = not (new_id in current_ids)
-
-    # Register new device if it's not already present
-    if new_id_not_in_current_ids:
+    current_ids = get_all_device_ids()
+    if new_id not in current_ids:
         current_ids.append(new_id)
         setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(current_ids))
         log.info(f"新设备 {new_id} 注册成功")
@@ -179,19 +171,11 @@ def locationfiles2dfdict(dpath):
 # %%
 def parse_location_note(note_content: str) -> dict:
     """解析Joplin位置笔记为结构化字典"""
-    import re
-
-    # 元数据提取（正则匹配关键字段）
     time_range = re.search(r"时间范围：(.*?) 至 (.*?)\n", note_content)
     data_file = re.search(r"\[下载数据文件(.*?)\]\((.*?)\)", note_content)
 
-    # 设备记录数解析
-    device_counts = {}
-    for match in re.finditer(r"- 设备：(\w+) 记录数：(\d+)", note_content):
-        device_id, count = match.groups()
-        device_counts[device_id] = int(count)
+    device_counts = {match.group(1): int(match.group(2)) for match in re.finditer(r"- 设备：(\w+) 记录数：(\d+)", note_content)}
 
-    # 构建字典结构
     return {
         "metadata": {
             "time_range": (time_range.group(1), time_range.group(2)),
@@ -199,11 +183,7 @@ def parse_location_note(note_content: str) -> dict:
             "resource_id": data_file.group(2),
         },
         "devices": list(device_counts.keys()),
-        "record_counts": {
-            **device_counts,
-            "total": int(re.search(r"总记录数.*?(\d+)", note_content).group(1)),
-        },
-    }
+        "record_counts": {**device_counts, "total": int(re.search(r"总记录数.*?(\d+)", note_content).group(1))},
 
 
 # %% [markdown]
@@ -212,27 +192,23 @@ def parse_location_note(note_content: str) -> dict:
 # %%
 def update_location_note_content(data_dict: dict) -> str:
     """将修改后的字典转换回Joplin笔记格式"""
-    # 元数据部分
     metadata = data_dict["metadata"]
     content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
-
-    # 设备列表
     content += (
         "## 位置设备列表\n"
         + "\n".join(f"- {dev}" for dev in data_dict["devices"])
         + "\n\n"
     )
-
-    # 记录数统计
-    content += "## 分设备位置记录数量\n"
-    for dev, count in data_dict["record_counts"].items():
-        if dev != "total":
-            content += f"- 设备：{dev} 记录数：{count}\n"
-
-    # 总记录数
+    content += (
+        "## 分设备位置记录数量\n"
+        + "\n".join(
+            f"- 设备：{dev} 记录数：{count}"
+            for dev, count in data_dict["record_counts"].items()
+            if dev != "total"
+        )
+        + "\n"
+    )
     content += f"\n## 位置记录总数量\n- **总记录数**：{data_dict['record_counts']['total']}\n\n"
-
-    # 文件链接（保持资源ID不变）
     content += (
         f"## 数据文件\n[下载数据文件{metadata['data_file']}]({metadata['resource_id']})"
     )
@@ -245,32 +221,20 @@ def update_location_note_content(data_dict: dict) -> str:
 # %%
 def update_note_metadata(df, resource_id, location_dict):
     """更新笔记中的设备id和统计信息"""
-
     device_id = df["device_id"].iloc[0]
     thedf = df[df["device_id"] == device_id]
-    # print(thedf.tail())
-    # print(thedf.info())
 
-    # 更新设备列表
     if device_id not in location_dict["devices"]:
         location_dict["devices"].append(device_id)
 
-    # 更分设备记录数
-    location_dict["record_counts"][f"{device_id}"] = len(thedf)
-
-    # 更新总记录数
-    count = 0
-    for device in [
-        device for device in location_dict["record_counts"] if device != "total"
-    ]:
-        count += int(location_dict["record_counts"][f"{device_id}"])
-    location_dict["record_counts"]["total"] = count
-
-    # 更新起止时间
+    location_dict["record_counts"][device_id] = len(thedf)
+    location_dict["record_counts"]["total"] = sum(
+        location_dict["record_counts"][dev]
+        for dev in location_dict["record_counts"]
+        if dev != "total"
+    )
     location_dict["metadata"]["time_range"] = (thedf["time"].min(), thedf["time"].max())
-
-    # 更新附件链接
-    location_dict["metadata"]["resouce_id"] = resource_id
+    location_dict["metadata"]["resource_id"] = resource_id
     location_dict["metadata"]["data_file"] = jpapi.get_resource(resource_id).title
 
     return location_dict
