@@ -166,10 +166,10 @@ def locationfiles2dfdict(dpath):
 
 
 # %% [markdown]
-# ### parse_location_note(note_content: str) -> dict
+# ### parse_location_note_content(note_content: str) -> dict
 
 # %%
-def parse_location_note(note_content: str) -> dict:
+def parse_location_note_content(note_content: str) -> dict:
     """解析Joplin位置笔记为结构化字典"""
     time_range = re.search(r"时间范围[：:]\s*(.*?)\s*至\s*(.*?)(?:\n|$)", note_content)
     data_file = re.search(
@@ -180,6 +180,21 @@ def parse_location_note(note_content: str) -> dict:
         match.group(1): int(match.group(2))
         for match in re.finditer(r"-\s+设备[：:](\w+)\s+记录数[：:](\d+)", note_content)
     }
+
+    # 新增：解析笔记更新记录
+    update_records = []
+    update_matches = re.finditer(
+        r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 由设备 (\w+) 更新，新增记录 (\d+) 条",
+        note_content,
+    )
+    for match in update_matches:
+        update_records.append(
+            {
+                "time": match.group(1),
+                "device_id": match.group(2),
+                "new_records": int(match.group(3)),
+            }
+        )
 
     return {
         "metadata": {
@@ -192,14 +207,16 @@ def parse_location_note(note_content: str) -> dict:
             **device_counts,
             "total": int(re.search(r"总记录数.*?(\d+)", note_content).group(1)),
         },
+        # 新增更新记录字段
+        "update_records": update_records,
     }
 
 
 # %% [markdown]
-# ### update_location_note_content(data_dict: dict) -> str
+# ### location_dict2note_content(data_dict: dict) -> str
 
 # %%
-def update_location_note_content(data_dict: dict) -> str:
+def location_dict2note_content(data_dict: dict) -> str:
     """将修改后的字典转换回Joplin笔记内容"""
     metadata = data_dict["metadata"]
     content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
@@ -219,6 +236,17 @@ def update_location_note_content(data_dict: dict) -> str:
     )
     content += f"\n## 位置记录总数量\n- **总记录数**：{data_dict['record_counts']['total']}\n\n"
     content += f"## 数据文件\n[下载数据文件{metadata['data_file']}](:/{metadata['resource_id']})"
+    # 新增：笔记更新记录模块
+    content += "\n## 笔记更新记录\n"
+    if data_dict.get("update_records"):
+        for record in data_dict["update_records"]:
+            content += (
+                f"- {record['time']} 由设备 {record['device_id']} 更新，"
+                f"新增记录 {record['new_records']} 条\n"
+            )
+    else:
+        content += "- 暂无更新记录\n"
+
     return content
 
 # %% [markdown]
@@ -263,7 +291,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 
     if existing_notes:
         note = existing_notes[0]
-        location_dict = parse_location_note(note.body)
+        location_dict = parse_location_note_content(note.body)
         resource_id = location_dict["metadata"]["resource_id"]
 
         if resource_id:
@@ -293,9 +321,11 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
                 log.info(f"设备 {device_id} 数据未变化，跳过更新")
                 return
             else:
+                added_records = merged_len - cloud_len
                 location_dict["record_counts"][f"{device_id}"] = merged_len
         else:
             location_dict["record_counts"][f"{device_id}"] = merged_len
+            added_records = merged_len
 
         # 生成新附件
         local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
@@ -308,11 +338,24 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         resource_title = re.sub(f"_{device_id}", "", local_file_name)
         new_resource_id = jpapi.add_resource(str(local_file), title=resource_title)
 
+        # 新增：记录更新信息
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_record = {
+            "time": current_time,
+            "device_id": device_id,
+            "new_records": added_records,
+        }
+
+        # 添加到更新记录列表
+        if "update_records" not in location_dict:
+            location_dict["update_records"] = []
+        location_dict["update_records"].append(new_record)
+
         # 更新笔记内容字典
         location_dict_done = update_note_metadata(
             merged_df, new_resource_id, location_dict
         )
-        new_content = update_location_note_content(location_dict_done)
+        new_content = location_dict2note_content(location_dict_done)
         updatenote_body(note.id, new_content)
     else:
         # 创建新笔记
@@ -326,6 +369,8 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 ## 位置记录总数量
 - **总记录数**：{len(local_df)}
 ## 数据文件
+## 笔记更新记录
+- 首次由设备（{device_id}）数据创建于 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         """
         parent_id = searchnotebook("位置信息数据仓")
         local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
