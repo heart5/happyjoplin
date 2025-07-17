@@ -171,12 +171,12 @@ def locationfiles2dfdict(dpath):
 # %%
 def parse_location_note(note_content: str) -> dict:
     """解析Joplin位置笔记为结构化字典"""
-    time_range = re.search(r"时间范围：(.*?) 至 (.*?)\n", note_content)
+    time_range = re.search(r"时间范围[：:]\s*(.*?)\s*至\s*(.*?)(?:\n|$)", note_content)
     data_file = re.search(r"\[下载数据文件(.*?)\]\((.*?)\)", note_content)
 
     device_counts = {
         match.group(1): int(match.group(2))
-        for match in re.finditer(r"- 设备：(\w+) 记录数：(\d+)", note_content)
+        for match in re.finditer(r"-\s+设备[：:](\w+)\s+记录数[：:](\d+)", note_content)
     }
 
     return {
