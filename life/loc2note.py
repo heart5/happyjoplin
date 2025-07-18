@@ -282,8 +282,8 @@ def update_note_metadata(df, resource_id, location_dict):
         if dev != "total"
     )
     mintime, maxtime = location_dict["metadata"]["time_range"]
-    mintime = mintime if thedf["time"].min > mintime else thedf["time"].min()
-    maxtime = maxtime if thedf["time"].max < maxtime else thedf["time"].max()
+    mintime = mintime if thedf["time"].min() > mintime else thedf["time"].min()
+    maxtime = maxtime if thedf["time"].max() < maxtime else thedf["time"].max()
     location_dict["metadata"]["time_range"] = (mintime, maxtime)
     location_dict["metadata"]["resource_id"] = resource_id
     location_dict["metadata"]["data_file"] = jpapi.get_resource(resource_id).title
