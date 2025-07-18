@@ -315,8 +315,10 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             cloud_data = jpapi.get_resource_file(resource_id)
             cloud_df = pd.read_excel(BytesIO(cloud_data))
 
-            # 合并云端和本地数据
-            merged_df = pd.concat([cloud_df, local_df])
+            # 合并云端和本地数据，需要指定特定的devieid
+            merged_df = pd.concat(
+                [cloud_df[cloud_df["device_id"] == device_id], local_df]
+            )
             merged_df = merged_df.sort_values("time").drop_duplicates(
                 subset=["time", "device_id", "latitude", "longitude"],
                 keep="last",  # 保留最新记录
