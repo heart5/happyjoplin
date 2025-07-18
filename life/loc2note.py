@@ -34,7 +34,7 @@ import xlsxwriter
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdeviceid, getdevicename
+    from etc.getid import getdeviceid
     from filedatafunc import getfilemtime as getfltime
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain, touchfilepath2depth
@@ -62,31 +62,31 @@ with pathmagic.context():
 
 
 # %%
-def get_all_device_ids():
-    """从配置文件获取所有设备ID"""
-    device_ids_str = getcfpoptionvalue("hjdevices", "DEVICES", "ids")
+def get_all_device_ids(the_device_id=None):
+    """从配置文件获取所有设备ID, 默认不带输入参数（需要处理的新id）"""
+    if not the_device_id:
+        the_device_id = getdeviceid()
+    device_ids_str = getcfpoptionvalue("hjloc2note", "devices", "ids")
     device_ids = (
-        [did for did in device_ids_str.split(",") if did]
+        [did.strip() for did in device_ids_str.split(", ") if did]
         if device_ids_str
-        else [getdeviceid()]
+        else [the_device_id]
     )
-    setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(device_ids))
+    if the_device_id not in device_ids:
+        device_ids.append(the_device_id)
+    setcfpoptionvalue("hjloc2note", "devices", "ids", ", ".join(device_ids))
+    for device_id in device_ids:
+        setcfpoptionvalue(
+            "hjloc2note",
+            f"{device_id}",
+            "device_name",
+            getinivaluefromcloud("device", device_id),
+        )
     return device_ids
 
 
-# %% [markdown]
-# ### register_new_device(new_id)
-
-
 # %%
-def register_new_device(new_id):
-    """注册新设备"""
-    current_ids = get_all_device_ids()
-    if new_id not in current_ids:
-        current_ids.append(new_id)
-        setcfpoptionvalue("hjdevices", "DEVICES", "ids", ",".join(current_ids))
-        log.info(f"新设备 {new_id} 注册成功")
-
+get_all_device_ids()
 
 # %% [markdown]
 # ### parse_location_txt(fl)
@@ -140,8 +140,7 @@ def locationfiles2dfdict(dpath):
 
         device_id = pattern.match(f).group(1)
         if device_id not in device_ids:
-            register_new_device(device_id)
-            device_ids.add(device_id)  # 更新本地缓存
+            device_ids = set(get_all_device_ids(device_id))
 
         try:
             df = parse_location_txt(dpath / f)
@@ -178,13 +177,16 @@ def parse_location_note_content(note_content: str) -> dict:
 
     device_counts = {
         match.group(1): int(match.group(2))
-        for match in re.finditer(r"-\s+设备[：:](\w+)\s+记录数[：:](\d+)", note_content)
+        for match in re.finditer(
+            r"-\s+设备[：:]\s*(?:【.*?】)?\((\w{18})\)\s+记录数[：:](\d+)",
+            note_content,
+        )
     }
 
     # 新增：解析笔记更新记录
     update_records = []
     update_matches = re.finditer(
-        r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 由设备 (\w+) 更新，新增记录 (\d+) 条",
+        r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 由设备\s*(?:【.*?】)?\((\w{18})\)\s*更新，新增记录 (\d+) 条",
         note_content,
     )
     for match in update_matches:
@@ -228,7 +230,9 @@ def location_dict2note_content(data_dict: dict) -> str:
     content += (
         "## 分设备位置记录数量\n"
         + "\n".join(
-            f"- 设备：{dev} 记录数：{count}"
+            f"- 设备：【"
+            + getcfpoptionvalue("hjloc2note", dev, "device_name")
+            + f"】({dev}) 记录数：{count}"
             for dev, count in data_dict["record_counts"].items()
             if dev != "total"
         )
@@ -241,7 +245,9 @@ def location_dict2note_content(data_dict: dict) -> str:
     if data_dict.get("update_records"):
         for record in data_dict["update_records"]:
             content += (
-                f"- {record['time']} 由设备 {record['device_id']} 更新，"
+                f"- {record['time']} 由设备 【"
+                + getcfpoptionvalue("hjloc2note", record["device_id"], "device_name")
+                + f"】({record['device_id']}) 更新，"
                 f"新增记录 {record['new_records']} 条\n"
             )
     else:
@@ -292,9 +298,11 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
     if existing_notes:
         note = existing_notes[0]
         location_dict = parse_location_note_content(note.body)
+        # print(location_dict)
         resource_id = location_dict["metadata"]["resource_id"]
+        # print(jpapi.get_resources(note.id).items)
 
-        if resource_id:
+        if resource_id in [res.id for res in jpapi.get_resources(note.id).items]:
             save_dir.mkdir(parents=True, exist_ok=True)
             # 下载附件中的云端笔记附件数据
             cloud_data = jpapi.get_resource_file(resource_id)
@@ -308,6 +316,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             )
         else:
             merged_df = local_df
+            log.info(f"资源文件 {resource_id} 无效，采用本地位置数据")
 
         # 计算合并后的大小
         merged_len = len(merged_df)
@@ -332,9 +341,6 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         local_file = save_dir / local_file_name
         merged_df.to_excel(local_file, index=False)
 
-        # 更新附件
-        if resource_id:
-            jpapi.delete_resource(resource_id)
         resource_title = re.sub(f"_{device_id}", "", local_file_name)
         new_resource_id = jpapi.add_resource(str(local_file), title=resource_title)
 
@@ -357,6 +363,14 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         )
         new_content = location_dict2note_content(location_dict_done)
         updatenote_body(note.id, new_content)
+        # 操作成功后删除原有resource
+        for resource_id in [
+            res.id
+            for res in jpapi.get_resources(note.id).items
+            if res.id != new_resource_id
+        ]:
+            jpapi.delete_resource(resource_id)
+            log.critical(f"资源文件 {resource_id} 被成功删除！")
     else:
         # 创建新笔记
         note_body = f"""
@@ -487,7 +501,6 @@ def sync_location_data():
             df["month"] = df["time"].dt.to_period("M")
             # 获取该设备数据中的最近月份 [8](@ref)
             latest_month = df["month"].max()  # 关键修改：使用数据中的最新时间
-
             # 确定要处理的月份范围
             if allmonth:
                 months_to_process = df["month"].unique()
@@ -495,6 +508,7 @@ def sync_location_data():
                 # 以数据最新月份为基准计算范围 [3](@ref)
                 months_to_process = [latest_month - i for i in range(monthrange)]
             print(f"根据云端配置，待处理的月份列表为：{months_to_process}")
+
             # 按月份分组处理
             grouped = df.groupby("month")
             for period, group in grouped:
