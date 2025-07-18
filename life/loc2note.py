@@ -276,11 +276,11 @@ def update_note_metadata(df, resource_id, location_dict):
         location_dict["devices"].append(device_id)
 
     location_dict["record_counts"][device_id] = len(thedf)
-    location_dict["record_counts"]["total"] = sum(
-        location_dict["record_counts"][dev]
-        for dev in location_dict["record_counts"]
-        if dev != "total"
-    )
+    # location_dict["record_counts"]["total"] = sum(
+    #     location_dict["record_counts"][dev]
+    #     for dev in location_dict["record_counts"]
+    #     if dev != "total"
+    # )
     # 时间格式定义（根据实际数据格式调整）
     TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -336,10 +336,8 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             cloud_data = jpapi.get_resource_file(resource_id)
             cloud_df = pd.read_excel(BytesIO(cloud_data))
 
-            # 合并云端和本地数据，需要指定特定的devieid
-            merged_df = pd.concat(
-                [cloud_df[cloud_df["device_id"] == device_id], local_df]
-            )
+            # 合并云端和本地数据
+            merged_df = pd.concat([cloud_df, local_df])
             merged_df = merged_df.sort_values("time").drop_duplicates(
                 subset=["time", "device_id", "latitude", "longitude"],
                 keep="last",  # 保留最新记录
@@ -348,31 +346,31 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             merged_df = local_df
             log.info(f"资源文件 {resource_id} 无效，采用本地位置数据")
 
-        # 计算合并后的大小
-        merged_len = len(merged_df)
+        # 计算合并后的大小（仅限当前设备id
+        the_df = merged_df[merged_df["device_id"] == device_id]
+        the_merged_len = len(the_df)
 
         if device_id in location_dict["record_counts"]:
             cloud_len = int(location_dict["record_counts"][f"{device_id}"])
-            log.info(f"旧记录数（笔记）: {cloud_len}, 新记录数: {merged_len}")
-
-            # 仅当数据发生变化时才更新
-            if cloud_len == merged_len:
-                log.info(f"设备 {device_id} 数据未变化，跳过更新")
-                return
-            else:
-                added_records = merged_len - cloud_len
-                location_dict["record_counts"][f"{device_id}"] = merged_len
         else:
-            location_dict["record_counts"][f"{device_id}"] = merged_len
-            added_records = merged_len
+            cloud_len = 0
+        location_dict["record_counts"][f"{device_id}"] = the_merged_len
+        added_records = the_merged_len - cloud_len
 
-        # 生成新附件
-        local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
+        total_cloud_len = int(location_dict["record_counts"]["total"])
+        if (cloud_len == the_merged_len) and (total_cloud_len == len(merged_df)):
+            device_name = getcfpoptionvalue("hjloc2note", device_id, "device_name")
+            log.info(
+                f"设备【{device_name}】的笔记端记录数: {cloud_len}, 和本地合并后记录数无变化；云端记录总数: {total_cloud_len}, 也没有变化。跳过！"
+            )
+            return
+        location_dict["record_counts"]["total"] = len(merged_df)
+        # 生成新附件，是包含所有设备数据的综合
+        local_file_name = f"location_{period.strftime('%y%m')}.xlsx"
         local_file = save_dir / local_file_name
         merged_df.to_excel(local_file, index=False)
 
-        resource_title = re.sub(f"_{device_id}", "", local_file_name)
-        new_resource_id = jpapi.add_resource(str(local_file), title=resource_title)
+        new_resource_id = jpapi.add_resource(str(local_file), title=local_file_name)
 
         # 新增：记录更新信息
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
