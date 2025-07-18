@@ -281,10 +281,28 @@ def update_note_metadata(df, resource_id, location_dict):
         for dev in location_dict["record_counts"]
         if dev != "total"
     )
-    mintime, maxtime = location_dict["metadata"]["time_range"]
-    mintime = mintime if thedf["time"].min() > mintime else thedf["time"].min()
-    maxtime = maxtime if thedf["time"].max() < maxtime else thedf["time"].max()
-    location_dict["metadata"]["time_range"] = (mintime, maxtime)
+    # 时间格式定义（根据实际数据格式调整）
+    TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+    # 将字符串时间转换为datetime对象
+    current_min = datetime.strptime(thedf["time"].min(), TIME_FORMAT)
+    current_max = datetime.strptime(thedf["time"].max(), TIME_FORMAT)
+    stored_min = datetime.strptime(
+        location_dict["metadata"]["time_range"][0], TIME_FORMAT
+    )
+    stored_max = datetime.strptime(
+        location_dict["metadata"]["time_range"][1], TIME_FORMAT
+    )
+
+    # 正确比较时间
+    new_min = min(stored_min, current_min)
+    new_max = max(stored_max, current_max)
+
+    # 转回字符串存储（可选）
+    location_dict["metadata"]["time_range"] = (
+        new_min.strftime(TIME_FORMAT),
+        new_max.strftime(TIME_FORMAT),
+    )
     location_dict["metadata"]["resource_id"] = resource_id
     location_dict["metadata"]["data_file"] = jpapi.get_resource(resource_id).title
 
