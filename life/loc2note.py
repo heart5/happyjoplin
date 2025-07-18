@@ -18,17 +18,13 @@
 # ## 库导入
 
 # %%
-import hashlib
 import os
 import re
-import sqlite3 as lite
 from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
-from pathlib import Path
 
 import pandas as pd
-import xlsxwriter
 
 # %%
 import pathmagic
@@ -37,7 +33,7 @@ with pathmagic.context():
     from etc.getid import getdeviceid
     from filedatafunc import getfilemtime as getfltime
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.first import getdirmain, touchfilepath2depth
+    from func.first import getdirmain
     from func.jpfuncs import (
         createnote,
         getinivaluefromcloud,
@@ -49,7 +45,6 @@ with pathmagic.context():
         updatenote_body,
         updatenote_title,
     )
-    from func.litetools import ifnotcreate, showtablesindb
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
@@ -69,11 +64,7 @@ def get_all_device_ids(device_id=None):
     else:
         the_device_id = device_id
     device_ids_str = getcfpoptionvalue("hjloc2note", "devices", "ids")
-    device_ids = (
-        [did.strip() for did in device_ids_str.split(", ") if did]
-        if device_ids_str
-        else [the_device_id]
-    )
+    device_ids = [did.strip() for did in device_ids_str.split(", ") if did] if device_ids_str else [the_device_id]
     if the_device_id not in device_ids:
         device_ids.append(the_device_id)
     setcfpoptionvalue("hjloc2note", "devices", "ids", ", ".join(device_ids))
@@ -86,43 +77,31 @@ def get_all_device_ids(device_id=None):
         )
     return device_ids
 
-# %%
-# get_all_device_ids("0x14bfbac75658f5a7")
-
 # %% [markdown]
 # ### parse_location_txt(fl)
 
 
 # %%
 def parse_location_txt(fl):
-    """解析位置信息文本文件为DataFrame"""
+    # 优化：指定数据类型减少内存占用
+    dtypes = {"latitude": "float32", "longitude": "float32", "altitude": "float32", "accuracy": "float32"}
+    # 优化：只读取必要列
+    usecols = [0, 1, 2, 3, 4]  # time, lat, lon, alt, accuracy
+
     try:
-        # 指定日期格式，添加错误处理
         df = pd.read_csv(
             fl,
             sep="\t",
             header=None,
             parse_dates=[0],
-            date_format="%Y-%m-%d %H:%M:%S",
-            on_bad_lines="skip",
-            names=[
-                "time",
-                "latitude",
-                "longitude",
-                "altitude",
-                "accuracy",
-                "bearing",
-                "speed",
-                "unknown1",
-                "unknown2",
-                "provider",
-            ],
+            dtype=dtypes,
+            usecols=usecols,  # 关键优化
+            names=["time", "latitude", "longitude", "altitude", "accuracy"],
         )
         return df.sort_values("time").drop_duplicates()
     except Exception as e:
         log.error(f"解析位置文件失败: {str(e)}")
         return pd.DataFrame()
-
 
 # %% [markdown]
 # ### locationfiles2dfdict(dpath)
@@ -173,9 +152,7 @@ def locationfiles2dfdict(dpath):
 def parse_location_note_content(note_content: str) -> dict:
     """解析Joplin位置笔记为结构化字典"""
     time_range = re.search(r"时间范围[：:]\s*(.*?)\s*至\s*(.*?)(?:\n|$)", note_content)
-    data_file = re.search(
-        r"\[(?:下载数据文件)?(\S+?)\]\((?:\:\/)?(\S+?)\)", note_content
-    )
+    data_file = re.search(r"\[(?:下载数据文件)?(\S+?)\]\((?:\:\/)?(\S+?)\)", note_content)
 
     device_counts = {
         match.group(1): int(match.group(2))
@@ -223,23 +200,15 @@ def parse_location_note_content(note_content: str) -> dict:
 def location_dict2note_content(data_dict: dict) -> str:
     """将修改后的字典转换回Joplin笔记内容"""
     # 确保获取 设备id 的名称并保存至ini文件
-    for device_id in [
-        dev for dev in data_dict["record_counts"].keys() if dev != "total"
-    ]:
+    for device_id in [dev for dev in data_dict["record_counts"].keys() if dev != "total"]:
         get_all_device_ids(device_id)
     metadata = data_dict["metadata"]
     content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
-    content += (
-        "## 位置设备列表\n"
-        + "\n".join(f"- {dev}" for dev in data_dict["devices"])
-        + "\n\n"
-    )
+    content += "## 位置设备列表\n" + "\n".join(f"- {dev}" for dev in data_dict["devices"]) + "\n\n"
     content += (
         "## 分设备位置记录数量\n"
         + "\n".join(
-            "- 设备：【"
-            + getcfpoptionvalue("hjloc2note", dev, "device_name")
-            + f"】({dev}) 记录数：{count}"
+            "- 设备：【" + getcfpoptionvalue("hjloc2note", dev, "device_name") + f"】({dev}) 记录数：{count}"
             for dev, count in data_dict["record_counts"].items()
             if dev != "total"
         )
@@ -287,12 +256,8 @@ def update_note_metadata(df, resource_id, location_dict):
     # 将字符串时间转换为datetime对象
     current_min = thedf["time"].min().to_pydatetime()
     current_max = thedf["time"].max().to_pydatetime()
-    stored_min = datetime.strptime(
-        location_dict["metadata"]["time_range"][0], TIME_FORMAT
-    )
-    stored_max = datetime.strptime(
-        location_dict["metadata"]["time_range"][1], TIME_FORMAT
-    )
+    stored_min = datetime.strptime(location_dict["metadata"]["time_range"][0], TIME_FORMAT)
+    stored_max = datetime.strptime(location_dict["metadata"]["time_range"][1], TIME_FORMAT)
 
     # 正确比较时间
     new_min = min(stored_min, current_min)
@@ -386,17 +351,11 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         location_dict["update_records"].insert(0, new_record)
 
         # 更新笔记内容字典
-        location_dict_done = update_note_metadata(
-            merged_df, new_resource_id, location_dict
-        )
+        location_dict_done = update_note_metadata(merged_df, new_resource_id, location_dict)
         new_content = location_dict2note_content(location_dict_done)
         updatenote_body(note.id, new_content)
         # 操作成功后删除原有resource
-        for resource_id in [
-            res.id
-            for res in jpapi.get_resources(note.id).items
-            if res.id != new_resource_id
-        ]:
+        for resource_id in [res.id for res in jpapi.get_resources(note.id).items if res.id != new_resource_id]:
             jpapi.delete_resource(resource_id)
             log.critical(f"资源文件 {resource_id} 被成功删除！")
     else:
@@ -424,87 +383,6 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         jpapi.add_resource_to_note(resource_id, newnote_id)
 
     log.info(f"成功更新 {note_title} 笔记")
-
-
-# %% [markdown]
-# ### fix_content_location_notes()
-
-# %%
-def fix_content_location_notes():
-    find_notes = searchnotes("title:位置数据_")
-    for note in find_notes:
-        content = note.body
-
-        section_devices_list = "## 位置设备列表\n"
-        section_multi_devices = "## 分设备位置记录数量\n"
-        section_total_records = "## 位置记录总数量\n"
-        section_data_download = "## 数据文件\n"
-
-        ptn_devices_list = rf"({section_devices_list})?(-\s+包含设备[：:]\s*\w{{18}})"
-        devices_list_lines = re.search(ptn_devices_list, content).group()
-        devices_list_content = re.sub(
-            ptn_devices_list, section_devices_list + devices_list_lines, content
-        )
-        # print(devices_list_content)
-
-        ptn_multi_devices = rf"({section_multi_devices})?(-\s+设备[：:]\s*\w{{18}}\s+记录数[：:]\s*\d+\n)+(?:##\s\w+)?"
-        multi_devices_lines = re.search(ptn_multi_devices, devices_list_content).group()
-        multi_devices_content = re.sub(
-            ptn_multi_devices,
-            section_multi_devices + multi_devices_lines + section_total_records,
-            devices_list_content,
-        )
-        # print(multi_devices_content)
-
-        ptn_data_download = rf"({section_data_download})?(\[\S+\])\(:/\S+\)"
-        data_download_lines = re.search(
-            ptn_data_download, multi_devices_content
-        ).group()
-        # print(f"下载链接字符串为：\t{data_download_lines}")
-        data_download_content = re.sub(
-            ptn_data_download,
-            section_data_download + data_download_lines,
-            multi_devices_content,
-        )
-        # print(data_download_content)
-        updatenote_body(note.id, data_download_content)
-        log.info(f"笔记《{note.title}》内容已规整为结构化文档。")
-
-# %% [markdown]
-# ### locationsplit2xlsx(dfdict, save_path)
-
-
-# %%
-def locationsplit2xlsx(dfdict, save_path):
-    """按月份拆分位置数据到Excel文件"""
-    # 合并所有设备数据
-    all_data = pd.DataFrame()
-    for device_id, df in dfdict.items():
-        df["device_id"] = device_id  # 添加设备标识列
-        all_data = pd.concat([all_data, df])
-
-    all_data["month"] = all_data["time"].dt.to_period("M")
-
-    for period, group in all_data.groupby("month"):
-        filepath = save_path / f"location_{period.strftime('%y%m')}.xlsx"
-
-        if filepath.exists():
-            # 读取现有数据并合并
-            existing_df = pd.read_excel(filepath)
-            merged_df = pd.concat([existing_df, group])
-
-            # 关键改进：按时间戳去重（解决冲突）
-            merged_df = merged_df.sort_values("time", ascending=False)
-            merged_df = merged_df.drop_duplicates(
-                subset=["time", "device_id"],
-                keep="first",  # 保留最新记录[1](@ref)
-            )
-        else:
-            merged_df = group
-
-        merged_df.to_excel(filepath, index=False)
-        upload_to_joplin(filepath, ",".join(merged_df["device_id"].unique()), period)
-
 
 # %% [markdown]
 # ### sync_location_data()
