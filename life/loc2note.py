@@ -285,8 +285,8 @@ def update_note_metadata(df, resource_id, location_dict):
     TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
     # 将字符串时间转换为datetime对象
-    current_min = datetime.strptime(thedf["time"].min(), TIME_FORMAT)
-    current_max = datetime.strptime(thedf["time"].max(), TIME_FORMAT)
+    current_min = thedf["time"].min().to_pydateime()
+    current_max = thedf["time"].max().to_pydateime()
     stored_min = datetime.strptime(
         location_dict["metadata"]["time_range"][0], TIME_FORMAT
     )
