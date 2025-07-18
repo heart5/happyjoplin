@@ -131,7 +131,7 @@ def parse_location_txt(fl):
 @timethis
 def locationfiles2dfdict(dpath):
     device_ids = set(get_all_device_ids())  # 使用集合加速查找
-    pattern = re.compile(r"location_(\w{18})(?:_\w+)?\.txt$")
+    pattern = re.compile(r"location_(\w{18})(?:_\S+?)?\.txt$")
     dfdict = defaultdict(pd.DataFrame)  # 自动处理空DataFrame
 
     for f in os.listdir(dpath):
@@ -142,6 +142,7 @@ def locationfiles2dfdict(dpath):
         if device_id not in device_ids:
             device_ids = set(get_all_device_ids(device_id))
 
+        print(f, device_id, device_ids)
         try:
             df = parse_location_txt(dpath / f)
             if df.empty:
