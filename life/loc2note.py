@@ -62,10 +62,12 @@ with pathmagic.context():
 
 
 # %%
-def get_all_device_ids(the_device_id=None):
+def get_all_device_ids(device_id=None):
     """从配置文件获取所有设备ID, 默认不带输入参数（需要处理的新id）"""
-    if not the_device_id:
+    if not device_id:
         the_device_id = getdeviceid()
+    else:
+        the_device_id = device_id
     device_ids_str = getcfpoptionvalue("hjloc2note", "devices", "ids")
     device_ids = (
         [did.strip() for did in device_ids_str.split(", ") if did]
@@ -84,9 +86,8 @@ def get_all_device_ids(the_device_id=None):
         )
     return device_ids
 
-
 # %%
-get_all_device_ids()
+# get_all_device_ids("0x14bfbac75658f5a7")
 
 # %% [markdown]
 # ### parse_location_txt(fl)
@@ -221,6 +222,11 @@ def parse_location_note_content(note_content: str) -> dict:
 # %%
 def location_dict2note_content(data_dict: dict) -> str:
     """将修改后的字典转换回Joplin笔记内容"""
+    # 确保获取 设备id 的名称并保存至ini文件
+    for device_id in [
+        dev for dev in data_dict["record_counts"].keys() if dev != "total"
+    ]:
+        get_all_device_ids(device_id)
     metadata = data_dict["metadata"]
     content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
     content += (
@@ -231,7 +237,7 @@ def location_dict2note_content(data_dict: dict) -> str:
     content += (
         "## 分设备位置记录数量\n"
         + "\n".join(
-            f"- 设备：【"
+            "- 设备：【"
             + getcfpoptionvalue("hjloc2note", dev, "device_name")
             + f"】({dev}) 记录数：{count}"
             for dev, count in data_dict["record_counts"].items()
