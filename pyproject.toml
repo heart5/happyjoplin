@@ -1,6 +1,8 @@
 [tool.ruff]
 line-length = 120
 select = ["E", "F", "I", "B"]
+extend-include = ["*.ipynb"]
+
 [tool.ruff.format]
 indent-style = "space"
 
