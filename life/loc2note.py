@@ -24,6 +24,7 @@ from collections import defaultdict
 from datetime import datetime
 from io import BytesIO
 
+import numpy as np
 import pandas as pd
 
 # %%
@@ -73,9 +74,35 @@ def get_all_device_ids(device_id=None):
             "hjloc2note",
             f"{device_id}",
             "device_name",
-            getinivaluefromcloud("device", device_id),
+            getinivaluefromcloud("device", str(device_id)),
         )
     return device_ids
+
+
+# %% [markdown]
+# ### clean_location_data(df)
+
+# %%
+def clean_location_data(df):
+    """清洗位置数据：处理异常值、去重、排序"""
+    # 1. 过滤无效时间
+    df = df[df["time"].notna()]
+
+    # 2. 处理坐标异常值（超出合理范围）
+    valid_lat = df["latitude"].between(-90, 90)
+    valid_lon = df["longitude"].between(-180, 180)
+    df = df[valid_lat & valid_lon]
+
+    # 3. 处理精度异常（负值或过大值）
+    df.loc[df["accuracy"] < 0, "accuracy"] = np.nan
+    df.loc[df["accuracy"] > 10000, "accuracy"] = np.nan
+
+    # 4. 排序并去重（保留最新记录）
+    df = df.sort_values("time", ascending=False)
+    df = df.drop_duplicates(subset=["time", "latitude", "longitude"], keep="first")
+
+    # 5. 重置索引（优化内存）
+    return df.reset_index(drop=True)
 
 # %% [markdown]
 # ### parse_location_txt(fl)
@@ -83,24 +110,52 @@ def get_all_device_ids(device_id=None):
 
 # %%
 def parse_location_txt(fl):
-    # 优化：指定数据类型减少内存占用
-    dtypes = {"latitude": "float32", "longitude": "float32", "altitude": "float32", "accuracy": "float32"}
-    # 优化：只读取必要列
+    """解析位置数据文本文件，处理异常值并优化内存使用"""
+    # 优化数据类型定义（减少内存占用）
+    dtypes = {
+        "time": "object",  # 先作为字符串读取，后续转换为datetime
+        "latitude": "float32",
+        "longitude": "float32",
+        "altitude": "float32",
+        "accuracy": "float32",
+    }
+
+    # 只读取必要的列（避免无效字段占用内存）
     usecols = [0, 1, 2, 3, 4]  # time, lat, lon, alt, accuracy
 
     try:
-        df = pd.read_csv(
+        # 分块读取大文件（>100MB）
+        chunks = []
+        for chunk in pd.read_csv(
             fl,
             sep="\t",
             header=None,
-            parse_dates=[0],
             dtype=dtypes,
-            usecols=usecols,  # 关键优化
+            usecols=usecols,
             names=["time", "latitude", "longitude", "altitude", "accuracy"],
+            na_values=["False", "None", "N/A"],  # 标记异常值为NaN
+            skip_blank_lines=True,  # 跳过空行
+            skipinitialspace=True,  # 跳过字段前的空格
+            chunksize=10000,  # 分块处理大文件
+        ):
+            chunks.append(chunk)
+
+        df = pd.concat(chunks)
+
+        # 时间转换（带错误处理）
+        df["time"] = pd.to_datetime(
+            df["time"],
+            errors="coerce",  # 转换失败设为NaT
+            format="%Y-%m-%d %H:%M:%S",
         )
-        return df.sort_values("time").drop_duplicates()
+
+        # 数据清洗
+        df = clean_location_data(df)
+
+        return df
+
     except Exception as e:
-        log.error(f"解析位置文件失败: {str(e)}")
+        log.error(f"解析位置文件失败: {str(e)}", exc_info=True)
         return pd.DataFrame()
 
 # %% [markdown]
@@ -111,7 +166,7 @@ def parse_location_txt(fl):
 @timethis
 def locationfiles2dfdict(dpath):
     device_ids = set(get_all_device_ids())  # 使用集合加速查找
-    pattern = re.compile(r"location_(\w{18})(?:_\S+?)?\.txt$")
+    pattern = re.compile(r"location_(\w+?)(?:_\S+?)?\.txt$")
     dfdict = defaultdict(pd.DataFrame)  # 自动处理空DataFrame
 
     for f in os.listdir(dpath):
@@ -133,7 +188,7 @@ def locationfiles2dfdict(dpath):
                 dfdict[device_id] = (
                     pd.concat(chunks, ignore_index=True)
                     .sort_values("time")
-                    .drop_duplicates(subset=["time", "latitude"], keep="last")
+                    .drop_duplicates(subset=["time", "latitude", "longitude"], keep="last")
                 )
             else:
                 dfdict[device_id] = df
@@ -157,7 +212,7 @@ def parse_location_note_content(note_content: str) -> dict:
     device_counts = {
         match.group(1): int(match.group(2))
         for match in re.finditer(
-            r"-\s+设备[：:]\s*(?:【.*?】)?\((\w{18})\)\s+记录数[：:](\d+)",
+            r"-\s+设备[：:]\s*(?:【.*?】)?\((\w+?)\)\s+记录数[：:](\d+)",
             note_content,
         )
     }
@@ -165,7 +220,7 @@ def parse_location_note_content(note_content: str) -> dict:
     # 新增：解析笔记更新记录
     update_records = []
     update_matches = re.finditer(
-        r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 由设备\s*(?:【.*?】)?\((\w{18})\)\s*更新，新增记录 (\d+) 条",
+        r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+由设备\s*(?:【.*?】)?\((\w+?)\)\s*更新，新增记录\s+ (\d+)\s+条",
         note_content,
     )
     for match in update_matches:
@@ -200,7 +255,7 @@ def parse_location_note_content(note_content: str) -> dict:
 def location_dict2note_content(data_dict: dict) -> str:
     """将修改后的字典转换回Joplin笔记内容"""
     # 确保获取 设备id 的名称并保存至ini文件
-    for device_id in [dev for dev in data_dict["record_counts"].keys() if dev != "total"]:
+    for device_id in [str(dev) for dev in data_dict["record_counts"].keys() if dev != "total"]:
         get_all_device_ids(device_id)
     metadata = data_dict["metadata"]
     content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
@@ -238,18 +293,14 @@ def location_dict2note_content(data_dict: dict) -> str:
 # %%
 def update_note_metadata(df, resource_id, location_dict):
     """更新笔记中的设备id和统计信息"""
-    device_id = df["device_id"].iloc[0]
+    device_id = str(df["device_id"].iloc[0])
     thedf = df[df["device_id"] == device_id]
 
     if device_id not in location_dict["devices"]:
         location_dict["devices"].append(device_id)
 
     location_dict["record_counts"][device_id] = len(thedf)
-    # location_dict["record_counts"]["total"] = sum(
-    #     location_dict["record_counts"][dev]
-    #     for dev in location_dict["record_counts"]
-    #     if dev != "total"
-    # )
+
     # 时间格式定义（根据实际数据格式调整）
     TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -425,7 +476,7 @@ def sync_location_data():
                 group.to_excel(temp_file, index=False)
 
                 # 上传到Joplin
-                upload_to_joplin(temp_file, device_id, period, save_dir)
+                upload_to_joplin(temp_file, str(device_id), period, save_dir)
 
                 # 删除临时文件
                 temp_file.unlink()
