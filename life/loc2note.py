@@ -104,6 +104,13 @@ def clean_location_data(df):
     # 5. 重置索引（优化内存）
     return df.reset_index(drop=True)
 
+
+# %% [markdown]
+# ### 全局变量
+
+# %%
+VALID_COLS = ["time", "latitude", "longitude", "altitude", "accuracy"]
+
 # %% [markdown]
 # ### parse_location_txt(fl)
 
@@ -132,7 +139,7 @@ def parse_location_txt(fl):
             header=None,
             dtype=dtypes,
             usecols=usecols,
-            names=["time", "latitude", "longitude", "altitude", "accuracy"],
+            names=VALID_COLS,
             na_values=["False", "None", "N/A"],  # 标记异常值为NaN
             skip_blank_lines=True,  # 跳过空行
             skipinitialspace=True,  # 跳过字段前的空格
@@ -182,6 +189,7 @@ def locationfiles2dfdict(dpath):
             df = parse_location_txt(dpath / f)
             if df.empty:
                 continue
+            df = df[VALID_COLS]
 
             if not dfdict[device_id].empty:
                 chunks = [dfdict[device_id], df]
@@ -351,6 +359,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             # 下载附件中的云端笔记附件数据
             cloud_data = jpapi.get_resource_file(resource_id)
             cloud_df = pd.read_excel(BytesIO(cloud_data))
+            cloud_df = cloud_df[VALID_COLS]  # 精简原有笔记附件中的冗余列
 
             # 合并云端和本地数据
             merged_df = pd.concat([cloud_df, local_df])
@@ -375,11 +384,13 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 
         total_cloud_len = int(location_dict["record_counts"]["total"])
         if (cloud_len == the_merged_len) and (total_cloud_len == len(merged_df)):
-            device_name = getcfpoptionvalue("hjloc2note", device_id, "device_name")
-            log.info(
-                f"设备【{device_name}】的笔记端记录数: {cloud_len}, 和本地合并后记录数无变化；云端记录总数: {total_cloud_len}, 也没有变化。跳过！"
-            )
-            return
+            # 判断云端配饰处理所有数据的调试开关是否无视比较结果
+            if not getinivaluefromcloud("loc2note", "alldata"):
+                device_name = getcfpoptionvalue("hjloc2note", device_id, "device_name")
+                log.info(
+                    f"设备【{device_name}】的笔记端记录数: {cloud_len}, 和本地合并后记录数无变化；云端记录总数: {total_cloud_len}, 也没有变化。跳过！"
+                )
+                return
         location_dict["record_counts"]["total"] = len(merged_df)
         # 生成新附件，是包含所有设备数据的综合
         local_file_name = f"location_{period.strftime('%y%m')}.xlsx"
