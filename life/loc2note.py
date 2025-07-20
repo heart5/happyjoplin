@@ -467,12 +467,12 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 ## 数据文件
 ## 笔记更新记录
 """
-        last_line = f"\n- {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} 由设备 【"
+        last_line = (
+            f"\n- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 由设备 【"
             + getcfpoptionvalue("hjloc2note", f"{device_id}", "device_name")
             + f"】({device_id}) 更新，"
             + f"新增记录 {len(local_df)} 条\n"
-
-# - 首次由设备（{device_id}）数据创建于 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        )
 
         parent_id = searchnotebook("位置信息数据仓")
         local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
