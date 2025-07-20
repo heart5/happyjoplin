@@ -237,7 +237,7 @@ def parse_location_note_content(note_content: str) -> dict:
     # 新增：解析笔记更新记录
     update_records = []
     update_matches = re.finditer(
-        r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+由设备\s*(?:【.*?】)?\((\w+?)\)\s*更新，新增记录\s+ (\d+)\s+条",
+        r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+由设备\s*(?:【.*?】)?\((\w+?)\)\s*更新，新增记录\s+(\d+)\s+条",
         note_content,
     )
     for match in update_matches:
@@ -263,6 +263,26 @@ def parse_location_note_content(note_content: str) -> dict:
         # 新增更新记录字段
         "update_records": update_records,
     }
+
+
+# %%
+note = searchnotes("title:位置数据_202507")[0]
+
+# %%
+note.body
+
+# %%
+update_matches = []
+update_matches = re.finditer(
+    r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+由设备\s*(?:【.*?】)?\((\w+?)\)\s*更新，新增记录\s+(\d+)\s+条",
+    note.body,
+    re.DOTALL | re.M,
+)
+
+print(list(update_matches))
+
+# %%
+parse_location_note_content(note.body)
 
 
 # %% [markdown]
@@ -446,8 +466,14 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 - **总记录数**：{len(local_df)}
 ## 数据文件
 ## 笔记更新记录
-- 首次由设备（{device_id}）数据创建于 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-        """
+"""
+        last_line = f"\n- {datetime.now().strftime("%Y-%m-%d %H:%M:%S")} 由设备 【"
+            + getcfpoptionvalue("hjloc2note", f"{device_id}", "device_name")
+            + f"】({device_id}) 更新，"
+            + f"新增记录 {len(local_df)} 条\n"
+
+# - 首次由设备（{device_id}）数据创建于 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
         parent_id = searchnotebook("位置信息数据仓")
         local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
         local_file = save_dir / local_file_name
@@ -455,7 +481,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         local_df.to_excel(local_file, index=False)
         resource_title = re.sub(f"_{device_id}", "", local_file_name)
         resource_id = jpapi.add_resource(str(local_file), title=resource_title)
-        newnote_id = createnote(title=note_title, body=note_body, parent_id=parent_id)
+        newnote_id = createnote(title=note_title, body=note_body + last_line, parent_id=parent_id)
         jpapi.add_resource_to_note(resource_id, newnote_id)
 
     log.info(f"成功更新 {note_title} 笔记")
