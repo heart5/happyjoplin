@@ -60,22 +60,30 @@ with pathmagic.context():
 # %%
 def get_all_device_ids(device_id=None):
     """从配置文件获取所有设备ID, 默认不带输入参数（需要处理的新id）"""
-    if not device_id:
+    if device_id is None:
         the_device_id = getdeviceid()
     else:
         the_device_id = device_id
     device_ids_str = getcfpoptionvalue("hjloc2note", "devices", "ids")
-    device_ids = [did.strip() for did in device_ids_str.split(", ") if did] if device_ids_str else [the_device_id]
+    device_ids = (
+        [did.strip() for did in device_ids_str.split(", ") if str(did) != "nan"] if device_ids_str else [the_device_id]
+    )
+    print(device_ids, the_device_id, type(the_device_id))
+    # 新增：过滤无效设备ID
+    if (not isinstance(the_device_id, (str, int))) or pd.isna(the_device_id):
+        log.warning(f"无效设备ID跳过: {the_device_id}")
+        return device_ids
+    # 确保设备ID为字符串
+    the_device_id = str(the_device_id).strip()
     if the_device_id not in device_ids:
-        device_ids.append(the_device_id)
-    setcfpoptionvalue("hjloc2note", "devices", "ids", ", ".join(device_ids))
-    for device_id in device_ids:
         setcfpoptionvalue(
             "hjloc2note",
-            f"{device_id}",
+            str(device_id),
             "device_name",
-            getinivaluefromcloud("device", str(device_id)),
+            getinivaluefromcloud("device", str(the_device_id)),
         )
+        device_ids.append(the_device_id)
+        setcfpoptionvalue("hjloc2note", "devices", "ids", ", ".join(device_ids))
     return device_ids
 
 
@@ -181,7 +189,7 @@ def locationfiles2dfdict(dpath):
             continue
 
         device_id = pattern.match(f).group(1)
-        if device_id not in device_ids:
+        if not device_id:
             device_ids = set(get_all_device_ids(device_id))
 
         print(f, device_id, device_ids)
@@ -224,6 +232,7 @@ def parse_location_note_content(note_content: str) -> dict:
             note_content,
         )
     }
+    print(device_counts)
 
     # 新增：解析笔记更新记录
     update_records = []
@@ -263,7 +272,8 @@ def parse_location_note_content(note_content: str) -> dict:
 def location_dict2note_content(data_dict: dict) -> str:
     """将修改后的字典转换回Joplin笔记内容"""
     # 确保获取 设备id 的名称并保存至ini文件
-    for device_id in [str(dev) for dev in data_dict["record_counts"].keys() if dev != "total"]:
+    print(data_dict["record_counts"])
+    for device_id in [dev for dev in data_dict["record_counts"].keys() if dev != "total"]:
         get_all_device_ids(device_id)
     metadata = data_dict["metadata"]
     content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
@@ -359,7 +369,9 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             # 下载附件中的云端笔记附件数据
             cloud_data = jpapi.get_resource_file(resource_id)
             cloud_df = pd.read_excel(BytesIO(cloud_data))
-            cloud_df = cloud_df[VALID_COLS]  # 精简原有笔记附件中的冗余列
+            valid_cols_with_device_id = [name for name in VALID_COLS]
+            valid_cols_with_device_id.append("device_id")
+            cloud_df = cloud_df[valid_cols_with_device_id]  # 精简原有笔记附件中的冗余列，要把device_id列加上！！！
 
             # 合并云端和本地数据
             merged_df = pd.concat([cloud_df, local_df])
@@ -395,6 +407,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         # 生成新附件，是包含所有设备数据的综合
         local_file_name = f"location_{period.strftime('%y%m')}.xlsx"
         local_file = save_dir / local_file_name
+        merged_df["device_id"] = merged_df["device_id"].astype(str)
         merged_df.to_excel(local_file, index=False)
 
         new_resource_id = jpapi.add_resource(str(local_file), title=local_file_name)
@@ -438,6 +451,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         parent_id = searchnotebook("位置信息数据仓")
         local_file_name = f"location_{device_id}_{period.strftime('%y%m')}.xlsx"
         local_file = save_dir / local_file_name
+        local_df["device_id"] = local_df["device_id"].astype(str)
         local_df.to_excel(local_file, index=False)
         resource_title = re.sub(f"_{device_id}", "", local_file_name)
         resource_id = jpapi.add_resource(str(local_file), title=resource_title)
@@ -462,6 +476,7 @@ def sync_location_data():
     monthrange = getinivaluefromcloud("loc2note", "monthrange")
     dfdict = locationfiles2dfdict(data_dir)
 
+    print(dfdict.keys())
     for device_id, df in dfdict.items():
         print(device_id, df.shape)
         if not df.empty:
@@ -487,7 +502,7 @@ def sync_location_data():
                 group.to_excel(temp_file, index=False)
 
                 # 上传到Joplin
-                upload_to_joplin(temp_file, str(device_id), period, save_dir)
+                upload_to_joplin(temp_file, device_id, period, save_dir)
 
                 # 删除临时文件
                 temp_file.unlink()
