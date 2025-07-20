@@ -12,523 +12,434 @@
 # ---
 
 # %% [markdown]
-# # 足迹展示
-
-# %% [markdown]
-# ## 库引入
+# # 位置数据展示与分析系统
+#
+# ## 功能：从Joplin加载规整位置数据，生成可视化报告
 
 # %%
+import base64
 import os
 import re
-from math import asin, cos, radians, sin, sqrt
+from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
-from typing import List, Tuple
 
-import arrow
-import folium
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from pylab import plt
-from tzlocal import get_localzone
-# import plotly.express as px
-# from plotly.subplots import make_subplots
-# import plotly.graph_objects as go
-# import plotly.io as pio
+from geopy.distance import great_circle
+from sklearn.cluster import DBSCAN
 
 # %%
-# 自定义函数
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdeviceid, gethostuser
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.datatools import readfromtxt, write2txt
-    from func.first import dirmainpath, getdirmain, touchfilepath2depth
-    from func.jpfuncs import (
-        createnote,
-        createresource,
-        deleteresourcesfromnote,
-        getinivaluefromcloud,
-        noteid_used,
-        searchnotebook,
-        searchnotes,
-        updatenote_body,
-        updatenote_imgdata,
-        updatenote_title,
-    )
+    from func.configpr import getcfpoptionvalue
+    from func.first import getdirmain
+    from func.jpfuncs import createnote, jpapi, searchnotes, updatenote_body
     from func.logme import log
-    from func.sysfunc import after_timeout, not_IPython, set_timeout
-    from func.termuxtools import (
-        termux_location,
-        termux_telephony_cellinfo,
-        termux_telephony_deviceinfo,
-    )
-    from func.wrapfuncs import ift2phone, timethis
-
 
 # %% [markdown]
-# ## 功能函数
+# ## 配置参数
+
+# %%
+# 报告层级
+REPORT_LEVELS = {"monthly": 1, "quarterly": 3, "yearly": 12}
+
+# 可视化参数
+PLOT_WIDTH = 10
+PLOT_HEIGHT = 8
+DPI = 150
 
 # %% [markdown]
-# ### geodistance(lng1, lat1, lng2, lat2)
+# ## 数据加载函数
+
+# %% [markdown]
+# ### `load_location_data(scope)`
+# 加载指定范围的位置数据
 
 
 # %%
-def geodistance(lng1: float, lat1: float, lng2: float, lat2: float) -> float:
+def load_location_data(scope):
     """
-    计算两点之间的距离并返回（公里，千米）
+    加载指定范围的位置数据
     """
-    lng1, lat1, lng2, lat2 = map(radians, [lng1, lat1, lng2, lat2])
-    dlon = lng2 - lng1
-    dlat = lat2 - lat1
-    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
-    # 地球半径为：6371千米
-    dis = 4 * asin(sqrt(a)) * 6371 * 1000
-    return dis
+    # 计算时间范围
+    end_date = datetime.now()
+    months = REPORT_LEVELS[scope]
+    start_date = end_date - timedelta(days=30 * months)
 
+    # 获取月份列表
+    date_range = pd.date_range(start_date, end_date, freq="MS")
+    monthly_dfs = []
 
-# %% [markdown]
-# ### chuli_datasource()
+    for date in date_range:
+        month_str = date.strftime("%Y%m")
 
+        # 从Joplin获取位置数据笔记
+        note_title = f"位置数据_{month_str}"
+        notes = searchnotes(f"title:{note_title}")
 
-# %%
-@timethis
-def chuli_datasource() -> pd.DataFrame:
-    """
-    展示足迹
-    """
-    namestr = "happyjp_life"
-    section = "hjloc"
-    if not (device_id := str(getcfpoptionvalue(namestr, section, "device_id"))):
-        device_id = getdeviceid()
-        setcfpoptionvalue(namestr, section, "device_id", device_id)
-
-    txtfilename = str(dirmainpath / "data" / "ifttt" / f"location_{device_id}.txt")
-    print(txtfilename)
-    itemread = readfromtxt(txtfilename)
-    numlimit = 9  # 显示项目数
-    print(itemread[:numlimit])
-    itemsrc = [x.split("\t") for x in itemread if not "False" in x]
-    itemnotfine = [x for x in itemsrc if len(x) < 3]
-    print(f"有问题的数据共有{len(itemnotfine)}行：{itemnotfine}")
-    #     itemfine = [x for x in itemsrc if len(x) >= 3][:10000]
-    itemfine = [x for x in itemsrc if len(x) >= 3]
-    # print(itemfine)
-    if len(itemfine) < 2:
-        print("gps数据量不足，暂时无法输出移动距离信息")
-        return
-    timesr = list()
-    dissr = list()
-    outlst = list()
-    # speedsr = list()
-    highspeed = getinivaluefromcloud("life", "highspeed")
-    print(f"{highspeed}\t{type(highspeed)}")
-    for i in range(len(itemfine) - 1):
-        if (len(itemfine[i]) < 5) | (len(itemfine[i + 1]) < 5):
-            print(itemfine[i], itemfine[i + 1])
-        time1, lat1, lng1, alt1, *others, pro1 = itemfine[i]
-        time2, lat2, lng2, alt2, *others, pro2 = itemfine[i + 1]
-        # print(f'{lng1}\t{lat1}\t\t{lng2}\t{lat2}')
-        dis = round(geodistance(eval(lng1), eval(lat1), eval(lng2), eval(lat2)) / 1000, 3)
-        #         dis = round(geodistance(eval(lng1), eval(lat1), eval(lng2), eval(lat2)), 3)
-        try:
-            itemtime = pd.to_datetime(time1)
-            itemtimeend = pd.to_datetime(time2)
-            timedelta = itemtime - itemtimeend
-        except ValueErrors as eep:
-            log.critical(f"{time1}\t{time2}，处理此时间点处数据出现问题。跳过此组（两个）数据条目！！！{eep}")
+        if not notes:
+            log.warning(f"未找到{month_str}的位置数据笔记")
             continue
-        while timedelta.seconds == 0:
-            log.info(f"位置记录时间戳相同：{itemtime}\t{itemtimeend}")
-            i = i + 1
-            time2, lng2, lat2, *others = itemfine[i + 1]
-            dis = round(
-                geodistance(float(lng1), float(lat1), float(lng2), float(lat2)) / 1000,
-                3,
-            )
-            itemtime = pd.to_datetime(time1)
-            itemtimeend = pd.to_datetime(time2)
-            timedelta = itemtime - itemtimeend
-        timedeltahour = timedelta.seconds / 60 / 60
-        itemspeed = round(dis / timedeltahour, 2)
-        if itemspeed >= highspeed * 1000:
-            log.info(
-                f"时间起点：{itemtimeend}，时间截止点：{itemtime}，时长：{round(timedeltahour, 3)}小时，距离：{dis}公里，速度：{itemspeed}码"
-            )
-            i += 1
+
+        note = notes[0]
+        resources = jpapi.get_resources(note.id).items
+
+        # 查找位置数据附件
+        location_resource = None
+        for res in resources:
+            if res.title.endswith(".xlsx"):
+                location_resource = res
+                break
+
+        if not location_resource:
+            log.warning(f"未找到{month_str}的位置数据附件")
             continue
-        timesr.append(itemtime)
-        dissr.append(round(dis, 3))
-        outlst.append([pd.to_datetime(time1), float(lng1), float(lat1), float(alt1), pro1])
 
-    df = pd.DataFrame(outlst, columns=["time", "longi", "lati", "alti", "provider"]).sort_values(["time"])
-    df["jiange"] = df["time"].diff()
-    df["longi1"] = df["longi"].shift()
-    df["lati1"] = df["lati"].shift()
-    df["distance"] = df.apply(
-        lambda x: round(geodistance(x.longi1, x.lati1, x.longi, x.lati) / 1000, 3),
-        axis=1,
-    )
-    #     df['distance'] = df.apply(lambda x: round(geodistance(x.longi1, x.lati1, x.longi, x.lati), 3), axis=1)
+        # 读取Excel数据
+        res_data = jpapi.get_resource_file(location_resource.id)
+        df = pd.read_excel(BytesIO(res_data))
 
-    log.info(f"位置数据大小为：{df.shape[0]}")
-    return df.set_index(["time"])[["longi", "lati", "alti", "provider", "jiange", "distance"]]
+        # 添加月份标记
+        df["month"] = month_str
+        monthly_dfs.append(df)
+
+    if not monthly_dfs:
+        log.warning(f"未找到{scope}的位置数据")
+        return pd.DataFrame()
+
+    return pd.concat(monthly_dfs).reset_index(drop=True)
 
 
 # %% [markdown]
-# ### foot2show(df4dis)
-
-
-# %%
-@set_timeout(360, after_timeout)
-@timethis
-def foot2show(df4dis):
-    """
-    展示足迹
-    """
-    namestr = "happyjp_life"
-    section = "hjloc"
-    if (device_id := getcfpoptionvalue(namestr, section, "device_id")) is None:
-        device_id = getdeviceid()
-        setcfpoptionvalue(namestr, section, "device_id", device_id)
-    device_id = str(device_id)
-
-    noteloc_title = f"轨迹动态_【{gethostuser()}】"
-    nbid = searchnotebook("ewmobile")
-    if not (loc_cloud_id := getcfpoptionvalue(namestr, section, "loc_cloud_id")):
-        ipnotefindlist = searchnotes(f"title:{noteloc_title}")
-        if len(ipnotefindlist) == 0:
-            loc_cloud_id = createnote(title=noteloc_title, parent_id=nbid)
-            log.info(f"新的轨迹动态图笔记“{loc_cloud_id}”新建成功！")
-        else:
-            loc_cloud_id = ipnotefindlist[-1].id
-        setcfpoptionvalue(namestr, section, "loc_cloud_id", f"{loc_cloud_id}")
-
-    imglst = []
-    ds = df4dis["distance"]
-    today = arrow.now(get_localzone())
-    start_time = pd.Timestamp(today.date().strftime("%F"))
-    end_time = pd.Timestamp(today.shift(days=1).date().strftime("%F"))
-    try:
-        dstoday = ds.loc[start_time:end_time].sort_index().cumsum()
-        if dstoday.empty:
-            raise KeyError
-    except KeyError:
-        log.warning(f"{today}无有效数据")
-        dstoday = pd.Series(dtype=float)
-
-    if dstoday.shape[0] > 1:
-        plt.figure(figsize=(10, 5))
-        dstoday.plot()
-        imgpathtoday = dirmainpath / "img" / "gpstoday.png"
-        touchfilepath2depth(imgpathtoday)
-        plt.title("今日移动距离")
-        plt.xlabel("时间")
-        plt.ylabel("累计距离 (km)")
-        plt.tight_layout()
-        plt.savefig(str(imgpathtoday))
-        plt.close()
-        res_title = str(imgpathtoday).split("/")[-1]
-        res_id = createresource(str(imgpathtoday), title=res_title)
-        imglst.append([res_title, res_id])
-
-    dsdays = ds.resample("D").sum()
-    if not dsdays.empty:
-        plt.figure(figsize=(10, 5))
-        dsdays.plot()
-        imgpathdays = dirmainpath / "img" / "gpsdays.png"
-        touchfilepath2depth(imgpathdays)
-        plt.title("每日移动距离")
-        plt.xlabel("日期")
-        plt.ylabel("移动距离 (km)")
-        plt.tight_layout()
-        plt.savefig(str(imgpathdays))
-        plt.close()
-        res_title = str(imgpathdays).split("/")[-1]
-        res_id = createresource(str(imgpathdays), title=res_title)
-        imglst.append([res_title, res_id])
-
-    bodystr = "\n".join(f"![{son[0]}](:/{son[1]})" for son in imglst)
-    deleteresourcesfromnote(loc_cloud_id)
-    updatenote_body(loc_cloud_id, bodystr)
-
+# ## 数据分析函数
 
 # %% [markdown]
-# ### enhanced_visualization(df)
+# ### `analyze_location_data(df)`
+# 分析位置数据，返回统计结果
 
 
 # %%
-def enhanced_visualization(dfin: pd.DataFrame) -> pd.DataFrame:
-    """综合可视化仪表盘"""
-
-    # print("输入数据的前几行：")
-    # print(dfin.head())
-    # print("数据框信息：")
-    # print(dfin.info())
-
-    df = dfin.reset_index()
-    # 数据清洗
-    df.dropna(subset=["longi", "lati"], inplace=True)
-    df = df[(df["longi"].between(73.0, 135.0)) & (df["lati"].between(18.0, 54.0))]
-
-    print("经过数据清洗后的数据：")
-    print(df)
-
+def analyze_location_data(df):
+    """
+    分析位置数据，返回统计结果
+    """
     if df.empty:
-        print("数据框为空，无法生成图形。")
-        return None, None
+        return {}
 
-    # 计算移动速度和距离
-    df["distance"] = (
-        df["longi"].shift().combine_first(df["longi"]).diff() ** 2
-        + df["lati"].shift().combine_first(df["lati"]).diff() ** 2
-    )
-    df["distance"] = df["distance"].pow(0.5) * 111.32
-    df["speed"] = df["distance"] / (df["jiange"].dt.seconds / 3600).replace(0, np.nan)
+    # 基础统计
+    start_time = df["time"].min()
+    end_time = df["time"].max()
+    total_points = len(df)
+    unique_days = df["time"].dt.date.nunique()
 
-    # 处理时间数据
+    # 设备使用统计
+    device_stats = df["device_id"].value_counts().to_dict()
+
+    # 活动范围计算
+    min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
+    min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
+    distance_km = great_circle((min_lat, min_lon), (max_lat, max_lon)).kilometers
+
+    # 时间跳跃分析
+    if "big_gap" in df.columns:
+        big_gaps = df[df["big_gap"]]
+        gap_stats = {"count": len(big_gaps), "longest_gap": df["time_diff"].max() if "time_diff" in df.columns else 0}
+    else:
+        gap_stats = {"count": 0, "longest_gap": 0}
+
+    # 位置精度分析
+    accuracy_stats = {"min": df["accuracy"].min(), "max": df["accuracy"].max(), "mean": df["accuracy"].mean()}
+
+    # 每日活动模式
     df["hour"] = df["time"].dt.hour
+    hourly_distribution = df["hour"].value_counts().sort_index().to_dict()
 
-    fig, axs = plt.subplots(3, 2, figsize=(15, 15))
-    fig.suptitle("移动数据综合可视化仪表盘", fontsize=20)
+    # 重要地点识别
+    important_places = identify_important_places(df)
 
-    # 轨迹热力图
-    hb = axs[0, 0].hexbin(df["longi"], df["lati"], gridsize=30, cmap="Blues")
-    axs[0, 0].set_title("移动轨迹热力图")
-    plt.colorbar(hb, ax=axs[0, 0], label="频率")
-
-    # 时段活跃度
-    hour_dist = df.groupby("hour").size().reset_index(name="counts")
-    axs[0, 1].bar(hour_dist["hour"], hour_dist["counts"], color="orange")
-    axs[0, 1].set_title("时段活跃度")
-
-    # 移动距离分布
-    axs[1, 0].hist(df["distance"], bins=20, color="green", alpha=0.7)
-    axs[1, 0].set_title("单次移动距离分布")
-
-    # 常去区域
-    stay_points = df[df["distance"] < 0.1]
-    axs[1, 1].scatter(stay_points["longi"], stay_points["lati"], c="red", alpha=0.5)
-    axs[1, 1].set_title("常去区域")
-
-    # 移动速度趋势
-    axs[2, 0].plot(df["time"], df["speed"], color="purple")
-    axs[2, 0].set_title("移动速度变化")
-
-    axs[2, 1].axis("off")  # 隐藏最后一个子图
-
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-
-    # 定义图像保存路径
-    img_file = os.path.abspath(getdirmain() / "img" / "location_dashboard.png")
-    plt.savefig(img_file)  # 这里保存图像
-    plt.close(fig)
-
-    return df.set_index("time")
+    return {
+        "scope": scope,
+        "time_range": (start_time, end_time),
+        "total_points": total_points,
+        "unique_days": unique_days,
+        "device_stats": device_stats,
+        "distance_km": distance_km,
+        "gap_stats": gap_stats,
+        "accuracy_stats": accuracy_stats,
+        "hourly_distribution": hourly_distribution,
+        "important_places": important_places,
+    }
 
 
 # %% [markdown]
-# ### create_interactive_map(df)
+# ## 重要地点识别
+
+# %% [markdown]
+# ### `identify_important_places(df, radius_km=0.5, min_points=3)`
+# 识别重要地点（停留点）
 
 
 # %%
-def create_interactive_map(df: pd.DataFrame) -> folium.Map:
-    """生成可交互的轨迹地图"""
-    df = df.reset_index()
-    m = folium.Map(
-        location=[df["lati"].mean(), df["longi"].mean()],
-        zoom_start=14,
-        tiles="OpenStreetMap",  # 添加 tiles 参数，设置地图样式
+def identify_important_places(df, radius_km=0.5, min_points=3):
+    """
+    识别重要地点（停留点）
+    """
+    if df.empty:
+        return pd.DataFrame()
+
+    # 转换坐标为弧度
+    coords = df[["latitude", "longitude"]].values
+    kms_per_radian = 6371.0088
+    epsilon = radius_km / kms_per_radian
+
+    # DBSCAN聚类
+    db = DBSCAN(eps=epsilon, min_samples=min_points, algorithm="ball_tree", metric="haversine").fit(np.radians(coords))
+    df["cluster"] = db.labels_
+
+    # 过滤噪声点
+    clustered = df[df["cluster"] != -1]
+
+    if clustered.empty:
+        return pd.DataFrame()
+
+    # 计算聚类中心
+    cluster_centers = (
+        clustered.groupby("cluster")
+        .agg({"latitude": "mean", "longitude": "mean", "time": "count"})
+        .rename(columns={"time": "visit_count"})
+        .reset_index()
     )
 
-    # 添加轨迹线
-    points = list(zip(df["lati"], df["longi"]))
-    folium.PolyLine(points, color="blue", weight=2.5, opacity=0.7).add_to(m)
+    # 添加停留时间（近似）
+    cluster_centers["avg_stay_min"] = clustered.groupby("cluster")["time_diff"].mean().values
 
-    # 添加重要标记
-    for idx, row in df[df["distance"] > 5].iterrows():  # 长距离移动点
-        folium.Marker(
-            [row["lati"], row["longi"]],
-            popup=f"时间：{row['time']}<br>距离：{row['distance']}km",
-            icon=folium.Icon(color="red"),
-        ).add_to(m)
-
-    # 生成热力图层
-    from folium.plugins import HeatMap
-
-    HeatMap(points, radius=15).add_to(m)
-
-    outfile = os.path.abspath(getdirmain() / "img" / "trail_map.html")
-    m.save(outfile)
-    return m
+    return cluster_centers.sort_values("visit_count", ascending=False).head(10)
 
 
 # %% [markdown]
-# ### calculate_metrics(df)
+# ## 可视化函数
+
+# %% [markdown]
+# ### `generate_visualizations(df, analysis_results)`
+# 生成位置数据的可视化图表
 
 
 # %%
-def calculate_metrics(df):
-    """生成多维统计指标"""
-    print("计算统计数据，检查输入数据：")
-    print(df.head())
-
-    stats = {
-        "total_distance": df["distance"].sum(),
-        "daily_avg": df.resample("D")["distance"].sum().mean(),
-        "frequent_hour": df["hour"].mode()[0],
-        "max_speed": df["speed"].max(),
-        "stay_points": len(df[df["speed"] < 1]),  # 速度<1km/h视为停留
-    }
-
-    # 生成统计面板
-    stats_markdown = f"""
-### 移动数据统计
-- 总移动距离：{stats["total_distance"]:.1f} km
-- 日均移动：{stats["daily_avg"]:.1f} km
-- 最活跃时段：{stats["frequent_hour"]:02d}:00-{stats["frequent_hour"] + 1:02d}:00
-- 最高移动速度：{stats["max_speed"]:.1f} km/h
-- 重要停留点：{stats["stay_points"]} 处
+def generate_visualizations(df, analysis_results):
     """
-    print("统计数据：")
-    print(stats)
+    生成位置数据的可视化图表
+    """
+    images = {}
 
-    return stats, stats_markdown
+    # 1. 轨迹图
+    plt.figure(figsize=(PLOT_WIDTH, PLOT_HEIGHT))
+
+    # 按连续段绘制不同颜色
+    if "segment" in df.columns:
+        for segment in df["segment"].unique():
+            seg_df = df[df["segment"] == segment]
+            plt.plot(seg_df["longitude"], seg_df["latitude"], alpha=0.7, linewidth=1.5, label=f"段 {segment}")
+    else:
+        plt.plot(df["longitude"], df["latitude"], "b-", alpha=0.5, linewidth=1)
+
+    plt.title(f"{analysis_results['scope'].capitalize()}位置轨迹")
+    plt.xlabel("经度")
+    plt.ylabel("纬度")
+    plt.grid(True)
+    if "segment" in df.columns:
+        plt.legend(loc="best")
+
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=DPI)
+    plt.close()
+    images["trajectory"] = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    # 2. 时间分布图
+    plt.figure(figsize=(PLOT_WIDTH, PLOT_HEIGHT - 2))
+    hour_counts = analysis_results["hourly_distribution"]
+    plt.bar(list(hour_counts.keys()), list(hour_counts.values()), width=0.8)
+    plt.title(f"{analysis_results['scope'].capitalize()}位置记录时间分布")
+    plt.xlabel("小时")
+    plt.ylabel("记录数量")
+    plt.xticks(range(0, 24))
+    plt.grid(True)
+
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=DPI)
+    plt.close()
+    images["time_dist"] = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    # 3. 精度分布图
+    plt.figure(figsize=(PLOT_WIDTH, PLOT_HEIGHT - 2))
+    plt.hist(df["accuracy"].dropna(), bins=50, alpha=0.7)
+    plt.title(f"{analysis_results['scope'].capitalize()}位置精度分布")
+    plt.xlabel("精度 (米)")
+    plt.ylabel("记录数量")
+    plt.grid(True)
+
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=DPI)
+    plt.close()
+    images["accuracy"] = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    return images
 
 
 # %% [markdown]
-# ### process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]
+# ## 构建报告内容
+
+# %% [markdown]
+# ### `build_report_content(analysis_results, images)`
+# 构建Markdown报告内容
 
 
 # %%
-# 增加一个处理最近一个月数据的函数
-def process_last_month_data(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
-    """处理最近一个月的数据并生成统计信息和可视化"""
-    # 计算最近一个月的时间范围
-    # today = pd.Timestamp.today()
-    # start_date = today - pd.DateOffset(months=1)
-    start_date = df.index.max() - pd.DateOffset(months=1)
-
-    # 过滤出最近一个月的数据
-    last_month_data = df[(df.index >= start_date) & (df.index <= df.index.max())]
-
-    # 计算统计信息
-    if last_month_data.empty:
-        print("最近一个月没有数据！")
-        return None, "最近一个月没有数据。"
-
-    stats = {
-        "total_distance": last_month_data["distance"].sum(),
-        "daily_avg": last_month_data.resample("D")["distance"].sum().mean(),
-        "frequent_hour": last_month_data["hour"].mode()[0],
-        "max_speed": last_month_data["speed"].max(),
-        "stay_points": len(last_month_data[last_month_data["speed"] < 1]),  # 速度<1km/h视为停留
-    }
-
-    stats_markdown = f"""
-### 最近一个月的数据统计
-- 总移动距离：{stats["total_distance"]:.1f} km
-- 日均移动：{stats["daily_avg"]:.1f} km
-- 最活跃时段：{stats["frequent_hour"]:02d}:00-{stats["frequent_hour"] + 1:02d}:00
-- 最高移动速度：{stats["max_speed"]:.1f} km/h
-- 重要停留点：{stats["stay_points"]} 处
+def build_report_content(analysis_results, images):
     """
+    构建Markdown报告内容
+    """
+    scope = analysis_results["scope"]
+    start_time, end_time = analysis_results["time_range"]
+    device_stats = analysis_results["device_stats"]
+    gap_stats = analysis_results["gap_stats"]
+    accuracy_stats = analysis_results["accuracy_stats"]
+    hourly_distribution = analysis_results["hourly_distribution"]
+    important_places = analysis_results["important_places"]
 
-    # 生成可视化
-    fig, axs = plt.subplots(3, 2, figsize=(15, 15))
-    fig.suptitle("最近一个月移动数据综合可视化", fontsize=20)
+    # 设备使用统计表
+    device_table = "| 设备ID | 记录数 | 占比 |\n|--------|--------|------|\n"
+    total = analysis_results["total_points"]
+    for device, count in device_stats.items():
+        percent = (count / total) * 100
+        device_table += f"| {device} | {count} | {percent:.1f}% |\n"
 
-    # 轨迹热力图
-    hb = axs[0, 0].hexbin(last_month_data["longi"], last_month_data["lati"], gridsize=30, cmap="Blues")
-    axs[0, 0].set_title("最近一个月移动轨迹热力图")
-    plt.colorbar(hb, ax=axs[0, 0], label="频率")
+    # 时间分布表
+    time_table = "| 小时 | 记录数 |\n|------|--------|\n"
+    for hour in sorted(hourly_distribution.keys()):
+        time_table += f"| {hour} | {hourly_distribution[hour]} |\n"
 
-    # 时段活跃度
-    hour_dist = last_month_data.groupby("hour").size().reset_index(name="counts")
-    axs[0, 1].bar(hour_dist["hour"], hour_dist["counts"], color="orange")
-    axs[0, 1].set_title("最近一个月时段活跃度")
+    # 重要地点表
+    places_table = ""
+    if not important_places.empty:
+        places_table = "| 纬度 | 经度 | 访问次数 | 平均停留(分) |\n|------|------|----------|------------|\n"
+        for _, row in important_places.iterrows():
+            places_table += f"| {row['latitude']:.5f} | {row['longitude']:.5f} | {row['visit_count']} | {row['avg_stay_min']:.1f} |\n"
 
-    # 移动距离分布
-    axs[1, 0].hist(last_month_data["distance"], bins=20, color="green", alpha=0.7)
-    axs[1, 0].set_title("最近一个月单次移动距离分布")
+    # 构建报告
+    report = f"""
+# 📍 {scope.capitalize()}位置分析报告 
+## 时间范围: {start_time.strftime("%Y-%m-%d")} 至 {end_time.strftime("%Y-%m-%d")}
 
-    # 常去区域
-    stay_points = last_month_data[last_month_data["distance"] < 0.1]
-    axs[1, 1].scatter(stay_points["longi"], stay_points["lati"], c="red", alpha=0.5)
-    axs[1, 1].set_title("最近一个月常去区域")
+### 概览统计
+- **总记录数**: {analysis_results["total_points"]}
+- **覆盖天数**: {analysis_results["unique_days"]}
+- **活动范围**: {analysis_results["distance_km"]:.2f}公里
+- **时间跳跃次数**: {gap_stats["count"]} (最长{gap_stats["longest_gap"]:.1f}小时)
 
-    # 移动速度趋势
-    axs[2, 0].plot(last_month_data.index, last_month_data["speed"], color="purple")
-    axs[2, 0].set_title("最近一个月移动速度变化")
+### 设备使用情况
+{device_table}
 
-    axs[2, 1].axis("off")  # 隐藏最后一个子图
+### 位置精度
+- **最小精度**: {accuracy_stats["min"]:.1f}米
+- **最大精度**: {accuracy_stats["max"]:.1f}米
+- **平均精度**: {accuracy_stats["mean"]:.1f}米
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+### 时间分布
+{time_table}
 
-    # 定义图像保存路径
-    img_file = os.path.abspath(getdirmain() / "img" / "last_month_dashboard.png")
-    plt.savefig(img_file)  # 这里保存图像
-    plt.close(fig)
+### 重要地点
+{places_table}
 
-    return last_month_data, stats_markdown
+### 可视化分析
+#### 位置轨迹
+![轨迹图](data:image/png;base64,{images["trajectory"]})
+
+#### 时间分布
+![时间分布](data:image/png;base64,{images["time_dist"]})
+
+#### 精度分布
+![精度分布](data:image/png;base64,{images["accuracy"]})
+"""
+    return report
 
 
 # %% [markdown]
-# ### publish_to_joplin(df)
+# ## 更新Joplin笔记
+
+# %% [markdown]
+# ### `update_joplin_report(report_content, scope)`
+# 更新Joplin位置分析报告
 
 
 # %%
-def publish_to_joplin(df):
-    """将分析结果发布到Joplin"""
-    updated_df = enhanced_visualization(df)
-
-    # 处理最近一个月的数据
-    last_month_data, last_month_stats = process_last_month_data(updated_df)
-
-    img_ids = []
-    for img_file in [
-        "location_dashboard.png",
-        "trail_map.html",
-        "last_month_dashboard.png",
-    ]:
-        res_id = createresource(str((getdirmain() / "img" / img_file).absolute()), img_file)
-        img_ids.append(res_id)
-
-    # 计算统计数据
-    stats, stats_markdown = calculate_metrics(updated_df)  # 计算总体统计数据
-
-    # 构建笔记内容
-    body = f"""
-{last_month_stats}
-![最近一个月综合仪表盘](:/{img_ids[2]})
-
-{stats_markdown}
-![综合仪表盘](:/{img_ids[0]})
-<iframe src=":/{img_ids[1]}" width="100%" height="500"></iframe>
+def update_joplin_report(report_content, scope):
     """
+    更新Joplin位置分析报告
+    """
+    note_title = f"位置分析报告_{scope}"
+    existing_notes = searchnotes(f"title:{note_title}")
 
-    # 更新或创建笔记
-    note_id = getcfpoptionvalue("happyjp_life", "hjloc", "analytics_note")
-    if not note_id:
-        note_id = createnote(title="高级位置分析报告")
-        setcfpoptionvalue("happyjp_life", "hjloc", "analytics_note", note_id)
-
-    updatenote_body(note_id, body)
+    if existing_notes:
+        note_id = existing_notes[0].id
+        updatenote_body(note_id, report_content)
+        log.info(f"更新位置分析报告: {note_title}")
+    else:
+        parent_id = searchnotebook("ewmobile")
+        if not parent_id:
+            parent_id = createnote(title="ewmobile", notebook=True)
+        note_id = createnote(title=note_title, parent_id=parent_id, body=report_content)
+        log.info(f"创建位置分析报告: {note_title}")
 
 
 # %% [markdown]
-# ## 主函数main
+# ## 主函数
+
+# %% [markdown]
+# ### `generate_location_reports()`
+# 生成三个层级的报告：月报、季报、年报
+
+
+# %%
+def generate_location_reports():
+    """
+    生成三个层级的报告：月报、季报、年报
+    """
+    for scope in REPORT_LEVELS.keys():
+        log.info(f"开始生成 {scope} 位置报告...")
+
+        # 1. 加载数据
+        df = load_location_data(scope)
+        if df.empty:
+            log.warning(f"跳过 {scope} 报告，无数据")
+            continue
+
+        # 2. 分析数据
+        analysis_results = analyze_location_data(df)
+
+        # 3. 生成可视化
+        images = generate_visualizations(df, analysis_results)
+
+        # 4. 构建报告
+        report_content = build_report_content(analysis_results, images)
+
+        # 5. 更新Joplin笔记
+        update_joplin_report(report_content, scope)
+
+        log.info(f"{scope.capitalize()}位置报告生成完成")
+
+
+# %% [markdown]
+# ## 主入口
+
+# %% [markdown]
+# ### `main()`
+# 脚本主入口
 
 # %%
 if __name__ == "__main__":
-    """
-    主函数：处理数据源，展示足迹，发布到 Joplin。
-    """
-    if not_IPython():
-        log.info(f"运行文件\t{__file__}……")
-    df = chuli_datasource()
-    foot2show(df)
-    publish_to_joplin(df)
-    # showdis()
-    if not_IPython():
-        log.info(f"完成文件{__file__}\t的运行")
+    log.info("开始生成位置分析报告...")
+    generate_location_reports()
+    log.info("位置分析报告生成完成")
