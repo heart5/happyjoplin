@@ -18,10 +18,11 @@
 # ## 引入库
 
 # %%
-import re
 import os
+import re
+from configparser import ConfigParser, DuplicateOptionError, DuplicateSectionError
 from pathlib import Path
-from configparser import ConfigParser, DuplicateSectionError, DuplicateOptionError
+
 import pathmagic
 
 # %%
