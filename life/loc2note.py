@@ -66,7 +66,9 @@ def get_all_device_ids(device_id=None):
         the_device_id = device_id
     device_ids_str = getcfpoptionvalue("hjloc2note", "devices", "ids")
     device_ids = (
-        [did.strip() for did in device_ids_str.split(", ") if str(did) != "nan"] if device_ids_str else [the_device_id]
+        [did.strip() for did in device_ids_str.split(", ") if str(did) != "nan"]
+        if device_ids_str
+        else [the_device_id]
     )
     print(device_ids, the_device_id, type(the_device_id))
     # 新增：过滤无效设备ID
@@ -204,7 +206,9 @@ def locationfiles2dfdict(dpath):
                 dfdict[device_id] = (
                     pd.concat(chunks, ignore_index=True)
                     .sort_values("time")
-                    .drop_duplicates(subset=["time", "latitude", "longitude"], keep="last")
+                    .drop_duplicates(
+                        subset=["time", "latitude", "longitude"], keep="last"
+                    )
                 )
             else:
                 dfdict[device_id] = df
@@ -223,7 +227,9 @@ def locationfiles2dfdict(dpath):
 def parse_location_note_content(note_content: str) -> dict:
     """解析Joplin位置笔记为结构化字典"""
     time_range = re.search(r"时间范围[：:]\s*(.*?)\s*至\s*(.*?)(?:\n|$)", note_content)
-    data_file = re.search(r"\[(?:下载数据文件)?(\S+?)\]\((?:\:\/)?(\S+?)\)", note_content)
+    data_file = re.search(
+        r"\[(?:下载数据文件)?(\S+?)\]\((?:\:\/)?(\S+?)\)", note_content
+    )
 
     device_counts = {
         match.group(1): int(match.group(2))
@@ -265,26 +271,6 @@ def parse_location_note_content(note_content: str) -> dict:
     }
 
 
-# %%
-note = searchnotes("title:位置数据_202507")[0]
-
-# %%
-note.body
-
-# %%
-update_matches = []
-update_matches = re.finditer(
-    r"-\s+(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+由设备\s*(?:【.*?】)?\((\w+?)\)\s*更新，新增记录\s+(\d+)\s+条",
-    note.body,
-    re.DOTALL | re.M,
-)
-
-print(list(update_matches))
-
-# %%
-parse_location_note_content(note.body)
-
-
 # %% [markdown]
 # ### location_dict2note_content(data_dict: dict) -> str
 
@@ -292,16 +278,23 @@ parse_location_note_content(note.body)
 def location_dict2note_content(data_dict: dict) -> str:
     """将修改后的字典转换回Joplin笔记内容"""
     # 确保获取 设备id 的名称并保存至ini文件
-    print(data_dict["record_counts"])
-    for device_id in [dev for dev in data_dict["record_counts"].keys() if dev != "total"]:
+    for device_id in [
+        dev for dev in data_dict["record_counts"].keys() if dev != "total"
+    ]:
         get_all_device_ids(device_id)
     metadata = data_dict["metadata"]
     content = f"## 位置数据元信息\n时间范围：{metadata['time_range'][0]} 至 {metadata['time_range'][1]}\n\n"
-    content += "## 位置设备列表\n" + "\n".join(f"- {dev}" for dev in data_dict["devices"]) + "\n\n"
+    content += (
+        "## 位置设备列表\n"
+        + "\n".join(f"- {dev}" for dev in data_dict["devices"])
+        + "\n\n"
+    )
     content += (
         "## 分设备位置记录数量\n"
         + "\n".join(
-            "- 设备：【" + getcfpoptionvalue("hjloc2note", dev, "device_name") + f"】({dev}) 记录数：{count}"
+            "- 设备：【"
+            + getcfpoptionvalue("hjloc2note", dev, "device_name")
+            + f"】({dev}) 记录数：{count}"
             for dev, count in data_dict["record_counts"].items()
             if dev != "total"
         )
@@ -325,28 +318,25 @@ def location_dict2note_content(data_dict: dict) -> str:
     return content
 
 # %% [markdown]
-# ### update_note_metadata(note_id, df, resource_id, is_new_device=False)
+# ### update_note_metadata(df, resource_id, location_dict)
 
 
 # %%
 def update_note_metadata(df, resource_id, location_dict):
-    """更新笔记中的设备id和统计信息"""
-    device_id = str(df["device_id"].iloc[0])
-    thedf = df[df["device_id"] == device_id]
-
-    if device_id not in location_dict["devices"]:
-        location_dict["devices"].append(device_id)
-
-    location_dict["record_counts"][device_id] = len(thedf)
+    """更新笔记中的元信息"""
 
     # 时间格式定义（根据实际数据格式调整）
     TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
     # 将字符串时间转换为datetime对象
-    current_min = thedf["time"].min().to_pydatetime()
-    current_max = thedf["time"].max().to_pydatetime()
-    stored_min = datetime.strptime(location_dict["metadata"]["time_range"][0], TIME_FORMAT)
-    stored_max = datetime.strptime(location_dict["metadata"]["time_range"][1], TIME_FORMAT)
+    current_min = df["time"].min().to_pydatetime()
+    current_max = df["time"].max().to_pydatetime()
+    stored_min = datetime.strptime(
+        location_dict["metadata"]["time_range"][0], TIME_FORMAT
+    )
+    stored_max = datetime.strptime(
+        location_dict["metadata"]["time_range"][1], TIME_FORMAT
+    )
 
     # 正确比较时间
     new_min = min(stored_min, current_min)
@@ -370,17 +360,20 @@ def update_note_metadata(df, resource_id, location_dict):
 # %%
 def upload_to_joplin(file_path, device_id, period, save_dir):
     """文件上传至笔记，支持多设备数据合并与数据表大小校验"""
-    # 读取当前设备的新数据
+    # 读取当前设备的数据（前序已经处理为df，从txt记录文件）
     local_df = pd.read_excel(file_path)
     local_df["device_id"] = device_id  # 添加设备标识列
 
+    # 查找指定月份的云端笔记是否存在
     note_title = f"位置数据_{period.strftime('%Y%m')}"
     existing_notes = searchnotes(f"title:{note_title}")
 
     if existing_notes:
         note = existing_notes[0]
+        # 处理笔记body生成字典，方便后续直接读取各模块，包括修改
         location_dict = parse_location_note_content(note.body)
         # print(location_dict)
+        # 直接取用body中的资源id（默认是唯一）
         resource_id = location_dict["metadata"]["resource_id"]
         # print(jpapi.get_resources(note.id).items)
 
@@ -390,11 +383,15 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             cloud_data = jpapi.get_resource_file(resource_id)
             cloud_df = pd.read_excel(BytesIO(cloud_data))
             valid_cols_with_device_id = [name for name in VALID_COLS]
-            valid_cols_with_device_id.append("device_id")
-            cloud_df = cloud_df[valid_cols_with_device_id]  # 精简原有笔记附件中的冗余列，要把device_id列加上！！！
+            valid_cols_with_device_id.extend(["device_id", "month"])
+            cloud_df = cloud_df[
+                valid_cols_with_device_id
+            ]  # 精简原有笔记附件中的冗余列，要把device_id和month列加上！！！
 
             # 合并云端和本地数据
             merged_df = pd.concat([cloud_df, local_df])
+            # 去除device_id列值为空的记录并重置索引保持索引连续
+            merged_df = merged_df.dropna(subset=["device_id"]).reset_index(drop=True)
             merged_df = merged_df.sort_values("time").drop_duplicates(
                 subset=["time", "device_id", "latitude", "longitude"],
                 keep="last",  # 保留最新记录
@@ -403,30 +400,33 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
             merged_df = local_df
             log.info(f"资源文件 {resource_id} 无效，采用本地位置数据")
 
-        # 计算合并后的大小（仅限当前设备id
+        # 筛选出指定device_id的记录
         the_df = merged_df[merged_df["device_id"] == device_id]
-        the_merged_len = len(the_df)
+        the_device_len = len(the_df)
 
         if device_id in location_dict["record_counts"]:
             cloud_len = int(location_dict["record_counts"][f"{device_id}"])
         else:
             cloud_len = 0
-        location_dict["record_counts"][f"{device_id}"] = the_merged_len
-        added_records = the_merged_len - cloud_len
+        added_records = the_device_len - cloud_len
 
         total_cloud_len = int(location_dict["record_counts"]["total"])
-        if (cloud_len == the_merged_len) and (total_cloud_len == len(merged_df)):
+        if (cloud_len == the_device_len) and (total_cloud_len == len(merged_df)):
             # 判断云端配饰处理所有数据的调试开关是否无视比较结果
-            if not getinivaluefromcloud("loc2note", "alldata"):
+            if not getinivaluefromcloud("loc2note", "god"):
                 device_name = getcfpoptionvalue("hjloc2note", device_id, "device_name")
                 log.info(
                     f"设备【{device_name}】的笔记端记录数: {cloud_len}, 和本地合并后记录数无变化；云端记录总数: {total_cloud_len}, 也没有变化。跳过！"
                 )
                 return
+            else:
+                log.info(f"上帝模式开启，无脑更新笔记{note.title}")
+        location_dict["record_counts"][f"{device_id}"] = the_device_len
         location_dict["record_counts"]["total"] = len(merged_df)
         # 生成新附件，是包含所有设备数据的综合
         local_file_name = f"location_{period.strftime('%y%m')}.xlsx"
         local_file = save_dir / local_file_name
+        # 针对部分可能的数字device_id，强制转str
         merged_df["device_id"] = merged_df["device_id"].astype(str)
         merged_df.to_excel(local_file, index=False)
 
@@ -441,36 +441,42 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         }
 
         # 添加到更新记录列表
-        if "update_records" not in location_dict:
+        if "update_records" not in location_dict:  # 针对body结构被破坏的情况
             location_dict["update_records"] = []
         location_dict["update_records"].insert(0, new_record)
 
         # 更新笔记内容字典
-        location_dict_done = update_note_metadata(merged_df, new_resource_id, location_dict)
+        location_dict_done = update_note_metadata(
+            merged_df, new_resource_id, location_dict
+        )
         new_content = location_dict2note_content(location_dict_done)
         updatenote_body(note.id, new_content)
         # 操作成功后删除原有resource
-        for resource_id in [res.id for res in jpapi.get_resources(note.id).items if res.id != new_resource_id]:
+        for resource_id in [
+            res.id
+            for res in jpapi.get_resources(note.id).items
+            if res.id != new_resource_id
+        ]:
             jpapi.delete_resource(resource_id)
-            log.critical(f"资源文件 {resource_id} 被成功删除！")
+            log.critical(f"笔记《{note.title}》的资源文件 {resource_id} 被成功删除！")
     else:
         # 创建新笔记
-        note_body = f"""
-## 位置数据元信息
-- 时间范围：{local_df["time"].min()} 至 {local_df["time"].max()}
-## 位置设备列表
-- 包含设备: {device_id}
-## 分设备位置记录数量
-- 设备：{device_id} 记录数：{len(local_df)}
-## 位置记录总数量
-- **总记录数**：{len(local_df)}
-## 数据文件
-## 笔记更新记录
-"""
+        note_body = (
+            "## 位置数据元信息\n"
+            f"- 时间范围：{local_df['time'].min()} 至 {local_df['time'].max()}\n"
+            "## 位置设备列表\n"
+            f"- 包含设备: {device_id}\n"
+            "## 分设备位置记录数量\n"
+            f"- 设备：{device_id} 记录数：{len(local_df)}\n"
+            "## 位置记录总数量\n"
+            f"- **总记录数**：{len(local_df)}\n"
+            "## 数据文件\n"
+            "## 笔记更新记录"
+        )
+        nowstr = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        device_name = getcfpoptionvalue("hjloc2note", device_id, "device_name")
         last_line = (
-            f"\n- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 由设备 【"
-            + getcfpoptionvalue("hjloc2note", f"{device_id}", "device_name")
-            + f"】({device_id}) 更新，"
+            f"\n- {nowstr} 由设备 【{device_name}】({device_id}) 更新，"
             + f"新增记录 {len(local_df)} 条\n"
         )
 
@@ -481,7 +487,9 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
         local_df.to_excel(local_file, index=False)
         resource_title = re.sub(f"_{device_id}", "", local_file_name)
         resource_id = jpapi.add_resource(str(local_file), title=resource_title)
-        newnote_id = createnote(title=note_title, body=note_body + last_line, parent_id=parent_id)
+        newnote_id = createnote(
+            title=note_title, body=note_body + last_line, parent_id=parent_id
+        )
         jpapi.add_resource_to_note(resource_id, newnote_id)
 
     log.info(f"成功更新 {note_title} 笔记")
