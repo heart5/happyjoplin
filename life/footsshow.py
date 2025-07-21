@@ -36,7 +36,7 @@ import pathmagic
 with pathmagic.context():
     from func.configpr import getcfpoptionvalue
     from func.first import getdirmain
-    from func.jpfuncs import createnote, jpapi, searchnotes, updatenote_body
+    from func.jpfuncs import createnote, jpapi, searchnotes, searchnotebook, updatenote_body
     from func.logme import log
 
 # %% [markdown]
@@ -122,46 +122,63 @@ def load_location_data(scope):
 
 
 # %%
+
 def analyze_location_data(df):
     """
     分析位置数据，返回统计结果
     """
     if df.empty:
         return {}
-
+    
     # 基础统计
     start_time = df["time"].min()
     end_time = df["time"].max()
     total_points = len(df)
     unique_days = df["time"].dt.date.nunique()
-
+    
     # 设备使用统计
     device_stats = df["device_id"].value_counts().to_dict()
-
-    # 活动范围计算
+    
+    # 活动范围计算（核心修复）
     min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
     min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
-    distance_km = great_circle((min_lat, min_lon), (max_lat, max_lon)).kilometers
-
+    distance_km = great_circle(
+        (min_lat, min_lon), 
+        (max_lat, max_lon)
+    ).kilometers
+    
+    # 计算位置范围（修复scope未定义错误）
+    scope = (
+        f"纬度: {min_lat:.6f}° - {max_lat:.6f}°, "
+        f"经度: {min_lon:.6f}° - {max_lon:.6f}°, "
+        f"跨度: {distance_km:.2f}公里"
+    )
+    
     # 时间跳跃分析
     if "big_gap" in df.columns:
         big_gaps = df[df["big_gap"]]
-        gap_stats = {"count": len(big_gaps), "longest_gap": df["time_diff"].max() if "time_diff" in df.columns else 0}
+        gap_stats = {
+            "count": len(big_gaps),
+            "longest_gap": df["time_diff"].max() if "time_diff" in df.columns else 0
+        }
     else:
         gap_stats = {"count": 0, "longest_gap": 0}
-
+    
     # 位置精度分析
-    accuracy_stats = {"min": df["accuracy"].min(), "max": df["accuracy"].max(), "mean": df["accuracy"].mean()}
-
+    accuracy_stats = {
+        "min": df["accuracy"].min(),
+        "max": df["accuracy"].max(),
+        "mean": df["accuracy"].mean()
+    }
+    
     # 每日活动模式
     df["hour"] = df["time"].dt.hour
     hourly_distribution = df["hour"].value_counts().sort_index().to_dict()
-
+    
     # 重要地点识别
     important_places = identify_important_places(df)
-
+    
     return {
-        "scope": scope,
         "time_range": (start_time, end_time),
         "total_points": total_points,
         "unique_days": unique_days,
@@ -171,8 +188,31 @@ def analyze_location_data(df):
         "accuracy_stats": accuracy_stats,
         "hourly_distribution": hourly_distribution,
         "important_places": important_places,
+        "scope": scope  # 使用已定义的变量
     }
 
+
+# %% [markdown]
+# ### handle_time_jumps(df)
+
+# %%
+def handle_time_jumps(df):
+    if df.empty:
+        return df
+
+    # 确保按时间排序
+    df = df.sort_values("time")
+
+    # 计算时间差（分钟）
+    df["time_diff"] = df["time"].diff().dt.total_seconds() / 60
+
+    # 标记大时间间隔（>4小时）
+    df["big_gap"] = df["time_diff"] > 4 * 60
+
+    # 添加连续段标记
+    df["segment"] = df["big_gap"].cumsum()
+
+    return df
 
 # %% [markdown]
 # ## 重要地点识别
@@ -187,7 +227,10 @@ def identify_important_places(df, radius_km=0.5, min_points=3):
     """
     识别重要地点（停留点）
     """
-    if df.empty:
+    if df.empty or "time_diff" not in df.columns:
+        return pd.DataFrame()
+    required_cols = ["latitude", "longitude", "time_diff"]
+    if not all(col in df.columns for col in required_cols):
         return pd.DataFrame()
 
     # 转换坐标为弧度
@@ -196,7 +239,9 @@ def identify_important_places(df, radius_km=0.5, min_points=3):
     epsilon = radius_km / kms_per_radian
 
     # DBSCAN聚类
-    db = DBSCAN(eps=epsilon, min_samples=min_points, algorithm="ball_tree", metric="haversine").fit(np.radians(coords))
+    db = DBSCAN(
+        eps=epsilon, min_samples=min_points, algorithm="ball_tree", metric="haversine"
+    ).fit(np.radians(coords))
     df["cluster"] = db.labels_
 
     # 过滤噪声点
@@ -214,8 +259,15 @@ def identify_important_places(df, radius_km=0.5, min_points=3):
     )
 
     # 添加停留时间（近似）
-    cluster_centers["avg_stay_min"] = clustered.groupby("cluster")["time_diff"].mean().values
-
+    cluster_centers["avg_stay_min"] = (
+        clustered.groupby("cluster")["time_diff"].mean().values
+    )
+    if "time_diff" in clustered.columns:
+        cluster_centers["avg_stay_min"] = (
+            clustered.groupby("cluster")["time_diff"].mean().values
+        )
+    else:
+        cluster_centers["avg_stay_min"] = 0  # 默认值
     return cluster_centers.sort_values("visit_count", ascending=False).head(10)
 
 
@@ -241,7 +293,13 @@ def generate_visualizations(df, analysis_results):
     if "segment" in df.columns:
         for segment in df["segment"].unique():
             seg_df = df[df["segment"] == segment]
-            plt.plot(seg_df["longitude"], seg_df["latitude"], alpha=0.7, linewidth=1.5, label=f"段 {segment}")
+            plt.plot(
+                seg_df["longitude"],
+                seg_df["latitude"],
+                alpha=0.7,
+                linewidth=1.5,
+                label=f"段 {segment}",
+            )
     else:
         plt.plot(df["longitude"], df["latitude"], "b-", alpha=0.5, linewidth=1)
 
