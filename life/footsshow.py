@@ -36,7 +36,7 @@ import pathmagic
 with pathmagic.context():
     from func.configpr import getcfpoptionvalue
     from func.first import getdirmain
-    from func.jpfuncs import createnote, jpapi, searchnotes, searchnotebook, updatenote_body
+    from func.jpfuncs import createnote, jpapi, searchnotes, updatenote_body
     from func.logme import log
 
 # %% [markdown]
@@ -122,63 +122,63 @@ def load_location_data(scope):
 
 
 # %%
-
 def analyze_location_data(df):
     """
     分析位置数据，返回统计结果
     """
     if df.empty:
         return {}
-    
+    if not df.empty:
+        df = handle_time_jumps(df)
+
+    # 新增：多设备数据融合
+    if "device_id" in df.columns and df["device_id"].nunique() > 1:
+        df = detect_static_devices(df)  # 先过滤静态设备
+        df = fuse_device_data(df)  # 智能融合数据
+
+    # 确保创建 time_diff 列
+    if "time_diff" not in df.columns:
+        df = handle_time_jumps(df)  # 创建 time_diff 列
     # 基础统计
     start_time = df["time"].min()
     end_time = df["time"].max()
     total_points = len(df)
     unique_days = df["time"].dt.date.nunique()
-    
+
     # 设备使用统计
     device_stats = df["device_id"].value_counts().to_dict()
-    
-    # 活动范围计算（核心修复）
+
+    # 活动范围计算
     min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
     min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
-    distance_km = great_circle(
-        (min_lat, min_lon), 
-        (max_lat, max_lon)
-    ).kilometers
-    
-    # 计算位置范围（修复scope未定义错误）
-    scope = (
-        f"纬度: {min_lat:.6f}° - {max_lat:.6f}°, "
-        f"经度: {min_lon:.6f}° - {max_lon:.6f}°, "
-        f"跨度: {distance_km:.2f}公里"
-    )
-    
+    distance_km = great_circle((min_lat, min_lon), (max_lat, max_lon)).kilometers
+
     # 时间跳跃分析
     if "big_gap" in df.columns:
         big_gaps = df[df["big_gap"]]
         gap_stats = {
             "count": len(big_gaps),
-            "longest_gap": df["time_diff"].max() if "time_diff" in df.columns else 0
+            "longest_gap": df["time_diff"].max() if "time_diff" in df.columns else 0,
         }
     else:
         gap_stats = {"count": 0, "longest_gap": 0}
-    
+
     # 位置精度分析
     accuracy_stats = {
         "min": df["accuracy"].min(),
         "max": df["accuracy"].max(),
-        "mean": df["accuracy"].mean()
+        "mean": df["accuracy"].mean(),
     }
-    
+
     # 每日活动模式
     df["hour"] = df["time"].dt.hour
     hourly_distribution = df["hour"].value_counts().sort_index().to_dict()
-    
+
     # 重要地点识别
     important_places = identify_important_places(df)
-    
+
     return {
+        "scope": scope,
         "time_range": (start_time, end_time),
         "total_points": total_points,
         "unique_days": unique_days,
@@ -188,12 +188,11 @@ def analyze_location_data(df):
         "accuracy_stats": accuracy_stats,
         "hourly_distribution": hourly_distribution,
         "important_places": important_places,
-        "scope": scope  # 使用已定义的变量
     }
 
 
 # %% [markdown]
-# ### handle_time_jumps(df)
+# ### `handle_time_jumps(df)`
 
 # %%
 def handle_time_jumps(df):
@@ -213,6 +212,126 @@ def handle_time_jumps(df):
     df["segment"] = df["big_gap"].cumsum()
 
     return df
+
+
+# %% [markdown]
+# ### `calc_device_activity(df, device_id)`
+
+# %%
+def calc_device_activity(df, device_id):
+    """计算设备活跃度评分（0-100）"""
+    device_data = df[df["device_id"] == device_id]
+    if len(device_data) < 2:
+        return 0
+
+    # 计算总位移距离
+    total_dist = 0
+    prev = None
+    for _, row in device_data.iterrows():
+        if prev:
+            dist = great_circle((prev.lat, prev.lon), (row.lat, row.lon)).m
+            total_dist += dist
+        prev = row
+
+    # 计算时间跨度（小时）
+    time_span = (
+        device_data["time"].max() - device_data["time"].min()
+    ).total_seconds() / 3600
+
+    # 计算位置方差
+    lat_var = device_data["latitude"].var()
+    lon_var = device_data["longitude"].var()
+
+    # 综合评分
+    activity_score = min(
+        100,
+        (total_dist / max(1, time_span)) * 0.7  # 移动速度因子
+        + (lat_var + lon_var) * 10000 * 0.3,  # 位置变化因子
+    )
+    return activity_score
+
+
+# %% [markdown]
+# ### `check_spatiotemporal_consistency(point1, point2)`
+
+# %%
+def check_spatiotemporal_consistency(point1, point2):
+    """检查两点时空一致性"""
+    time_diff = abs((point1["time"] - point2["time"]).total_seconds())
+    dist = great_circle((point1.lat, point1.lon), (point2.lat, point2.lon)).m
+
+    # 时间阈值内允许的最大距离（5分钟=300秒）
+    max_allowed_dist = min(100, time_diff * 0.5)  # 0.5m/s移动速度
+
+    return dist < max_allowed_dist and time_diff < 300
+
+
+# %% [markdown]
+# ### `fuse_device_data(df, window_size="1H")`
+
+# %%
+def fuse_device_data(df, window_size="1H"):
+    """多设备数据智能融合"""
+    # 计算设备活跃度
+    device_activity = {}
+    for device_id in df["device_id"].unique():
+        device_activity[device_id] = calc_device_activity(df, device_id)
+
+    # 创建时间窗口
+    df["time_window"] = df["time"].dt.floor(window_size)
+    fused_points = []
+
+    # 处理每个时间窗口
+    for window, group in df.groupby("time_window"):
+        active_devices = [
+            did
+            for did, score in device_activity.items()
+            if score > 50 and did in group["device_id"].values
+        ]
+
+        if active_devices:
+            # 优先选择活跃设备中精度最高的点
+            active_group = group[group["device_id"].isin(active_devices)]
+            candidate = active_group.loc[active_group["accuracy"].idxmin()]
+        else:
+            # 没有活跃设备则选择所有设备中最佳点
+            candidate = group.loc[group["accuracy"].idxmin()]
+
+        # 时空一致性验证
+        if fused_points:
+            last_point = fused_points[-1]
+            if not check_spatiotemporal_consistency(last_point, candidate):
+                # 不一致时选择最接近上一点的数据
+                group["dist_to_last"] = group.apply(
+                    lambda row: great_circle(
+                        (last_point.lat, last_point.lon), (row.lat, row.lon)
+                    ).m,
+                    axis=1,
+                )
+                candidate = group.loc[group["dist_to_last"].idxmin()]
+
+        fused_points.append(candidate)
+
+    return pd.DataFrame(fused_points)
+
+
+# %% [markdown]
+# ### `detect_static_devices(df, var_threshold=0.00001)`
+
+# %%
+def detect_static_devices(df, var_threshold=0.00001):
+    """识别并过滤静态设备"""
+    static_devices = []
+    for device_id, device_data in df.groupby("device_id"):
+        lat_var = device_data["latitude"].var()
+        lon_var = device_data["longitude"].var()
+
+        if lat_var < var_threshold and lon_var < var_threshold:
+            static_devices.append(device_id)
+            # 记录静态设备位置
+            log.info(f"设备 {device_id} 被识别为静态设备")
+
+    return df[~df["device_id"].isin(static_devices)]
 
 # %% [markdown]
 # ## 重要地点识别
@@ -465,6 +584,20 @@ def generate_location_reports():
     """
     生成三个层级的报告：月报、季报、年报
     """
+    # 在报告中添加设备活跃度信息
+    device_activity = {}
+    for device_id in df["device_id"].unique():
+        score = calc_device_activity(df, device_id)
+        device_activity[device_id] = {
+            "score": score,
+            "status": "活跃" if score > 50 else "静态",
+        }
+
+    # 将设备活跃度信息加入报告
+    report += "## 设备活跃度分析\n"
+    for device, info in device_activity.items():
+        report += f"- {device}: {info['status']} ({info['score']:.1f}/100)\n"
+
     for scope in REPORT_LEVELS.keys():
         log.info(f"开始生成 {scope} 位置报告...")
 
