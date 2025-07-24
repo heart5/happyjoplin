@@ -25,6 +25,7 @@ import re
 # import requests
 # import subprocess
 import tempfile
+from io import BytesIO
 
 import arrow
 
@@ -75,7 +76,12 @@ def getapi():
     # 简化api.token为token，port类似，同时把默认的port替换为41184
     kvdict = dict(
         [
-            [x.split(".")[-1].strip() if x.split(".")[-1].strip() != "null" else 41184 for x in sonlst]
+            [
+                x.split(".")[-1].strip()
+                if x.split(".")[-1].strip() != "null"
+                else 41184
+                for x in sonlst
+            ]
             for sonlst in splitlst
         ]
     )
@@ -240,14 +246,18 @@ def resid_used(targetid):
 
 # %%
 @timethis
-def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None):
+def createnote(
+    title="Superman", body="Keep focus, man!", parent_id=None, imgdata64=None
+):
     """
     按照传入的参数值构建笔记并返回id
     """
 
     global jpapi
     if imgdata64:
-        noteid = jpapi.add_note(title=title, image_data_url=f"data:image/png;base64,{imgdata64}")
+        noteid = jpapi.add_note(
+            title=title, image_data_url=f"data:image/png;base64,{imgdata64}"
+        )
         jpapi.modify_note(noteid, body=f"{getnote(noteid).body}\n{body}")
     else:
         noteid = jpapi.add_note(title=title, body=body)
@@ -256,7 +266,9 @@ def createnote(title="Superman", body="Keep focus, man!", parent_id=None, imgdat
     note = getnote(noteid)
     matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", note.body)
     if len(matches) > 0:
-        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。")
+        log.info(
+            f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。"
+        )
     else:
         log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
 
@@ -302,9 +314,9 @@ def createresourcefromobj(file_obj, title=None):
         tmpfile_path = tmpfile.name
         os.chmod(tmpfile_path, 0o644)  # 显式设置权限
         tmpfile.flush()  # 强制写入磁盘
-        print(f"临时文件实际路径: {tmpfile_path}")
-        print(f"文件存在状态: {os.path.exists(tmpfile_path)}")
-        print(f"文件权限: {oct(os.stat(tmpfile_path).st_mode)}")
+        # print(f"临时文件实际路径: {tmpfile_path}")
+        # print(f"文件存在状态: {os.path.exists(tmpfile_path)}")
+        # print(f"文件权限: {oct(os.stat(tmpfile_path).st_mode)}")
 
         try:
             # # 添加文件句柄释放保障
@@ -313,7 +325,9 @@ def createresourcefromobj(file_obj, title=None):
             # 使用临时文件的路径调用 add_resource
             # 使用文件描述符重定向
             res_id = jpapi.add_resource(filename=tmpfile_path, title=title)
-            log.info(f"资源文件《{title}》从file_obj创建成功，纳入笔记资源系统管理，可以正常被调用！")
+            log.info(
+                f"资源文件《{title}》从file_obj创建成功，纳入笔记资源系统管理，可以正常被调用！"
+            )
         except Exception as e:
             log.error(f"资源上传失败: {str(e)}")
             raise
@@ -326,6 +340,15 @@ def createresourcefromobj(file_obj, title=None):
                 log.warning(f"文件清理失败: {str(e)}")
         return res_id
 
+
+# %% [markdown]
+# ### add_resource_from_bytes(data_bytes, title, mime_type="image/png")
+
+# %%
+def add_resource_from_bytes(data_bytes, title, mime_type="image/png"):
+    """从字节数据创建资源"""
+    file_obj = BytesIO(data_bytes)
+    return createresourcefromobj(file_obj, title)
 
 # %% [markdown]
 # ### deleteresourcesfromnote(noteid)
@@ -356,7 +379,9 @@ def deleteresourcesfromnote(noteid):
 
 # %%
 @timethis
-def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None, filepath=None):
+def createnotewithfile(
+    title="Superman", body="Keep focus, man!", parent_id=None, filepath=None
+):
     """
     按照传入的参数值构建笔记并返回id
     """
@@ -364,7 +389,9 @@ def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None
     global jpapi
     if filepath:
         note_id = jpapi.add_note(title=title)
-        resource_id = jpapi.add_resource(filename=filepath, title=filepath.split("/")[-1])
+        resource_id = jpapi.add_resource(
+            filename=filepath, title=filepath.split("/")[-1]
+        )
         jpapi.add_resource_to_note(resource_id=resource_id, note_id=note_id)
         jpapi.modify_note(note_id, body=f"{jpapi.get_note(note_id).body}\n{body}")
     else:
@@ -374,7 +401,9 @@ def createnotewithfile(title="Superman", body="Keep focus, man!", parent_id=None
     note = getnote(note_id)
     matches = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", note.body)
     if len(matches) > 0:
-        log.info(f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。")
+        log.info(
+            f"笔记《{note.title}》（id：{noteid}）构建成功，包含了资源文件{matches}。"
+        )
     else:
         log.info(f"笔记《{note.title}》（id：{noteid}）构建成功。")
 
@@ -434,7 +463,9 @@ def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
     note = getnote(noteid)
     origin_body = note.body
     if (origin_body is None) or (len(origin_body) == 0):
-        log.critical(f"笔记《{note.title}》（id：{noteid}）的内容为空，没有包含待更新的资源文件信息。")
+        log.critical(
+            f"笔记《{note.title}》（id：{noteid}）的内容为空，没有包含待更新的资源文件信息。"
+        )
         return
     print(f"笔记《{note.title}》（id：{noteid}）的内容为：\t{origin_body}")
 
@@ -446,25 +477,33 @@ def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
         else:
             log.critical(f"资源文件（id：{resid}）不存在，无法删除，跳过。")
     jpapi.delete_note(noteid)
-    log.info(f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！")
+    log.info(
+        f"笔记《{note.title}》（id：{noteid}）中的资源文件{matches}和该笔记都已从笔记系统中删除！"
+    )
 
     # notenew_id = api.add_note(title=note.title, image_data_url=f"data:image/png;base64,{imgdata64}")
     if parent_id:
-        notenew_id = createnote(title=note.title, imgdata64=imgdata64, parent_id=parent_id)
+        notenew_id = createnote(
+            title=note.title, imgdata64=imgdata64, parent_id=parent_id
+        )
     else:
         notenew_id = createnote(title=note.title, imgdata64=imgdata64)
     if parent_id != note.parent_id:
         jpapi.modify_note(notenew_id, parent_id=parent_id)
         nb_title = jpapi.get_notebook(parent_id).title
         nb_old_title = jpapi.get_notebook(note.parent_id).title
-        log.critical(f"笔记《{note.title}》从笔记本《{nb_old_title}》调整到《{nb_title}》中！")
+        log.critical(
+            f"笔记《{note.title}》从笔记本《{nb_old_title}》调整到《{nb_title}》中！"
+        )
     notenew = getnote(notenew_id)
     matchesnew = re.findall(r"\[.*\]\(:.*\/([A-Za-z0-9]{32})\)", notenew.body)
     res_id_lst = matchesnew
     if not imgtitle:
         imgtitle = f"happyjoplin {arrow.now()}"
     jpapi.modify_resource(id_=res_id_lst[0], title=f"{imgtitle}")
-    log.info(f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件{matchesnew}进入笔记系统。")
+    log.info(
+        f"构建新的笔记《{note.title}》（id：{notenew_id}）成功，并且构建了新的资源文件{matchesnew}进入笔记系统。"
+    )
     print(f"笔记《{notenew.title}》（id：{notenew_id}）的内容为：\t{notenew.body}")
 
     return notenew_id, res_id_lst
@@ -484,7 +523,9 @@ def test_updatenote_imgdata():
     print(newfilename)
     image_data = tools.encode_base64(newfilename)
     # print(image_data)
-    notenew_id, res_id_lst = updatenote_imgdata(noteid=noteid, imgdata64=image_data, imgtitle="QR.png")
+    notenew_id, res_id_lst = updatenote_imgdata(
+        noteid=noteid, imgdata64=image_data, imgtitle="QR.png"
+    )
     print(f"包含新资源文件的新笔记的id为：{notenew_id}")
     resfile = jpapi.get_resource_file(id_=res_id_lst[0])
     print(f"资源文件大小（二进制）为：{len(resfile)}字节。")
@@ -600,12 +641,20 @@ def readinifromcloud():
     通过对比更新时间（timestamp）来判断云端配置笔记是否有更新，有更新则更新至本地ini文件，确保数据新鲜
     """
     # 在happyjpsys配置文件中查找ini_cloud_updatetimestamp，找不到则表示首次运行，置零
-    if not (ini_cloud_updatetimestamp := getcfpoptionvalue("happyjpsys", "joplin", "ini_cloud_updatetimestamp")):
+    if not (
+        ini_cloud_updatetimestamp := getcfpoptionvalue(
+            "happyjpsys", "joplin", "ini_cloud_updatetimestamp"
+        )
+    ):
         ini_cloud_updatetimestamp = 0
 
     # 在happyjp配置文件中查找ini_cloud_id，找不到则在云端搜索，搜不到就新建一个，无论是找到了还是新建一个，在happyjp中相应赋值
-    if (noteid_inifromcloud := getcfpoptionvalue("happyjp", "joplin", "ini_cloud_id")) is None:
-        if (resultitems := searchnotes("title:happyjoplin云端配置")) and (len(resultitems) > 0):
+    if (
+        noteid_inifromcloud := getcfpoptionvalue("happyjp", "joplin", "ini_cloud_id")
+    ) is None:
+        if (resultitems := searchnotes("title:happyjoplin云端配置")) and (
+            len(resultitems) > 0
+        ):
             noteid_inifromcloud = resultitems[0].id
         else:
             noteid_inifromcloud = createnote("happyjoplin云端配置", "")
@@ -621,7 +670,9 @@ def readinifromcloud():
 
     items = note.body.split("\n")
     # print(items)
-    fileobj = open(str(getdirmain() / "data" / "happyjpinifromcloud.ini"), "w", encoding="utf-8")
+    fileobj = open(
+        str(getdirmain() / "data" / "happyjpinifromcloud.ini"), "w", encoding="utf-8"
+    )
     for item in items:
         fileobj.write(item + "\n")
     fileobj.close()
