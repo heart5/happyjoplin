@@ -20,6 +20,7 @@
 import base64
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -47,38 +48,41 @@ with pathmagic.context():
     )
     from func.logme import log
 
+
 # %% [markdown]
 # ## 配置参数
 
 # %%
-# 报告层级
-REPORT_LEVELS = {"monthly": 1, "quarterly": 3, "yearly": 12}
+@dataclass
+class Config:
+    REPORT_LEVELS: dict = None
+    PLOT_WIDTH: int = 10
+    PLOT_HEIGHT: int = 8
+    DPI: int = 300
+    TIME_WINDOW: str = "15min"  # 默认2h
+    STAY_DIST_THRESH: int = 200  # 默认200米
+    STAY_TIME_THRESH: int = 600  # 默认600秒，十分钟
 
-# 可视化参数
-PLOT_WIDTH = 10
-PLOT_HEIGHT = 8
-DPI = 300
-
-TIME_WINDOW = "15min"  # 原2h
-STAY_DIST_THRESH = 200  # 原50m
-STAY_TIME_THRESH = 600  # 原300s(5min)
+    def __post_init__(self):
+        if self.REPORT_LEVELS is None:
+            self.REPORT_LEVELS = {"monthly": 1, "quarterly": 3, "yearly": 12}
 
 # %% [markdown]
 # ## 数据加载函数
 
 # %% [markdown]
-# ### load_location_data(scope)
+# ### load_location_data(scope, config: Config)
 # 加载指定范围的位置数据
 
 
 # %%
-def load_location_data(scope):
+def load_location_data(scope, config: Config):
     """
     加载指定范围的位置数据
     """
     # 获取包含当前月份第一天日期的列表
     end_date = datetime.now()
-    months = REPORT_LEVELS[scope]
+    months = config.REPORT_LEVELS[scope]
     start_date = end_date - timedelta(days=30 * months)
     date_range = pd.date_range(start_date, end_date, freq="MS")
     monthly_dfs = []
@@ -130,6 +134,7 @@ def analyze_location_data(indf, scope):
     分析位置数据，返回统计结果
     修复列名问题并添加数据预处理
     """
+    config = Config()
     df = indf.copy()
     # 1. 数据预处理
     # 1.1 设备融合
@@ -137,7 +142,7 @@ def analyze_location_data(indf, scope):
         f"融合设备数据前大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
     )
     print(df.groupby("device_id").count()["time"])
-    df = fuse_device_data(df)
+    df = fuse_device_data(df, config)
 
     # 1.2. 处理时间跳跃
     df = handle_time_jumps(df)
@@ -223,7 +228,7 @@ def analyze_location_data(indf, scope):
         .nlargest(3)
         .to_dict(),
     }
-    stay_stats["resource_id"] = generate_stay_points_map(df, scope)
+    stay_stats["resource_id"] = generate_stay_points_map(df, scope, config)
 
     print(f"分析完成后数据列为: {df.columns.tolist()}")
     return {
@@ -241,14 +246,14 @@ def analyze_location_data(indf, scope):
     }
 
 # %% [markdown]
-# ### fuse_device_data(df, window_size=TIME_WINDOW)
+# ### fuse_device_data(df, config: Config)
 
 
 # %%
-def fuse_device_data(df, window_size=TIME_WINDOW):
+def fuse_device_data(df, config: Config):
     """多设备数据智能融合"""
-    print(f"多设备数据智能融合时间窗口为：{window_size}")
-    df["time_window"] = df["time"].dt.floor(window_size)
+    print(f"多设备数据智能融合时间窗口为：{config.TIME_WINDOW}")
+    df["time_window"] = df["time"].dt.floor(config.TIME_WINDOW)
     # print(df.tail())
     fused_points = []
 
@@ -653,12 +658,12 @@ def generate_geo_link(lat, lon):
 
 
 # %% [markdown]
-# ### generate_stay_points_map(df, scope)
+# ### generate_stay_points_map(df, scope, config)
 
 # %%
-def generate_stay_points_map(df, scope):
+def generate_stay_points_map(df, scope, config: Config):
     """生成停留点分布图"""
-    plt.figure(figsize=(PLOT_WIDTH, PLOT_HEIGHT))
+    plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
 
     # 绘制所有轨迹点
     plt.scatter(
@@ -693,7 +698,7 @@ def generate_stay_points_map(df, scope):
 
     # 保存为图片资源
     buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=DPI)
+    plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
     # buf.seek(0)
     return add_resource_from_bytes(buf.getvalue(), f"停留点分布_{scope}.png")
@@ -707,12 +712,12 @@ def generate_stay_points_map(df, scope):
 
 
 # %%
-def generate_visualizations(df, analysis_results, scope):
+def generate_visualizations(df, analysis_results, scope, config: Config):
     """生成位置数据的可视化图表并返回资源ID"""
     resource_ids = {}
 
     # 1. 轨迹图
-    plt.figure(figsize=(PLOT_WIDTH, PLOT_HEIGHT))
+    plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
     if "segment" in df.columns:
         for segment in df["segment"].unique():
             seg_df = df[df["segment"] == segment]
@@ -733,7 +738,7 @@ def generate_visualizations(df, analysis_results, scope):
     # plt.legend(loc="best")
 
     buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=DPI)
+    plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
     resource_ids["trajectory"] = add_resource_from_bytes(
         buf.getvalue(), title=f"轨迹图_{scope}.png"
@@ -750,13 +755,13 @@ def generate_visualizations(df, analysis_results, scope):
 
     # 4. 精度分布图（优化展示）
     if "accuracy" in df.columns:
-        plt.figure(figsize=(PLOT_WIDTH, PLOT_HEIGHT - 2))
+        plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT - 2))
         sns.histplot(df["accuracy"].dropna(), bins=30, kde=True, color="#55a868")
         plt.title(f"{scope.capitalize()}定位精度分布")
         plt.xlabel("精度 (米)")
         plt.grid(True, alpha=0.3)
         buf_acc = BytesIO()
-        plt.savefig(buf_acc, format="png", dpi=DPI)
+        plt.savefig(buf_acc, format="png", dpi=config.DPI)
         plt.close()
         resource_ids["accuracy"] = add_resource_from_bytes(
             buf_acc.getvalue(), f"精度分布_{scope}.png"
@@ -894,15 +899,15 @@ def update_joplin_report(report_content, scope):
 
 
 # %%
-def generate_location_reports():
+def generate_location_reports(config: Config):
     """
     生成三个层级的报告：月报、季报、年报
     """
-    for scope in list(REPORT_LEVELS.keys())[:]:
+    for scope in list(config.REPORT_LEVELS.keys())[:1]:
         log.info(f"开始生成 {scope} 位置报告...")
 
         # 1. 加载数据
-        df = load_location_data(scope)
+        df = load_location_data(scope, config)
         if df.empty:
             log.warning(f"跳过 {scope} 报告，无数据")
             continue
@@ -912,7 +917,7 @@ def generate_location_reports():
         analysis_results = analyze_location_data(df, scope)
 
         # 生成可视化并获取资源ID
-        resource_ids = generate_visualizations(df, analysis_results, scope)
+        resource_ids = generate_visualizations(df, analysis_results, scope, config)
 
         # 构建报告
         report_content = build_report_content(analysis_results, resource_ids, scope)
@@ -931,5 +936,5 @@ def generate_location_reports():
 # %%
 if __name__ == "__main__":
     log.info("开始生成位置分析报告...")
-    generate_location_reports()
+    generate_location_reports(Config())
     log.info("位置分析报告生成完成")
