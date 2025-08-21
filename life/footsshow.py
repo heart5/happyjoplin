@@ -903,7 +903,7 @@ def generate_location_reports(config: Config):
     """
     生成三个层级的报告：月报、季报、年报
     """
-    for scope in list(config.REPORT_LEVELS.keys())[:1]:
+    for scope in list(config.REPORT_LEVELS.keys())[:]:
         log.info(f"开始生成 {scope} 位置报告...")
 
         # 1. 加载数据
