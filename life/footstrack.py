@@ -20,19 +20,19 @@
 # %%
 # from pylab import *
 import datetime
-# import subprocess
 
+# import subprocess
 import pathmagic
 
 with pathmagic.context():
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue, is_log_details
-    from func.first import dirmainpath
-    from func.datatools import readfromtxt, write2txt
-    from func.logme import log
-    from func.wrapfuncs import timethis
-    from func.termuxtools import termux_location
     from etc.getid import getdeviceid, gethostuser
-    from func.sysfunc import set_timeout, after_timeout, not_IPython
+    from func.configpr import getcfpoptionvalue, is_log_details, setcfpoptionvalue
+    from func.datatools import readfromtxt, write2txt
+    from func.first import dirmainpath
+    from func.logme import log
+    from func.sysfunc import after_timeout, not_IPython, set_timeout
+    from func.termuxtools import termux_location
+    from func.wrapfuncs import timethis
 
 
 # %% [markdown]
