@@ -27,7 +27,13 @@ import pathmagic
 with pathmagic.context():
     from func.common import utils
     from func.logme import log
-    from func.sysfunc import set_timeout, after_timeout, not_IPython, is_tool_valid, execcmd
+    from func.sysfunc import (
+        after_timeout,
+        execcmd,
+        is_tool_valid,
+        not_IPython,
+        set_timeout,
+    )
 
 
 # %% [markdown]
@@ -49,7 +55,9 @@ def evaloutput(output):
         # print(f"output\'s content:\n{output}")
         return False
     # 转换成字典输出
-    out = output.replace("false", "False").replace("true", "True").replace("null", "None")
+    out = (
+        output.replace("false", "False").replace("true", "True").replace("null", "None")
+    )
     # print(out)
     return eval(out)
 
@@ -233,7 +241,7 @@ def termux_location():
     #     out, rc, err = utils.execute(['termux-location', '-p', 'passive'])
     #     if rc:
     #         raise Exception(err)
-    out = execcmd("termux-location")
+    out = execcmd("termux-location -p network")
     return evaloutput(out)
 
 
@@ -327,7 +335,9 @@ def termux_share():
 
 # %%
 @set_timeout(90, after_timeout)
-def termux_sms_list(timecreated: bool = True, num: int = 10, shownumber: bool = True, where: str = "all"):
+def termux_sms_list(
+    timecreated: bool = True, num: int = 10, shownumber: bool = True, where: str = "all"
+):
     cmdlst = ["termux-sms-list"]
     if timecreated:
         cmdlst.append("-d")
