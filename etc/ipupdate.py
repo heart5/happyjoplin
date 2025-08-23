@@ -186,7 +186,7 @@ def showiprecords():
         ip_local_r = evalnone(getcfpoptionvalue(namestr, section, "ip_local_r"))
         ip_public_r = evalnone(getcfpoptionvalue(namestr, section, "ip_public_r"))
         wifi_r = evalnone(getcfpoptionvalue(namestr, section, "wifi_r"))
-        if type(wifi_r) != str:
+        if type(wifi_r) == int:
             log.info(f"wifi_r的值为{wifi_r}，值的类型为{type(wifi_r)}")
             wifi_r = str(wifi_r)
         wifiid_r = evalnone(getcfpoptionvalue(namestr, section, "wifiid_r"))
