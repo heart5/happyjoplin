@@ -65,23 +65,33 @@ def getipwifi():
     返回ip_local, ip_public, wifi, wifiid。如果为空，则替换为None
     """
     if not is_tool_valid("neofetch"):
-        log.critical("Please install neofetch tool for system. Maybe run: 'pkg install neofetch' in your terminal.")
+        log.critical(
+            "Please install neofetch tool for system. Maybe run: 'pkg install neofetch' in your terminal."
+        )
         exit(1)
 
     sys_platform_str = execcmd("uname -a")
     if re.findall("Linux", sys_platform_str):
         # ip_local = execcmd("neofetch local_ip").split(":")[-1].strip()
-        ifinet_str = execcmd("ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}'")
+        ifinet_str = execcmd(
+            "ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}'"
+        )
         log.info(f"ifconfig grep inet shows:\t{ifinet_str}")
         ip_local = ifinet_str.split()[-1]
         curlifstr = "curl ifconfig.me"
-        if (ip_public := execcmd(curlifstr)) and (len(re.findall("\d{1,3}\.?", ip_public)) != 4):
-            log.critical(f"({curlifstr})未获取合适的ipv4_public地址，而是【{ip_public}】")
+        if (ip_public := execcmd(curlifstr)) and (
+            len(re.findall("\d{1,3}\.?", ip_public)) != 4
+        ):
+            log.critical(
+                f"({curlifstr})未获取合适的ipv4_public地址，而是【{ip_public}】"
+            )
             curlipifystr = "curl 'https://api.ipify.org?format=json'"
             ip_public = eval(execcmd(curlipifystr)).get("ip")
             log.info(f"({curlipifystr})获取的ipv4_public地址【{ip_public}】")
             if len(re.findall("\d{1,3}\.?", ip_public)) != 4:
-                log.critical(f"({curlipifystr})未获取合适的ipv4_public地址，而是【{ip_public}】")
+                log.critical(
+                    f"({curlipifystr})未获取合适的ipv4_public地址，而是【{ip_public}】"
+                )
                 ip_public = execcmd("neofetch public_ip").split(":")[-1].strip()
         if re.findall("Android", sys_platform_str):
             wifi = termux_wifi_connectioninfo().get("ssid")
@@ -99,12 +109,16 @@ def getipwifi():
                 wifi = wifiid = ""
     elif platform.system == "Windows":
         ipconfig_str = execcmd("ipconfig")
-        ip_local = [line.split(":")[-1] for line in re.findall("IPv4.*", ipconfig_str) if re.findall("\.\d+$", line)][
-            -1
-        ].strip()
+        ip_local = [
+            line.split(":")[-1]
+            for line in re.findall("IPv4.*", ipconfig_str)
+            if re.findall("\.\d+$", line)
+        ][-1].strip()
         nslookup_str = execcmd("nslookup myip.opendns.com resolver1.opendns.com")
         ip_public = [
-            line.split(":")[-1] for line in re.findall("Address.*", nslookup_str) if re.findall("\.\d+$", line)
+            line.split(":")[-1]
+            for line in re.findall("Address.*", nslookup_str)
+            if re.findall("\.\d+$", line)
         ][-1].strip()
         wifi_str = execcmd("netsh wlan show interfaces")
         resultlst = [line.split(":", 1) for line in re.findall(".*SSID.*", wifi_str)]
@@ -172,6 +186,9 @@ def showiprecords():
         ip_local_r = evalnone(getcfpoptionvalue(namestr, section, "ip_local_r"))
         ip_public_r = evalnone(getcfpoptionvalue(namestr, section, "ip_public_r"))
         wifi_r = evalnone(getcfpoptionvalue(namestr, section, "wifi_r"))
+        if type(wifi_r) != str:
+            log.info(f"wifi_r的值为{wifi_r}，值的类型为{type(wifi_r)}")
+            wifi_r = str(wifi_r)
         wifiid_r = evalnone(getcfpoptionvalue(namestr, section, "wifiid_r"))
         start_r = getcfpoptionvalue(namestr, section, "start_r")
     else:
@@ -186,7 +203,12 @@ def showiprecords():
         start_r = nowstr
         setcfpoptionvalue(namestr, section, "start_r", start_r)
 
-    if (ip_local != ip_local_r) or (wifi != wifi_r) or (ip_public != ip_public_r) or (wifiid != wifiid_r):
+    if (
+        (ip_local != ip_local_r)
+        or (wifi != wifi_r)
+        or (ip_public != ip_public_r)
+        or (wifiid != wifiid_r)
+    ):
         txtfilename = str(dirmainpath / "data" / "ifttt" / f"ip_{section}.txt")
         print(os.path.abspath(txtfilename))
         itemread = readfromtxt(txtfilename)
@@ -195,7 +217,9 @@ def showiprecords():
         if len(itempolluted) > 0:
             logstr = f"不合法记录列表：\t{itempolluted}"
             log.info(logstr)
-        itemnewr = [f"{ip_local_r}\t{ip_public_r}\t{wifi_r}\t{wifiid_r}\t{start_r}\t{nowstr}"]
+        itemnewr = [
+            f"{ip_local_r}\t{ip_public_r}\t{wifi_r}\t{wifiid_r}\t{start_r}\t{nowstr}"
+        ]
         itemnewr.extend(itemclean)
         log.info(itemnewr[:4])
         write2txt(txtfilename, itemnewr)
