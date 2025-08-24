@@ -241,7 +241,7 @@ def termux_location():
     #     out, rc, err = utils.execute(['termux-location', '-p', 'passive'])
     #     if rc:
     #         raise Exception(err)
-    out = execcmd("termux-location -p network")
+    out = execcmd("termux-location -r last")
     return evaloutput(out)
 
 
