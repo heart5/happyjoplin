@@ -203,17 +203,6 @@ def getcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str):
     return targetvalue
 
 
-# %%
-is_log_details = getcfpoptionvalue("happyjp", "log", "logdetails")
-
-# %% [markdown]
-# cfp, inifilepath = getcfp('everwork')
-# cfpdata, inidatanotefilepath = getcfp('everdatanote')
-# cfplife, inilifepath = getcfp('everlife')
-# cfpzysm, inizysmpath = getcfp('everzysm')
-# cfpworkplan, iniworkplanpath = getcfp('everworkplan')
-
-
 # %% [markdown]
 # ## 主函数main()
 
