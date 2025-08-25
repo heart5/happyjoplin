@@ -70,6 +70,7 @@ def foot2record():
     if locinfo == False:
         itemnewr.extend[f"{str(locinfo)}"]
     else:
+        log.info(f"定位方式: {locinfo.get('provider', 'unknown')}")
         itemnewr.extend(locinfo.values())
     itemnewr = [str(x) for x in itemnewr]
     itemline = ["\t".join(itemnewr)]
