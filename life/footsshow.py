@@ -43,10 +43,12 @@ with pathmagic.context():
         createnote,
         getinivaluefromcloud,
         jpapi,
+        searchnotebook,
         searchnotes,
         updatenote_body,
     )
     from func.logme import log
+    from func.wrapfuncs import timethis
 
 
 # %% [markdown]
@@ -59,13 +61,18 @@ class Config:
     PLOT_WIDTH: int = 10
     PLOT_HEIGHT: int = 8
     DPI: int = 300
-    TIME_WINDOW: str = "15min"  # 默认2h
+    TIME_WINDOW: str = "30min"  # 默认2h，可以为30min等数值
     STAY_DIST_THRESH: int = 200  # 默认200米
     STAY_TIME_THRESH: int = 600  # 默认600秒，十分钟
 
     def __post_init__(self):
         if self.REPORT_LEVELS is None:
-            self.REPORT_LEVELS = {"monthly": 1, "quarterly": 3, "yearly": 12}
+            self.REPORT_LEVELS = {
+                "monthly": 1,
+                "quarterly": 3,
+                "yearly": 12,
+                "two_yearly": 24,
+            }
 
 # %% [markdown]
 # ## 数据加载函数
@@ -143,6 +150,10 @@ def analyze_location_data(indf, scope):
     )
     print(df.groupby("device_id").count()["time"])
     df = fuse_device_data(df, config)
+    print(
+        f"融合设备数据后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
+    )
+    print(df.groupby("device_id").count()["time"])
 
     # 1.2. 处理时间跳跃
     df = handle_time_jumps(df)
@@ -250,6 +261,7 @@ def analyze_location_data(indf, scope):
 
 
 # %%
+@timethis
 def fuse_device_data(df, config: Config):
     """多设备数据智能融合"""
     print(f"多设备数据智能融合时间窗口为：{config.TIME_WINDOW}")
@@ -663,6 +675,8 @@ def generate_geo_link(lat, lon):
 # %%
 def generate_stay_points_map(df, scope, config: Config):
     """生成停留点分布图"""
+    # import matplotlib.pyplot as plt
+
     plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
 
     # 绘制所有轨迹点
@@ -682,14 +696,36 @@ def generate_stay_points_map(df, scope, config: Config):
         cluster_df = stay_df[stay_df["cluster"] == cluster_id]
         center_lon = cluster_df["longitude"].mean()
         center_lat = cluster_df["latitude"].mean()
+        # 用emoji符号，绘图时字体貌似不支持
+        # plt.text(
+        #     center_lon,
+        #     center_lat,
+        #     f"📍{cluster_id}",
+        #     fontsize=12,
+        #     ha="center",
+        #     va="bottom",
+        # )
+        # 先绘制标记，再添加文本
+        plt.plot(
+            center_lon, center_lat, "o", markersize=8, color="red"
+        )  # 绘制一个圆点标记
         plt.text(
             center_lon,
-            center_lat,
-            f"📍{cluster_id}",
-            fontsize=12,
+            center_lat + 0.001,  # 稍微偏移以避免重叠
+            str(cluster_id),
+            fontsize=10,
             ha="center",
             va="bottom",
         )
+        # 绘制Latex倒三角形，空心
+        # plt.text(
+        #     center_lon,
+        #     center_lat,
+        #     r"$\triangledown$" + f"{cluster_id}",
+        #     fontsize=12,
+        #     ha="center",
+        #     va="bottom",
+        # )
 
     plt.title(f"{scope.capitalize()}停留点分布")
     plt.xlabel("经度")
@@ -698,6 +734,13 @@ def generate_stay_points_map(df, scope, config: Config):
 
     # 保存为图片资源
     buf = BytesIO()
+
+    # plt.rcParams["font.sans-serif"] = [
+    #     "SimHei",
+    #     "DejaVu Sans",
+    #     "Noto Sans CJK JP",
+    # ]  # 搞了半天应该那个糖葫芦emoji字体导致的问题，特意多放几个字体尝试尝试
+    # plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
     # buf.seek(0)
@@ -899,6 +942,7 @@ def update_joplin_report(report_content, scope):
 
 
 # %%
+@timethis
 def generate_location_reports(config: Config):
     """
     生成三个层级的报告：月报、季报、年报
