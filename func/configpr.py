@@ -124,7 +124,9 @@ def getcfp(cfpfilename: str):
     try:
         cfpson.read(inipathson, encoding="utf-8")
     except (DuplicateSectionError, DuplicateOptionError) as dse:
-        log.critical(f"ini文件《{inipathson}》中存在重复的section或option名称，备份文件并试图修复文件……{dse}")
+        log.critical(
+            f"ini文件《{inipathson}》中存在重复的section或option名称，备份文件并试图修复文件……{dse}"
+        )
         fixinifile(inipathson)
     except Exception as eee:
         log.critical(eee)
