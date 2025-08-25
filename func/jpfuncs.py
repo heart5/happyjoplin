@@ -298,7 +298,7 @@ def createresource(filename, title=None):
 
 # %%
 def createresourcefromobj(file_obj, title=None):
-    print(file_obj)
+    # print(file_obj)
     # 改用用户空间临时目录（绕过沙箱限制）
     tmp_dir = os.path.expanduser("~/.joplin_temp")
     os.makedirs(tmp_dir, exist_ok=True)
