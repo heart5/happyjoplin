@@ -26,7 +26,7 @@ import pathmagic
 
 with pathmagic.context():
     from etc.getid import getdeviceid, gethostuser
-    from func.configpr import getcfpoptionvalue, is_log_details, setcfpoptionvalue
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.datatools import readfromtxt, write2txt
     from func.first import dirmainpath
     from func.logme import log
