@@ -36,11 +36,12 @@ try:
 
     with pathmagic.context():
         from etc.getid import getdeviceid, gethostuser
-        from func.configpr import getcfpoptionvalue, is_log_details, setcfpoptionvalue
+        from func.configpr import getcfpoptionvalue, setcfpoptionvalue
         from func.datatools import readfromtxt, write2txt
         from func.first import dirmainpath
         from func.jpfuncs import (
             createnote,
+            getinivaluefromcloud,
             noteid_used,
             searchnotebook,
             searchnotes,
@@ -422,6 +423,7 @@ def showiprecords() -> bool:
 
 # %%
 if __name__ == "__main__":
+    is_log_details = getinivaluefromcloud("happyjoplin", "logdetails")
     if not_IPython() and is_log_details:
         log.info(f"开始运行文件 {__file__}")
 
