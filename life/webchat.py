@@ -23,47 +23,63 @@
 # ## 库引入
 
 # %%
-import time
 import datetime
+import logging
+import math
+import os
 
 # import arrow
 import re
-import os
 import sys
-import math
-import logging
-import itchat
+import time
 from collections import deque
+
+import itchat
 import itchat.storage
-from itchat.content import CARD, FRIENDS, NOTE, TEXT, MAP, PICTURE, RECORDING, ATTACHMENT, VIDEO, SHARING
 
 # from itchat.content import *
 from bs4 import BeautifulSoup
+from itchat.content import (
+    ATTACHMENT,
+    CARD,
+    FRIENDS,
+    MAP,
+    NOTE,
+    PICTURE,
+    RECORDING,
+    SHARING,
+    TEXT,
+    VIDEO,
+)
 
 # %%
 import pathmagic
 
 with pathmagic.context():
-    from func.first import touchfilepath2depth, getdirmain, dirmainpath
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.logme import log
-    from func.nettools import trycounttimes2
-    from func.sysfunc import uuid3hexstr, not_IPython, execcmd, listallloghander
-    from func.datatools import readfromtxt, write2txt
-    from func.datetimetools import gethumantimedelay
-    from func.termuxtools import termux_sms_send
-
     # from work.weixinzhang import showjinzhang, showshoukuan
     # import evernote.edam.type.ttypes as ttypes
     # from work.zymessage import searchcustomer, searchqiankuan, searchpinxiang
     from etc.getid import getdeviceid, getdevicename
-    from life.wcdelay import inserttimeitem2db, showdelayimg, delayimg2note
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.datatools import readfromtxt, write2txt
+    from func.datetimetools import gethumantimedelay
+    from func.first import dirmainpath, getdirmain, touchfilepath2depth
+    from func.jpfuncs import (
+        createnote,
+        getinivaluefromcloud,
+        updatenote_body,
+        updatenote_title,
+    )
+    from func.logme import log
+    from func.nettools import trycounttimes2
 
     # from life.wccontact import updatectdf, getctdf, showwcsimply
     # from life.phonecontact import showphoneinfoimg
     # from etc.battery_manage import showbattinfoimg
     from func.pdtools import db2img
-    from func.jpfuncs import createnote, getinivaluefromcloud, updatenote_title, updatenote_body
+    from func.sysfunc import execcmd, listallloghander, not_IPython, uuid3hexstr
+    from func.termuxtools import termux_sms_send
+    from life.wcdelay import delayimg2note, inserttimeitem2db, showdelayimg
 
 
 # %% [markdown]
@@ -96,12 +112,20 @@ def showmsgexpanddictetc(msg):
         # if item.lower().find('name') < 0:
         # continue
         print(f"{item}\t{type(msg[item])}", end="\t")
-        if type(msg[item]) in [dict, itchat.storage.templates.Chatroom, itchat.storage.templates.User]:
+        if type(msg[item]) in [
+            dict,
+            itchat.storage.templates.Chatroom,
+            itchat.storage.templates.User,
+        ]:
             print(len(msg[item]))
             for child in msg[item]:
                 childmsg = msg[item][child]
                 print(f"\t{child}\t{type(childmsg)}", end="\t")
-                if type(childmsg) in [dict, itchat.storage.templates.User, itchat.storage.templates.ContactList]:
+                if type(childmsg) in [
+                    dict,
+                    itchat.storage.templates.User,
+                    itchat.storage.templates.ContactList,
+                ]:
                     lenchildmsg = len(childmsg)
                     print(lenchildmsg)
                     lmt = getinivaluefromcloud("webchat", "itemshowinmsg")
@@ -207,10 +231,14 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     # 把聊天记录以dict的格式缓存入队列，fmId提取出来做key
     global recentmsg_deque
     onedict = {}
-    onedict[inputformatmsg["fmId"]] = {item: inputformatmsg[item] for item in inputformatmsg if item != "fmId"}
+    onedict[inputformatmsg["fmId"]] = {
+        item: inputformatmsg[item] for item in inputformatmsg if item != "fmId"
+    }
     recentmsg_deque.append(onedict)
     if (recentnum := len(recentmsg_deque)) != 30:
-        print(f"缓存聊天记录数量为：\t{recentnum}，fmId号列表\t{list(deque2dict(recentmsg_deque))}")
+        print(
+            f"缓存聊天记录数量为：\t{recentnum}，fmId号列表\t{list(deque2dict(recentmsg_deque))}"
+        )
     # 判断是否延时并增加提示到条目内容中
     if humantimestr := gethumantimedelay(inputformatmsg["fmTime"]):
         inputformatmsg["fmText"] = f"[{humantimestr}]" + inputformatmsg["fmText"]
@@ -224,7 +252,9 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     print(f"{msgcontent}")
 
     men_wc = getcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_nickname")
-    chattxtfilename = str(getdirmain() / "data" / "webchat" / f"chatitems({men_wc}).txt")
+    chattxtfilename = str(
+        getdirmain() / "data" / "webchat" / f"chatitems({men_wc}).txt"
+    )
     chatitems = readfromtxt(chattxtfilename)
     # 倒叙插入，最新的显示在最上面
     chatitems.insert(0, msgcontent)
@@ -242,9 +272,13 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     notetitle = f"微信记录【{men_wc}】 -（{getdevicename()}-{execcmd('whoami')}））"
     wcnote_title = men_wc + f"_{getdeviceid()}"
     if (chatnoteid := getinivaluefromcloud("webchat", wcnote_title)) is None:
-        if (chatnoteid := getcfpoptionvalue("happyjpwebchat", "webchat", wcnote_title)) is None:
+        if (
+            chatnoteid := getcfpoptionvalue("happyjpwebchat", "webchat", wcnote_title)
+        ) is None:
             chatnoteid = createnote(title=notetitle)
-            setcfpoptionvalue("happyjpwebchat", "webchat", wcnote_title, str(chatnoteid))
+            setcfpoptionvalue(
+                "happyjpwebchat", "webchat", wcnote_title, str(chatnoteid)
+            )
     updatefre = getinivaluefromcloud("webchat", "updatefre")
     showitemscount = getinivaluefromcloud("webchat", "showitems")
     # print(f"{type(showitemscount)}\t{showitemscount}")
@@ -285,7 +319,9 @@ def getsendernick(msg):
 
 
 # %%
-@itchat.msg_register([CARD, FRIENDS], isFriendChat=True, isGroupChat=True, isMpChat=True)
+@itchat.msg_register(
+    [CARD, FRIENDS], isFriendChat=True, isGroupChat=True, isMpChat=True
+)
 def tuling_reply(msg):
     # showmsgexpanddictetc(msg)
     writefmmsg2txtandmaybeevernotetoo(formatmsg(msg))
@@ -321,7 +357,12 @@ def note_reply(msg):
         #     msg_body += "\n就是这个链接➣ " + old_msg.get('fmText')
         itchat.send_msg(msg_body, toUserName="filehelper")
 
-        tpdict = {"Picture": "img", "Video": "vid", "Recording": "fil", "Attachment": "fil"}
+        tpdict = {
+            "Picture": "img",
+            "Video": "vid",
+            "Recording": "fil",
+            "Attachment": "fil",
+        }
         if (fileprefix := tpdict.get(old_msg["fmType"])) is not None:
             fileabspath = os.path.abspath(getdirmain() / f"{old_msg['fmText']}")
             file = "@%s@%s" % (fileprefix, fileabspath)
@@ -366,7 +407,12 @@ def map_reply(msg):
 
 
 # %%
-@itchat.msg_register([PICTURE, RECORDING, ATTACHMENT, VIDEO], isFriendChat=True, isGroupChat=True, isMpChat=True)
+@itchat.msg_register(
+    [PICTURE, RECORDING, ATTACHMENT, VIDEO],
+    isFriendChat=True,
+    isGroupChat=True,
+    isMpChat=True,
+)
 def fileetc_reply(msg):
     innermsg = formatmsg(msg)
     createtimestr = time.strftime("%Y%m%d", time.localtime(msg["CreateTime"]))
@@ -463,7 +509,9 @@ def sharing_reply(msg):
         if cleansender == "微信支付" and inmtxt.endswith("转账收款汇总通知"):
             itms = soup.opitems.find_all("opitem")
             userfre = [
-                f"{x.weapp_username.string}\t{x.hint_word.string}" for x in itms if x.word.string.find("收款记录") >= 0
+                f"{x.weapp_username.string}\t{x.hint_word.string}"
+                for x in itms
+                if x.word.string.find("收款记录") >= 0
             ][0]
             innermsg["fmText"] += f"[{soup.des.string}\n[{userfre}]]"
         # elif innermsg["fmText"].endswith("微信支付凭证"):
@@ -471,8 +519,12 @@ def sharing_reply(msg):
         elif cleansender == "微信运动" and (
             inmtxt.endswith("刚刚赞了你") or inmtxt.endswith("just liked your ranking")
         ):
-            innermsg["fmText"] += f"[{soup.rankid.string}\t{soup.displayusername.string}]"
-        elif cleansender == "微信运动" and (inmtxt.endswith("排行榜冠军") or inmtxt.startswith("Champion on")):
+            innermsg["fmText"] += (
+                f"[{soup.rankid.string}\t{soup.displayusername.string}]"
+            )
+        elif cleansender == "微信运动" and (
+            inmtxt.endswith("排行榜冠军") or inmtxt.startswith("Champion on")
+        ):
             ydlst = []
             mni = soup.messagenodeinfo
             minestr = f"heart57479\t{mni.rankinfo.rankid.string}\t{mni.rankinfo.rank.rankdisplay.string}"
@@ -652,7 +704,9 @@ def text_reply(msg):
                 # 延时图发送记录备档
                 return
             elif diyihang[1] == "电量图":
-                delaydbname = touchfilepath2depth(getdirmain() / "data" / "db" / "batteryinfo.db")
+                delaydbname = touchfilepath2depth(
+                    getdirmain() / "data" / "db" / "batteryinfo.db"
+                )
                 imgbattinfo = showbattinfoimg(delaydbname)
                 imgbattinforel = os.path.relpath(imgbattinfo)
                 itchat.send_image(imgbattinforel, toUserName=msg["FromUserName"])
@@ -693,7 +747,9 @@ def text_reply(msg):
                 # rstfile必须是绝对路径，并且不能包含中文字符
                 itchat.send_file(rstfile, toUserName=msg["FromUserName"])
                 # 发给自己一份存档
-                makemsg2write(innermsg, rstfile.replace(os.path.abspath(dirmainpath), ""))
+                makemsg2write(
+                    innermsg, rstfile.replace(os.path.abspath(dirmainpath), "")
+                )
                 itchat.send_file(rstfile)
                 infostr = f"成功发送查询结果文件：{os.path.split(rstfile)[1]}给{innermsg['fmSender']}"
                 itchat.send_msg(infostr)
@@ -796,7 +852,9 @@ def keepliverun():
     if status4login == "200":
         log.info("已处于成功登录状态")
         return
-    itchat.auto_login(hotReload=True, loginCallback=after_login, exitCallback=after_logout)
+    itchat.auto_login(
+        hotReload=True, loginCallback=after_login, exitCallback=after_logout
+    )
     # itchat.auto_login(hotReload=True)
 
     # 设定获取信息时重试的次数，默认是5，设定为50，不知道是否能够起作用
@@ -809,24 +867,38 @@ def keepliverun():
         log.info(logstr)
         host_nickname = init_info["User"]["NickName"]
         host_username = init_info["User"]["UserName"]
-        log.critical(f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}")
+        log.critical(
+            f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}"
+        )
         if (host_username is not None) and (len(host_username) > 0):
-            setcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_nickname", host_nickname)
-            setcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_username", host_username)
+            setcfpoptionvalue(
+                "happyjpwebchat", get_host_uuid(), "host_nickname", host_nickname
+            )
+            setcfpoptionvalue(
+                "happyjpwebchat", get_host_uuid(), "host_username", host_username
+            )
         else:
             log.critical("username is None")
     elif itchat.originInstance.loginInfo:
         log.info("从itchat.originInstance.loginInfo中获取登录用户信息")
         host_nickname = dict(itchat.originInstance.loginInfo["User"])["NickName"]
         host_username = dict(itchat.originInstance.loginInfo["User"])["UserName"]
-        log.critical(f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}")
+        log.critical(
+            f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}"
+        )
         if (host_username is not None) and (len(host_username) > 0):
-            setcfpoptionvalue("happyjpwebchat", get_host_uuid, "host_nickname", host_username)
-            setcfpoptionvalue("happyjpwebchat", get_host_uuid, "host_username", host_username)
+            setcfpoptionvalue(
+                "happyjpwebchat", get_host_uuid, "host_nickname", host_username
+            )
+            setcfpoptionvalue(
+                "happyjpwebchat", get_host_uuid, "host_username", host_username
+            )
         else:
             log.critical("username is None")
     else:
-        log.critical(f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}")
+        log.critical(
+            f"函数《{sys._getframe().f_code.co_name}》中用户变量为：\t{(host_nickname, host_username)}"
+        )
 
     # itchat.get_mps(update=True)
     # listchatrooms()
@@ -872,7 +944,9 @@ def tst4itchat():
     print(wcfriends[:19])
 
     mps_lst = itchat.get_mps(update=True)
-    mp_meituan = itchat.search_mps(userName="@111b2a64da3fcd28f194226313bf9a342191a947d0bcac29e2e58c3c1e2a6d79")
+    mp_meituan = itchat.search_mps(
+        userName="@111b2a64da3fcd28f194226313bf9a342191a947d0bcac29e2e58c3c1e2a6d79"
+    )
     print(mp_meituan)
     print(mps_lst[-20:])
 

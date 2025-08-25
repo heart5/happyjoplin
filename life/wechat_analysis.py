@@ -20,39 +20,46 @@
 # wechat_analysis.py
 import os
 import re
-import arrow
 import sqlite3 as lite
-import pandas as pd
-from pathlib import Path
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
+
+import arrow
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # %%
 import pathmagic
 
 with pathmagic.context():
-    from func.first import getdirmain, touchfilepath2depth
-    from func.logme import log
     from etc.getid import getdevicename
-    from func.wrapfuncs import timethis
-    from func.sysfunc import not_IPython, execcmd
-    from func.configpr import setcfpoptionvalue, getcfpoptionvalue
-    from func.litetools import ifnotcreate, showtablesindb, compact_sqlite3_db, convert_intstr_datetime, clean4timecl
+    from etc.voice2txt import batch_v4txt, query_v4txt
+    from filedatafunc import getfilemtime as getfltime
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.first import getdirmain, touchfilepath2depth
     from func.jpfuncs import (
+        createnote,
         getapi,
         getinivaluefromcloud,
-        searchnotes,
-        searchnotebook,
-        createnote,
+        getnote,
         getreslst,
+        searchnotebook,
+        searchnotes,
         updatenote_body,
         updatenote_title,
-        getnote,
     )
-    from filedatafunc import getfilemtime as getfltime
+    from func.litetools import (
+        clean4timecl,
+        compact_sqlite3_db,
+        convert_intstr_datetime,
+        ifnotcreate,
+        showtablesindb,
+    )
+    from func.logme import log
+    from func.sysfunc import execcmd, not_IPython
+    from func.wrapfuncs import timethis
     from life.wc2note import items2df
-    from etc.voice2txt import query_v4txt, batch_v4txt
 
 
 # %% [markdown]
@@ -131,7 +138,9 @@ class WeChatAnalysis:
         )
         # 处理文件的相对路径，处理成绝对路径方便判断文件是否在本环境存在
         df.loc[:, "content"] = df["content"].apply(
-            lambda x: str(getdirmain().resolve() / x) if isinstance(x, str) and x.startswith("img/webchat") else x
+            lambda x: str(getdirmain().resolve() / x)
+            if isinstance(x, str) and x.startswith("img/webchat")
+            else x
         )
         outdf = df[df["content"].apply(lambda x: os.path.exists(x))]
         mp3s = outdf["content"].unique().tolist()
@@ -147,7 +156,9 @@ class WeChatAnalysis:
         offset = 0
         chunk_list = []
         while True:
-            query = f"SELECT * FROM wc_{self.name} LIMIT {self.chunk_size} OFFSET {offset}"
+            query = (
+                f"SELECT * FROM wc_{self.name} LIMIT {self.chunk_size} OFFSET {offset}"
+            )
             chunk_df = pd.read_sql(query, self.conn)
             if chunk_df.empty:
                 break
@@ -158,7 +169,11 @@ class WeChatAnalysis:
                 # 转义关键词中的特殊字符
                 escaped_keyword = re.escape(keyword)
                 # 按 sender 列进行筛选
-                chunk_df = chunk_df[chunk_df["sender"].str.contains(escaped_keyword, regex=True, na=False)]
+                chunk_df = chunk_df[
+                    chunk_df["sender"].str.contains(
+                        escaped_keyword, regex=True, na=False
+                    )
+                ]
 
             processed_chunk = self.process_chunk(chunk_df)
             # 将处理后的 DataFrame 存储如列表中
@@ -167,9 +182,13 @@ class WeChatAnalysis:
             offset += self.chunk_size
         # 将所有分段的 DataFrame 合并成一个完整的 DataFrame
         full_df = pd.concat(chunk_list)
-        cdf = full_df.drop_duplicates(subset=["time", "send", "sender", "type", "content"])
+        cdf = full_df.drop_duplicates(
+            subset=["time", "send", "sender", "type", "content"]
+        )
         cdf = cdf.sort_values(["time"], ascending=True)
-        log.info(f"合并所有分段DF后的数据有{full_df.shape[0]}条，整理去重后有{cdf.shape[0]}条")
+        log.info(
+            f"合并所有分段DF后的数据有{full_df.shape[0]}条，整理去重后有{cdf.shape[0]}条"
+        )
         self.data = cdf
 
     def export_data(self):
@@ -184,9 +203,13 @@ class WeChatAnalysis:
         num4all = self.data.shape[0]
         print(f"加载的数据条数: {num4all}")
         sport_df = self.data[self.data.sender.str.contains("微信运动")]
-        sport_df.loc[:, "time"] = sport_df["time"].apply(lambda x: datetime.fromtimestamp(x))
+        sport_df.loc[:, "time"] = sport_df["time"].apply(
+            lambda x: datetime.fromtimestamp(x)
+        )
         spdf = sport_df.loc[:, ["time", "content"]]
-        spdf.loc[:, "content"] = spdf["content"].apply(lambda x: re.sub(r"(\[\w+前\]|\[刚才\])?", "", x))
+        spdf.loc[:, "content"] = spdf["content"].apply(
+            lambda x: re.sub(r"(\[\w+前\]|\[刚才\])?", "", x)
+        )
         num4all = spdf.shape[0]
         print(spdf[spdf.duplicated()])
         spdf.drop_duplicates(inplace=True)
@@ -264,7 +287,9 @@ def analysis_group(sdf, fromdatestr):
     c1sdf = sdf.drop_duplicates()
     df = c1sdf[~c1sdf.content.isnull()]
     c2df = df[
-        (df.type == "Note") & (df.sender.str.contains("群")) & (~df.content.str.contains("[撤回|recalled]", regex=True))
+        (df.type == "Note")
+        & (df.sender.str.contains("群"))
+        & (~df.content.str.contains("[撤回|recalled]", regex=True))
     ]
     # Basic statistics
     print(c2df.describe())
@@ -297,10 +322,16 @@ def analysis_group(sdf, fromdatestr):
         from wordcloud import WordCloud
 
         # Combine all text content
-        text = " ".join(tdf[tdf.time >= arrow.get(fromdatestr).to("Asia/Shanghai").datetime]["content"])
+        text = " ".join(
+            tdf[tdf.time >= arrow.get(fromdatestr).to("Asia/Shanghai").datetime][
+                "content"
+            ]
+        )
 
         # Generate word cloud
-        wordcloud = WordCloud(width=800, height=400, background_color="white", font_path=font_path).generate(text)
+        wordcloud = WordCloud(
+            width=800, height=400, background_color="white", font_path=font_path
+        ).generate(text)
 
         # Display the word cloud
         plt.figure(figsize=(10, 5))
@@ -341,7 +372,9 @@ def analysis_group(sdf, fromdatestr):
 if __name__ == "__main__":
     if not_IPython():
         log.info(f"运行文件\t{__file__}")
-    loginstr = "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
+    loginstr = (
+        "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
+    )
     dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
     wcdatapath = getdirmain() / "data" / "webchat"
     dbname = os.path.abspath(wcdatapath / dbfilename)
