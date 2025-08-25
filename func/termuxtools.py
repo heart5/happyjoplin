@@ -228,21 +228,40 @@ def termux_infrared_transmit():
 
 
 # %%
-@set_timeout(90, after_timeout)
+@set_timeout(30, after_timeout)
 def termux_location():
-    # out, rc, err = utils.execute('termux-location')
-    # if rc:
-    #     raise Exception(err)
-    # if len(out) == 0:
-    #     out, rc, err = utils.execute(['termux-location', '-p', 'network'])
-    #     if rc:
-    #         raise Exception(err)
-    # if len(out) == 0:
-    #     out, rc, err = utils.execute(['termux-location', '-p', 'passive'])
-    #     if rc:
-    #         raise Exception(err)
-    out = execcmd("termux-location -r last")
-    return evaloutput(out)
+    """
+    分步获取位置信息：优先实时定位，失败时使用缓存定位
+    返回格式：{"latitude": xx, "longitude": xx, ...}
+    """
+    # 第一步：尝试实时定位（单次请求）
+    try:
+        out_once = execcmd("termux-location -r once")
+        if out_once:
+            result_once = evaloutput(out_once)
+            # 验证定位数据有效性（必须包含经纬度）
+            if "latitude" in result_once and "longitude" in result_once:
+                return result_once
+    except Exception as e:
+        log.warning(f"实时定位失败: {str(e)}")
+
+    # 第二步：尝试缓存定位（最后一次成功记录）
+    try:
+        out_last = execcmd("termux-location -r last")
+        if out_last:
+            result_last = evaloutput(out_last)
+            # 替换provider为缓存标记
+            result_last["provider"] = "cached"
+            return result_last
+    except Exception as e:
+        log.error(f"缓存定位失败: {str(e)}")
+
+    # 终极回退：网络定位（需Termux API权限）
+    try:
+        out_network = execcmd("termux-location -p network")
+        return evaloutput(out_network) if out_network else False
+    except:
+        return False
 
 
 # %% [markdown]
