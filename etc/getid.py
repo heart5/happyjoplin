@@ -33,7 +33,7 @@ import uuid
 import pathmagic
 
 with pathmagic.context():
-    from func.configpr import getcfpoptionvalue, is_log_details, setcfpoptionvalue
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
 
@@ -64,7 +64,9 @@ def set_devicename2ini(id, sysstr):
         if device_name_fromcloud := getinivaluefromcloud("device", id):
             setcfpoptionvalue("happyjphard", id, "device_name", device_name_fromcloud)
         else:
-            log.critical(f"当前主机（id：{id}）尚未在网络端配置笔记中设定名称或者是还没完成本地化设定！！！")
+            log.critical(
+                f"当前主机（id：{id}）尚未在网络端配置笔记中设定名称或者是还没完成本地化设定！！！"
+            )
             if sysstr == "Linux":
                 log.critical(f"主机信息：{execcmd('uname -a')}")
 
@@ -180,7 +182,7 @@ def gethostuser():
 
 # %%
 if __name__ == "__main__":
-    if not_IPython() and is_log_details:
+    if not_IPython():
         log.info(f"运行文件\t{__file__}")
     deviceid = getdeviceid()
     print(deviceid)
@@ -188,5 +190,5 @@ if __name__ == "__main__":
     #     devicename = get_devicenamefromini(id)
     devicename = getdevicename()
     print(f"{devicename}")
-    if not_IPython() and is_log_details:
+    if not_IPython():
         log.info(f"文件\t{__file__}\t运行完毕。")
