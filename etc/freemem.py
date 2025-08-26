@@ -90,13 +90,19 @@ def getmemdf():
         for x in memlst
         if len(x[0]) > 0
     ]
-    memdf = pd.DataFrame(memlstdone, columns=["time", "freepercent", "swaptotal", "swapfree"])
+    memdf = pd.DataFrame(
+        memlstdone, columns=["time", "freepercent", "swaptotal", "swapfree"]
+    )
     memdf["time"] = pd.to_datetime(memdf["time"])
     print(memdf.dtypes)
     num_all = memdf.shape[0]
     memdf.drop_duplicates(["time"], inplace=True)
-    log.info(f"{gethostuser()}内存占用记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条")
-    log.info(f"{gethostuser()}内存占用记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}")
+    log.info(
+        f"{gethostuser()}内存占用记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条"
+    )
+    log.info(
+        f"{gethostuser()}内存占用记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}"
+    )
     # 重置索引，使其为连续的整数，方便后面精准切片
     memdfdone = memdf.reset_index()
 
@@ -123,13 +129,17 @@ def gap2img(gap=30):
     gaplst = list()
     for ix in tm_gap.index:
         gaplst.append(f"{ix}\t{memdfdone['time'].loc[ix]}\t{tm_gap[ix]}")
-    log.info(f"{gethostuser()}的内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}")
+    log.info(
+        f"{gethostuser()}的内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}"
+    )
 
     # 处理无断点的情况
     if len(gaplst) == 0:
         last_gap = memdfdone.set_index(["time"])["freepercent"]
     else:
-        last_gap = memdfdone.loc[list(tm_gap.index)[-1] :].set_index(["time"])["freepercent"]
+        last_gap = memdfdone.loc[list(tm_gap.index)[-1] :].set_index(["time"])[
+            "freepercent"
+        ]
 
     plt.figure(figsize=(16, 40), dpi=300)
 
@@ -149,7 +159,9 @@ def gap2img(gap=30):
         gaplst.append(memdfdone.index.max() + 1)
         print(gaplst)
         for i in range(len(gaplst) - 1):
-            tmpdf = memdfdone.loc[gaplst[i] : gaplst[i + 1] - 1].set_index(["time"])["freepercent"]
+            tmpdf = memdfdone.loc[gaplst[i] : gaplst[i + 1] - 1].set_index(["time"])[
+                "freepercent"
+            ]
             log.info(
                 f"切片数据集最新日期为{tmpdf.index.max()}，最早日期为{tmpdf.index.min()}，数据项目数量为{tmpdf.shape[0]}"
             )
@@ -191,17 +203,23 @@ def freemem2note():
         setcfpoptionvalue(namestr, section, "gapinmin", "60")
     image_base64 = gap2img(gap=gapinmin)
     nbid = searchnotebook("ewmobile")
-    if not (freestat_cloud_id := getcfpoptionvalue(namestr, section, "freestat_cloud_id")):
-        freenotefindlist = searchnotes(f"title:{notestat_title}")
+    if not (
+        freestat_cloud_id := getcfpoptionvalue(namestr, section, "freestat_cloud_id")
+    ):
+        freenotefindlist = searchnotes(f"{notestat_title}")
         if len(freenotefindlist) == 0:
-            freestat_cloud_id = createnote(title=notestat_title, parent_id=nbid, imgdata64=image_base64)
+            freestat_cloud_id = createnote(
+                title=notestat_title, parent_id=nbid, imgdata64=image_base64
+            )
             log.info(f"新的内存动态图笔记“{freestat_cloud_id}”新建成功！")
         else:
             freestat_cloud_id = freenotefindlist[-1].id
         setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
 
     if not noteid_used(freestat_cloud_id):
-        freestat_cloud_id = createnote(title=notestat_title, parent_id=nbid, imgdata64=image_base64)
+        freestat_cloud_id = createnote(
+            title=notestat_title, parent_id=nbid, imgdata64=image_base64
+        )
     else:
         freestat_cloud_id, res_lst = updatenote_imgdata(
             noteid=freestat_cloud_id, parent_id=nbid, imgdata64=image_base64

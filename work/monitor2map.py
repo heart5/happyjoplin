@@ -16,46 +16,47 @@
 # ## 引入库
 
 # %%
-import re
-import json
 import base64
 import io
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
+import json
+import re
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+import arrow
 import matplotlib.colors as mcolors
 import matplotlib.dates as mdates
-import arrow
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 # from memory_profiler import profile
 from tzlocal import get_localzone
-from pathlib import Path
-from datetime import datetime, timedelta, date
 
 # %%
 import pathmagic
 
 with pathmagic.context():
-    from func.first import getdirmain, dirmainpath, touchfilepath2depth
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.logme import log
     from func.datetimetools import normalize_timestamp
-    from work.monitor4 import NoteMonitor
+    from func.first import dirmainpath, getdirmain, touchfilepath2depth
+    from func.jpfuncs import (
+        content_hash,
+        createnote,
+        createresourcefromobj,
+        getapi,
+        getinivaluefromcloud,
+        getnote,
+        searchnotes,
+        updatenote_body,
+    )
+    from func.logme import log
 
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     # from etc.getid import getdevicename, gethostuser
-    from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
-    from func.jpfuncs import (
-        getinivaluefromcloud,
-        getapi,
-        getnote,
-        searchnotes,
-        createnote,
-        updatenote_body,
-        createresourcefromobj,
-        content_hash,
-    )
+    from func.sysfunc import after_timeout, execcmd, not_IPython, set_timeout
+    from work.monitor4 import NoteMonitor
 
 
 # %% [markdown]
@@ -72,7 +73,9 @@ def stat2df(person):
     """
     note_monitor = NoteMonitor()
     # 筛选出指定person的数据字典
-    targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person == v["person"]}
+    targetdict = {
+        k: v for k, v in note_monitor.monitored_notes.items() if person == v["person"]
+    }
     # print(targetdict)
     # 过滤日期超过当天一天之内的日期数据对
     one_days_later = arrow.now(get_localzone()).shift(days=1).date()
@@ -82,7 +85,9 @@ def stat2df(person):
         daily_counts = {}  # 采用字典数据类型，确保日期唯一
         # 过滤掉可能的超纲日期
         for date_key, updates in [
-            (date, updates) for date, updates in note_info["content_by_date"].items() if date < one_days_later
+            (date, updates)
+            for date, updates in note_info["content_by_date"].items()
+            if date < one_days_later
         ]:
             # 获取最后一次更新的字数
             last_update_time, word_count = updates[-1]
@@ -91,7 +96,10 @@ def stat2df(person):
                 addedLater = True  # 标记该日期
             else:
                 addedLater = False
-            daily_counts[date_key] = (word_count, addedLater)  # 使用日期作为键，字数和后补布林值作为值
+            daily_counts[date_key] = (
+                word_count,
+                addedLater,
+            )  # 使用日期作为键，字数和后补布林值作为值
 
         outlst = sorted(daily_counts.items(), key=lambda kv: kv[0])
         title_count_dict[note_info["title"]] = dict(outlst)
@@ -125,7 +133,10 @@ def plot_word_counts(daily_counts, title):
         monthrange = 3
 
     # 1. 数据预处理
-    dfall = pd.DataFrame([[k, v[0], v[1]] for k, v in daily_counts.items()], columns=["date", "count", "addedlater"])
+    dfall = pd.DataFrame(
+        [[k, v[0], v[1]] for k, v in daily_counts.items()],
+        columns=["date", "count", "addedlater"],
+    )
     # print(df)
     dfall["date"] = pd.to_datetime(dfall["date"])
 
@@ -138,7 +149,10 @@ def plot_word_counts(daily_counts, title):
         dt
         for dt in daily_counts.keys()
         if (dt >= three_months_ago.date())
-        or (daily_counts[dt][1] and dt >= (three_months_ago - pd.DateOffset(months=1)).date())
+        or (
+            daily_counts[dt][1]
+            and dt >= (three_months_ago - pd.DateOffset(months=1)).date()
+        )
     ]
     if not valid_dates:
         fig, ax = plt.subplots(figsize=(10, 6))  # 统一尺寸
@@ -186,7 +200,11 @@ def plot_word_counts(daily_counts, title):
     dfcount = df[["year", "week", "week_number", "day_of_week", "date", "count"]]
     # print(dfcount)
     pivot_table = df.pivot_table(
-        index="week_number", columns="day_of_week", values="count", aggfunc="sum", fill_value=-1
+        index="week_number",
+        columns="day_of_week",
+        values="count",
+        aggfunc="sum",
+        fill_value=-1,
     )
 
     # 8. 自定义颜色映射
@@ -221,7 +239,9 @@ def plot_word_counts(daily_counts, title):
     fig, ax = plt.subplots(figsize=(15, 6 + figsize_factor))
 
     # 11. 绘制热图
-    heatmap = ax.pcolor(pivot_table.values, cmap=cmap, norm=norm, edgecolors="white", linewidths=2)
+    heatmap = ax.pcolor(
+        pivot_table.values, cmap=cmap, norm=norm, edgecolors="white", linewidths=2
+    )
 
     # 12. 设置刻度和标签
     week_labels = []
@@ -324,12 +344,16 @@ def plot_word_counts(daily_counts, title):
 # %%
 def get_heatmap_note_id(person):
     # 查找指定人员热图笔记的id并返回
-    if (person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "person_ids", person)) is None:
-        results = searchnotes(f"title:四件套更新热图（{person}）")
+    if (
+        person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "person_ids", person)
+    ) is None:
+        results = searchnotes(f"四件套更新热图（{person}）")
         if results:
             person_heatmap_id = results[0].id
         else:
-            person_heatmap_id = createnote(title=f"四件套更新热图（{person}）", body="热图笔记已创建。")
+            person_heatmap_id = createnote(
+                title=f"四件套更新热图（{person}）", body="热图笔记已创建。"
+            )
         setcfpoptionvalue("happyjpmonitor", "person_ids", person, person_heatmap_id)
 
     return person_heatmap_id
@@ -343,7 +367,7 @@ def get_heatmap_note_id(person):
 def get_refresh_id_list():
     # 获取最新额《四件套笔记列表》中有效的笔记id列表
     title = "四件套笔记列表"
-    results = searchnotes(f"title:{title}")
+    results = searchnotes(f"{title}")
     if results:
         note_list_id = results[0].id
     else:
@@ -351,7 +375,9 @@ def get_refresh_id_list():
         return list()
     note = getnote(note_list_id)
     note_id_list_refresh = [
-        re.search(r"\(:/(.+)\)", link).group(1) for link in note.body.split() if re.search(r"\(:/(.+)\)", link)
+        re.search(r"\(:/(.+)\)", link).group(1)
+        for link in note.body.split()
+        if re.search(r"\(:/(.+)\)", link)
     ]
 
     return note_id_list_refresh
@@ -372,7 +398,12 @@ def heatmap2note():
         person_lst = plststr.split("，")
     else:
         person_lst = list(
-            set([re.findall(ptn, info["title"])[0] for note_id, info in note_monitor.monitored_notes.items()])
+            set(
+                [
+                    re.findall(ptn, info["title"])[0]
+                    for note_id, info in note_monitor.monitored_notes.items()
+                ]
+            )
         )
     print(person_lst)
     # 获取最新的被监控笔记id列表
@@ -380,7 +411,11 @@ def heatmap2note():
     jpapi = getapi()
     for person in person_lst:
         # 筛选出指定person相关的{note_id:note_info}字典，同时确保只处理当前列表中的笔记
-        targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person in v["title"]}
+        targetdict = {
+            k: v
+            for k, v in note_monitor.monitored_notes.items()
+            if person in v["title"]
+        }
         should_plot = False
         refreshdict = {k: v for k, v in targetdict.items() if k in note_id_list_refresh}
         print(f">》{person}")
@@ -389,13 +424,21 @@ def heatmap2note():
             if len(note_info["content_by_date"]) == 0:
                 log.info(f"笔记《{note_info['title']}》的有效日期内容为空，跳过")
                 continue
-            note_ini_time = normalize_timestamp(getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id))
+            note_ini_time = normalize_timestamp(
+                getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id)
+            )
             note_json_time = normalize_timestamp(note_info["note_update_time"])
-            note_cloud_time = normalize_timestamp(getattr(getnote(note_id), "updated_time"))
+            note_cloud_time = normalize_timestamp(
+                getattr(getnote(note_id), "updated_time")
+            )
             current_hash = content_hash(note_id)
             stored_hash = getcfpoptionvalue("happyjpmonitor", "content_hash", note_id)
             # 时间对不上内容也对不上然后才打开开关画图
-            if not note_ini_time or (note_ini_time != note_json_time) or (note_ini_time != note_cloud_time):
+            if (
+                not note_ini_time
+                or (note_ini_time != note_json_time)
+                or (note_ini_time != note_cloud_time)
+            ):
                 if current_hash != stored_hash:
                     should_plot = True
                     log.debug(
@@ -419,8 +462,14 @@ def heatmap2note():
             updatenote_body(heatmap_id, newbodystr)
             # 操作成功后再删除原始笔记中的资源文件
             lines = getattr(oldnote, "body").split()
-            res_ids = [re.search(r"\(:/(.+)\)", line).group(1) for line in lines if re.search(r"\(:/(.+)\)", line)]
-            print(f"笔记《{getattr(oldnote, 'title')}》中包含以下资源文件：{res_ids}，不出意外将被删除清理！")
+            res_ids = [
+                re.search(r"\(:/(.+)\)", line).group(1)
+                for line in lines
+                if re.search(r"\(:/(.+)\)", line)
+            ]
+            print(
+                f"笔记《{getattr(oldnote, 'title')}》中包含以下资源文件：{res_ids}，不出意外将被删除清理！"
+            )
             for resid in res_ids:
                 try:
                     jpapi.delete_resource(resid)
@@ -431,12 +480,18 @@ def heatmap2note():
             current_hash = content_hash(note_id)
             stored_hash = getcfpoptionvalue("happyjpmonitor", "content_hash", note_id)
             if current_hash != stored_hash:
-                setcfpoptionvalue("happyjpmonitor", "content_hash", note_id, current_hash)
+                setcfpoptionvalue(
+                    "happyjpmonitor", "content_hash", note_id, current_hash
+                )
             note_time_with_zone = (
-                arrow.get(note_info["note_update_time"]).to(get_localzone()).strftime("%Y-%m-%d %H:%M:%S")
+                arrow.get(note_info["note_update_time"])
+                .to(get_localzone())
+                .strftime("%Y-%m-%d %H:%M:%S")
             )
             if note_ini_time != note_json_time:
-                setcfpoptionvalue("happyjpmonitor", "note_update_time", note_id, note_time_with_zone)
+                setcfpoptionvalue(
+                    "happyjpmonitor", "note_update_time", note_id, note_time_with_zone
+                )
 
 
 # %% [markdown]

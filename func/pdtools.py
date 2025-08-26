@@ -23,30 +23,36 @@ DataFrame功能应用函数库
 # ## 库导入
 
 # %%
+import datetime
 import os
+import sqlite3 as lite
+import time
+from configparser import ConfigParser
+
 import evernote.edam.type.ttypes as ttypes
 import numpy as np
 import pandas as pd
-import sqlite3 as lite
-import time
-import datetime
-from configparser import ConfigParser
+from numpy import dtype, float64, int64
 
 # from matplotlib.ticker import FuncFormatter
 from pandas.tseries.offsets import *
-from numpy import float64, int64, dtype
-from pylab import plt, FuncFormatter
-from PIL import Image, ImageFont, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
+from pylab import FuncFormatter, plt
 # import matplotlib.pyplot as plt
 
 # %%
 import pathmagic
 
 with pathmagic.context():
-    from func.jpfuncs import getinivaluefromcloud
-
     # from func.evernttest import evernoteapijiayi, makenote, getinivaluefromnote
-    from func.first import dbpathworkplan, dbpathquandan, dirmainpath, ywananchor, touchfilepath2depth
+    from func.first import (
+        dbpathquandan,
+        dbpathworkplan,
+        dirmainpath,
+        touchfilepath2depth,
+        ywananchor,
+    )
+    from func.jpfuncs import getinivaluefromcloud
     from func.logme import log
     from func.nettools import trycounttimes2
     from func.sysfunc import not_IPython
@@ -69,10 +75,24 @@ with pathmagic.context():
 
 
 # %%
-def db2img(inputdf: pd.DataFrame, title=None, showincell=True, fontsize=12, dpi=300, debug=False):
+def db2img(
+    inputdf: pd.DataFrame,
+    title=None,
+    showincell=True,
+    fontsize=12,
+    dpi=300,
+    debug=False,
+):
     dflines = inputdf.to_string(justify="left", show_dimensions=True).split("\n")
 
-    return lststr2img(dflines, title=title, dpi=dpi, showincell=showincell, fontsize=fontsize, debug=debug)
+    return lststr2img(
+        dflines,
+        title=title,
+        dpi=dpi,
+        showincell=showincell,
+        fontsize=fontsize,
+        debug=debug,
+    )
 
 
 # %% [markdown]
@@ -105,7 +125,9 @@ def lststr2img(
     print(str(fontpath))
     colwidthmax = max([font.getsize(x)[0] for x in dflines])
     rowwidth = max([font.getsize(x)[1] for x in dflines])
-    print(f"行高度、所有行总高度和所有列宽度（像素）：\t{(rowwidth, rowwidth * len(dflines), colwidthmax)}")
+    print(
+        f"行高度、所有行总高度和所有列宽度（像素）：\t{(rowwidth, rowwidth * len(dflines), colwidthmax)}"
+    )
 
     print(f"画布宽高（像素）：\t{(colwidthmax, rowwidth * len(dflines))}")
     im = Image.new("RGB", (colwidthmax, rowwidth * len(dflines)), (255, 255, 255))
@@ -123,7 +145,9 @@ def lststr2img(
     # im.show()
     figdefaultdpi = plt.rcParams.get("figure.dpi")
     figwinchs = round(colwidthmax * (dpi / figdefaultdpi) / figdefaultdpi / 10, 3)
-    fighinchs = round(rowwidth * len(dflines) * (dpi / figdefaultdpi) / figdefaultdpi / 10, 3)
+    fighinchs = round(
+        rowwidth * len(dflines) * (dpi / figdefaultdpi) / figdefaultdpi / 10, 3
+    )
     print(f"输出图片的画布宽高（英寸）：\t{(figwinchs, fighinchs)}")
     plt.figure(figsize=(figwinchs, fighinchs), dpi=dpi)
     plt.axis("off")
@@ -170,7 +194,9 @@ def desclitedb(cnx):
     for ii in result.fetchall():
         print(str(ii) + "\n")
 
-    result = cur.execute("select name from sqlite_master where type = 'table' order by name")
+    result = cur.execute(
+        "select name from sqlite_master where type = 'table' order by name"
+    )
     table_name_list = [tuple1[0] for tuple1 in result.fetchall()]
     print(table_name_list)
     # for table1 in table_name_list:
@@ -204,7 +230,9 @@ def dftotal2top(df: pd.DataFrame):
     numtypelist = [float, float64, int, int64]
     # dfslicesingle.loc['汇总'] = dfslicesingle.apply(lambda x: x.sum() if dtype(x) in numtypelist else None)
     # print(dfslicesingle)
-    dfslicesingle.loc["汇总"] = dfslicesingle.apply(lambda x: x.sum() if x.name.find("日期") < 0 else None)
+    dfslicesingle.loc["汇总"] = dfslicesingle.apply(
+        lambda x: x.sum() if x.name.find("日期") < 0 else None
+    )
     # print(list(dfslicesingle.columns))
     # print(list(dfslicesingle.loc['汇总']))
     firstcltotal = False
@@ -245,7 +273,8 @@ def dftotal2top(df: pd.DataFrame):
         # 此try包围在逻辑问题解决后有冗余之嫌，但工作需要，正常运转为第一要务，姑且存之。
         try:
             dfslicesingle.loc["汇总", "有效月均"] = int(
-                sum(list(dfslicesingle.loc["汇总"])[start : (end + 1)]) / (end - start + 1)
+                sum(list(dfslicesingle.loc["汇总"])[start : (end + 1)])
+                / (end - start + 1)
             )
         except Exception as e:
             print(dfslicesingle)
@@ -272,10 +301,16 @@ def isworkday(dlist: list, person: str = "全体", fromthen=False):
     if fromthen and (len(dlist) == 1):
         dlist = pd.date_range(dlist[0], datetime.datetime.today(), freq="D")
     cnxpi = lite.connect(dbpathworkplan)
-    dfholiday = pd.read_sql("select distinct * from holiday", cnxpi, index_col="date", parse_dates=["date"])
+    dfholiday = pd.read_sql(
+        "select distinct * from holiday", cnxpi, index_col="date", parse_dates=["date"]
+    )
     # del dfholiday['index']
     # print(dfholiday)
-    dfleave = pd.read_sql("select distinct date,mingmu,xingzhi,tianshu from leave", cnxpi, parse_dates=["date"])
+    dfleave = pd.read_sql(
+        "select distinct date,mingmu,xingzhi,tianshu from leave",
+        cnxpi,
+        parse_dates=["date"],
+    )
     # print(dfleave)
     cnxpi.close()
     resultlist = list()
@@ -338,7 +373,9 @@ def isworkday(dlist: list, person: str = "全体", fromthen=False):
         item.append("上班")
         item.append(1)
         resultlist.append(item)
-    dfout = pd.DataFrame(resultlist, columns=["date", "name", "work", "xingzhi", "tianshu"])
+    dfout = pd.DataFrame(
+        resultlist, columns=["date", "name", "work", "xingzhi", "tianshu"]
+    )
     dfout.sort_values(["date"], ascending=[False], inplace=True)
     # print(dfout)
     return dfout
@@ -399,10 +436,16 @@ def gengxinfou(filename, conn, tablename="fileread"):
         log.info("文件《%s》无记录，录入信息。" % fn)
         rt = True
     else:
-        print("文件《" + fn + "》已有 " + str(fncount) + " 条记录，看是否最新？\t", end="\t")
+        print(
+            "文件《" + fn + "》已有 " + str(fncount) + " 条记录，看是否最新？\t",
+            end="\t",
+        )
         sql = "select max(修改时间) as xg from %s where 文件名 = '%s'" % (tablename, fn)
         result = c.execute(sql)
-        if time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(fstat.st_mtime)) > (result.fetchone())[0]:
+        if (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(fstat.st_mtime))
+            > (result.fetchone())[0]
+        ):
             c.execute(
                 "insert into %s values(?,?,?,?,?,?)" % tablename,
                 (
@@ -463,7 +506,9 @@ def dataokay(cnx):
 
     pathquandantongjixls = str(dirmainpath / "data" / "2018年全单统计管理.xlsm")
     if gengxinfou(pathquandantongjixls, cnx, "fileread"):  # or True:
-        df = pd.read_excel(pathquandantongjixls, shee_tname="全单统计管理", na_values=[0])
+        df = pd.read_excel(
+            pathquandantongjixls, shee_tname="全单统计管理", na_values=[0]
+        )
         # descdb(df)
         df = df.loc[
             :,
@@ -496,16 +541,34 @@ def dataokay(cnx):
         ]
         df_dh = df.pop("单号")
         df.insert(1, "订单编号", df_dh)
-        df["订单编号"] = df["订单编号"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["配货人"] = df["配货人"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["业务主管"] = df["业务主管"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["终端编码"] = df["终端编码"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["收款方式"] = df["收款方式"].apply(lambda x: str.strip(x) if type(x) == str else x)
+        df["订单编号"] = df["订单编号"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
+        df["配货人"] = df["配货人"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
+        df["业务主管"] = df["业务主管"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
+        df["终端编码"] = df["终端编码"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
+        df["收款方式"] = df["收款方式"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
         df["车辆"] = df["车辆"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["送货人"] = df["送货人"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["收款人"] = df["收款人"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["拒收品项"] = df["拒收品项"].apply(lambda x: str.strip(x) if type(x) == str else x)
-        df["少配明细"] = df["少配明细"].apply(lambda x: str.strip(x) if type(x) == str else x)
+        df["送货人"] = df["送货人"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
+        df["收款人"] = df["收款人"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
+        df["拒收品项"] = df["拒收品项"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
+        df["少配明细"] = df["少配明细"].apply(
+            lambda x: str.strip(x) if type(x) == str else x
+        )
         # df['无货金额'] = df['无货金额'].astype(int)
         # df = df.apply(lambda x:str.strip(x) if type(x) == str else x)
         df.to_sql(name="quandan", con=cnx, if_exists="replace", chunksize=100000)
@@ -586,10 +649,15 @@ def biaozhukedu(dfc, weibiao):
                 kedubiaozhi,
                 xy=(idx, kedu.iloc[i]),
                 xycoords="data",
-                xytext=(len(kedubiaozhi) * fontsize * zhengfu, int(len(kedubiaozhi) * fontsize * (-1) * zhengfu / 2)),
+                xytext=(
+                    len(kedubiaozhi) * fontsize * zhengfu,
+                    int(len(kedubiaozhi) * fontsize * (-1) * zhengfu / 2),
+                ),
                 textcoords="offset points",
                 fontsize=fontsize,
-                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2", color="Purple"),
+                arrowprops=dict(
+                    arrowstyle="->", connectionstyle="arc3,rad=.2", color="Purple"
+                ),
             )
 
 
@@ -625,7 +693,15 @@ def readinisection2df(cfpp: ConfigParser, section: object, biaoti: object):
 
 # %%
 def chutuyuezhexian(
-    ds, riqienddate, xiangmu, cum=False, quyu="", leixing="", pinpai="", nianshu=3, imgpath=dirmainpath / "img"
+    ds,
+    riqienddate,
+    xiangmu,
+    cum=False,
+    quyu="",
+    leixing="",
+    pinpai="",
+    nianshu=3,
+    imgpath=dirmainpath / "img",
 ):
     """
     月度（全年，自然年度）累积对比图，自最早日期起，默认3年
@@ -647,7 +723,9 @@ def chutuyuezhexian(
         nianshushiji = nianshu
     nianlist = []
     for i in range(nianshushiji):
-        nianlist.append(riqienddate + YearBegin(-(i + 1)))  # 2017-01-01,2016-01-01,2015-01-01
+        nianlist.append(
+            riqienddate + YearBegin(-(i + 1))
+        )  # 2017-01-01,2016-01-01,2015-01-01
 
     # if xiangmu == '退货客户数' :
     #     print(df)
@@ -662,7 +740,10 @@ def chutuyuezhexian(
         else:
             periods = 365
         dstmp = dfn.reindex(
-            pd.date_range((riqienddate + YearBegin(-1 - (1 * i))), periods=periods, freq="D"), fill_value=0
+            pd.date_range(
+                (riqienddate + YearBegin(-1 - (1 * i))), periods=periods, freq="D"
+            ),
+            fill_value=0,
         )
         # if xiangmu == '退货客户数':
         #     print(dstmp.tail(30))
@@ -736,7 +817,16 @@ def chutuyuezhexian(
 
 
 # %%
-def chuturizhexian(df, riqienddate, xiangmu, cum=False, quyu="", leixing="", pinpai="", imgpath=dirmainpath / "img"):
+def chuturizhexian(
+    df,
+    riqienddate,
+    xiangmu,
+    cum=False,
+    quyu="",
+    leixing="",
+    pinpai="",
+    imgpath=dirmainpath / "img",
+):
     """
     日数据（月份）累积对比图，当月、环比、同期比
     riqienddate形如2017-12-08，代表数据结束点的日期
@@ -757,29 +847,46 @@ def chuturizhexian(df, riqienddate, xiangmu, cum=False, quyu="", leixing="", pin
 
     # print(df)
     ds = pd.DataFrame(df)
-    datesb = pd.date_range(riqibeforemonthfirst, periods=tianshu, freq="D")  # 上月日期全集，截止到当月最后一天为止
-    if ds.index.min() <= datesb.max():  # 存在有效数据则生成按全月每天索引的DataFrame，否则置空
+    datesb = pd.date_range(
+        riqibeforemonthfirst, periods=tianshu, freq="D"
+    )  # 上月日期全集，截止到当月最后一天为止
+    if (
+        ds.index.min() <= datesb.max()
+    ):  # 存在有效数据则生成按全月每天索引的DataFrame，否则置空
         ds1 = ds.reindex(datesb, fill_value=0)  # 重新索引，补全所有日期，空值用0填充
         ds1.index = range(1, len(datesb) + 1)  # 索引天日化
         ds1.columns = (
-            f"{riqibeforemonthfirst.year:04d}{riqibeforemonthfirst.month:02d}" + ds1.columns
+            f"{riqibeforemonthfirst.year:04d}{riqibeforemonthfirst.month:02d}"
+            + ds1.columns
         )  # 列命名，形如201709
     else:
         ds1 = pd.DataFrame()
 
-    datesl = pd.date_range(riqilastmonthfirst, periods=tianshu, freq="D")  # 处理去年当月数据
-    if ds.index.min() <= datesl.max():  # 存在有效数据则生成按全月每天索引的DataFrame，否则置空
+    datesl = pd.date_range(
+        riqilastmonthfirst, periods=tianshu, freq="D"
+    )  # 处理去年当月数据
+    if (
+        ds.index.min() <= datesl.max()
+    ):  # 存在有效数据则生成按全月每天索引的DataFrame，否则置空
         ds3 = ds.reindex(datesl, fill_value=0)
         ds3.index = range(1, len(datesl) + 1)
-        ds3.columns = ("%04d%02d" % (riqilastmonthfirst.year, riqilastmonthfirst.month)) + ds3.columns
+        ds3.columns = (
+            "%04d%02d" % (riqilastmonthfirst.year, riqilastmonthfirst.month)
+        ) + ds3.columns
     else:
         ds3 = pd.DataFrame()
 
-    datesc = pd.date_range(riqicurmonthfirst, periods=riqienddate.day, freq="D")  # 处理当月数据，至截止日期
-    if ds.index.min() <= datesc.max():  # 存在有效数据则生成按按照每天索引的DataFrame，否则置空并退出，避免空转
+    datesc = pd.date_range(
+        riqicurmonthfirst, periods=riqienddate.day, freq="D"
+    )  # 处理当月数据，至截止日期
+    if (
+        ds.index.min() <= datesc.max()
+    ):  # 存在有效数据则生成按按照每天索引的DataFrame，否则置空并退出，避免空转
         ds2 = ds.reindex(datesc, fill_value=0)
         ds2.index = range(1, len(datesc) + 1)
-        ds2.columns = ("%04d%02d" % (riqicurmonthfirst.year, riqicurmonthfirst.month)) + ds2.columns
+        ds2.columns = (
+            "%04d%02d" % (riqicurmonthfirst.year, riqicurmonthfirst.month)
+        ) + ds2.columns
     else:
         return
 
@@ -820,14 +927,18 @@ def dfin2imglist(dfin, cum, leixingset="", fenbuset="", pinpai="", imgmonthcount
     for cln in dfin.columns:
         imglist = []
         dfmoban = dfin[cln]
-        dfmoban = dfmoban.dropna()  # 除去空值，避免折线中断，fillna(0)在reindex的时候再上
+        dfmoban = (
+            dfmoban.dropna()
+        )  # 除去空值，避免折线中断，fillna(0)在reindex的时候再上
         if (
             dfmoban.shape[0] == 0
         ):  # 跳过空列，新品推广还没有退货发生时这种样子的数据可能出现，再就是数据起始日前放弃的产品，只有退货了
             continue
         # print(dfmoban)
         dangqianyueri = dfmoban.index.max()
-        if (datetime.datetime.now() - dangqianyueri).days < 60:  # 近两个月还有数据的才做日累计分析
+        if (
+            datetime.datetime.now() - dangqianyueri
+        ).days < 60:  # 近两个月还有数据的才做日累计分析
             for k in range(dangqianyueri.month):
                 if k == 0:
                     riqiendwith = dangqianyueri
@@ -874,7 +985,9 @@ def dfin2imglist(dfin, cum, leixingset="", fenbuset="", pinpai="", imgmonthcount
 
 
 # %%
-def updatesection(cfpp, fromsection, tosection, inifile, token, note_store, zhuti="销售业绩图表"):
+def updatesection(
+    cfpp, fromsection, tosection, inifile, token, note_store, zhuti="销售业绩图表"
+):
     """
     根据fromsection中的值构建新的tosection，fenbu、guid
     :param cfpp:
@@ -900,13 +1013,17 @@ def updatesection(cfpp, fromsection, tosection, inifile, token, note_store, zhut
                     # print('笔记《' + str(aa) + zhuti + '》已存在，guid为：' + guid)
                     return
             except Exception as ee:
-                log.info("笔记《" + str(aa) + zhuti + "》不存在，将被创建……%s" % str(ee))
+                log.info(
+                    "笔记《" + str(aa) + zhuti + "》不存在，将被创建……%s" % str(ee)
+                )
             note = ttypes.Note()
             note.title = nbfbdf.loc[aa]["title"]
             # print(aa + '\t\t' + note.title, end='\t\t')
             parentnotebook = note_store.getNotebook(nbfbdf.loc[aa]["guid"])
             evernoteapijiayi()
-            note = makenote(token, note_store, note.title, parentnotebook=parentnotebook)
+            note = makenote(
+                token, note_store, note.title, parentnotebook=parentnotebook
+            )
             # print(note.guid + '\t\t' + note.title)
             cfpp.set(tosection, aa, note.guid)
 

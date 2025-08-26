@@ -16,28 +16,29 @@
 # ## 引入库
 
 # %%
-import re
 import json
-import pandas as pd
-import arrow
-from tzlocal import get_localzone
+import re
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from datetime import datetime, timedelta, date
+
+import arrow
+import pandas as pd
+from tzlocal import get_localzone
 
 # %%
 import pathmagic
 
 with pathmagic.context():
-    from func.first import getdirmain
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.first import getdirmain
+    from func.jpfuncs import createnote, getapi, getnote, searchnotes, updatenote_body
     from func.logme import log
 
     # from func.wrapfuncs import timethis
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     # from etc.getid import getdevicename, gethostuser
-    from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
-    from func.jpfuncs import getapi, getnote, searchnotes, createnote, updatenote_body
+    from func.sysfunc import after_timeout, execcmd, not_IPython, set_timeout
 
 
 # %% [markdown]
@@ -55,9 +56,15 @@ class NoteMonitor:
         self.load_state()  # 从文件加载状态
         # 转换 last_fetch_time等字符串time为datetime类型
         for note_id, note_info in self.monitored_notes.items():
-            for option_time in ["last_fetch_time", "first_fetch_time", "note_update_time"]:
+            for option_time in [
+                "last_fetch_time",
+                "first_fetch_time",
+                "note_update_time",
+            ]:
                 if isinstance(note_info[option_time], str):
-                    note_info[option_time] = datetime.strptime(note_info[option_time], "%Y-%m-%d %H:%M:%S.%f")
+                    note_info[option_time] = datetime.strptime(
+                        note_info[option_time], "%Y-%m-%d %H:%M:%S.%f"
+                    )
             # 初始化 content_by_date 为字典
             if "content_by_date" not in note_info:
                 note_info["content_by_date"] = {}
@@ -97,7 +104,11 @@ class NoteMonitor:
             if len(note_info["content_by_date"]) == 0:
                 note_info["first_fetch_time"] = current_time
             else:
-                timelst = [x for sonlst in note_info["content_by_date"].values() for (x, y) in sonlst]
+                timelst = [
+                    x
+                    for sonlst in note_info["content_by_date"].values()
+                    for (x, y) in sonlst
+                ]
                 note_info["first_fetch_time"] = min(timelst)
         note_info["last_fetch_time"] = current_time
         note = getnote(note_id)
@@ -106,7 +117,9 @@ class NoteMonitor:
             ptn = re.compile(r"[(（](\w+)[)）]")
             if grp := re.findall(ptn, note_info["title"]):
                 note_info["person"] = grp[0]
-        note_info["note_update_time"] = arrow.get(getattr(note, "updated_time")).to(get_localzone())
+        note_info["note_update_time"] = arrow.get(getattr(note, "updated_time")).to(
+            get_localzone()
+        )
         note_info["word_count_history"].append(word_count)
         log.info(f"笔记《{note_info['title']}》进入监测并更新相应数据……")
         # 更新 content_by_date
@@ -126,7 +139,9 @@ class NoteMonitor:
         entries_dict_raw = dict(
             zip(
                 [
-                    datetime.strptime(re.sub(r"\s+", "", datestr), "%Y年%m月%d日").date()
+                    datetime.strptime(
+                        re.sub(r"\s+", "", datestr), "%Y年%m月%d日"
+                    ).date()
                     for datestr in date_lst_raw[1::2]
                 ],
                 date_lst_raw[2::2],
@@ -134,7 +149,11 @@ class NoteMonitor:
         )
         # 过滤日期超过当天一天之内的日期数据对
         one_days_later = current_time.date() + timedelta(days=1)
-        entries_dict = {date: count for date, count in entries_dict_raw.items() if date <= one_days_later}
+        entries_dict = {
+            date: count
+            for date, count in entries_dict_raw.items()
+            if date <= one_days_later
+        }
         if len(entries_dict_raw) != len(entries_dict):
             log.critical(
                 f"笔记《{getattr(note, 'title')}》存在超纲日期：{[date for date in entries_dict_raw.keys() if date > one_days_later]}，过滤之"
@@ -148,7 +167,9 @@ class NoteMonitor:
             try:
                 word_count = len(entries_dict[entry].strip())
                 note_info = self.monitored_notes[note_id]
-                self.update_word_count_by_date(note_info, entry, current_time, word_count)
+                self.update_word_count_by_date(
+                    note_info, entry, current_time, word_count
+                )
             except ValueError:
                 print(entry)
                 continue
@@ -156,9 +177,13 @@ class NoteMonitor:
         # 处理非笔记有效日期的初始化填空问题
         # 最大日期取自笔记最大日期和昨天，避免迟交无效留空
         entry_date_min = min(entries_dict)
-        entry_date_max = max(max(entries_dict), current_time.date() + timedelta(days=-1))
+        entry_date_max = max(
+            max(entries_dict), current_time.date() + timedelta(days=-1)
+        )
         daterange = pd.date_range(entry_date_min, entry_date_max)
-        datezero = [date.date() for date in daterange if date.date() not in entries_dict]
+        datezero = [
+            date.date() for date in daterange if date.date() not in entries_dict
+        ]
         log.info(
             f"笔记《{getattr(note, 'title')}》的有效数据最早日期为{min(entries_dict)}，最新日期为{max(entries_dict)}，其中内容为空的条目数量为：{len(datezero)}"
         )
@@ -169,12 +194,22 @@ class NoteMonitor:
         ptn = re.compile(r"[(（](\w+)[)）]")
         if grp := re.findall(ptn, note_info["title"]):
             note_info["person"] = grp[0]
-        timelst = [x for sonlst in note_info["content_by_date"].values() for (x, y) in sonlst]
-        str2time = lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S.%f") if isinstance(x, str) else x
+        timelst = [
+            x for sonlst in note_info["content_by_date"].values() for (x, y) in sonlst
+        ]
+        str2time = (
+            lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S.%f")
+            if isinstance(x, str)
+            else x
+        )
         timelst = [str2time(x) for x in timelst]
         oldesttime = min(timelst)
-        datezero_not_init = [date for date in datezero if date not in note_info["content_by_date"]]
-        log.info(f"笔记《{getattr(note, 'title')}》内容为空且还未初始化的日期列表为：{datezero_not_init}")
+        datezero_not_init = [
+            date for date in datezero if date not in note_info["content_by_date"]
+        ]
+        log.info(
+            f"笔记《{getattr(note, 'title')}》内容为空且还未初始化的日期列表为：{datezero_not_init}"
+        )
         for date in datezero_not_init:
             if note_info["fetch_count"] != 1:
                 note_info["content_by_date"][date] = [(oldesttime, 0)]
@@ -203,8 +238,10 @@ class NoteMonitor:
                 else:
                     # 不同天的情况
                     if (
-                        current_time.time() >= datetime.strptime("00:00", "%H:%M").time()
-                        and current_time.time() <= datetime.strptime("08:00", "%H:%M").time()
+                        current_time.time()
+                        >= datetime.strptime("00:00", "%H:%M").time()
+                        and current_time.time()
+                        <= datetime.strptime("08:00", "%H:%M").time()
                     ):
                         # 在零时到次日八点之间，更新最新的时间和字数
                         update_list[-1] = (current_time, word_count)
@@ -222,9 +259,11 @@ class NoteMonitor:
             # 创建一个新的字典来存储每个笔记的信息
             serializable_info = {}
             for key, value in note_info.items():
-                if key in ["last_fetch_time", "first_fetch_time", "note_update_time"] and isinstance(
-                    value, (datetime, date)
-                ):
+                if key in [
+                    "last_fetch_time",
+                    "first_fetch_time",
+                    "note_update_time",
+                ] and isinstance(value, (datetime, date)):
                     # 将日期转换为字符串
                     serializable_info[key] = value.isoformat()
                 elif isinstance(value, dict):
@@ -252,9 +291,11 @@ class NoteMonitor:
                 # 将日期字符串转换为 datetime.date 对象
                 for note_id, note_info in loaded_data.items():
                     for key, value in note_info.items():
-                        if key in ["last_fetch_time", "first_fetch_time", "note_update_time"] and isinstance(
-                            value, str
-                        ):
+                        if key in [
+                            "last_fetch_time",
+                            "first_fetch_time",
+                            "note_update_time",
+                        ] and isinstance(value, str):
                             note_info[key] = datetime.fromisoformat(value)
                         elif key == "content_by_date" and isinstance(value, dict):
                             content_by_date = {}
@@ -280,19 +321,28 @@ def monitor_notes(note_ids, note_monitor):
         try:
             note = getnote(note_id)
         except Exception as e:
-            log.critical(f"获取id为“{note_id}”的笔记时出错如下，或许是不存在或笔记冲突导致的：\n{e}")
+            log.critical(
+                f"获取id为“{note_id}”的笔记时出错如下，或许是不存在或笔记冲突导致的：\n{e}"
+            )
             continue
         note_monitor.add_note(note_id)
         current_time = datetime.now()
         # 不是英文需要统计所有字数而不是英语单词
         # current_word_count = len(note.body.split())
         current_word_count = len(note.body.strip())
-        last_update_time_note = arrow.get(getattr(note, "updated_time")).to(get_localzone())
+        last_update_time_note = arrow.get(getattr(note, "updated_time")).to(
+            get_localzone()
+        )
 
         # 更新监控信息，用笔记更新时间做判断依据
-        if last_update_time_note != note_monitor.monitored_notes[note_id]["note_update_time"]:
+        if (
+            last_update_time_note
+            != note_monitor.monitored_notes[note_id]["note_update_time"]
+        ):
             note_monitor.update_monitor(note_id, current_time, current_word_count)
-            note_monitor.monitored_notes[note_id]["previous_word_count"] = current_word_count
+            note_monitor.monitored_notes[note_id]["previous_word_count"] = (
+                current_word_count
+            )
     # 保存监控状态
     note_monitor.save_state()
 
@@ -304,8 +354,10 @@ def monitor_notes(note_ids, note_monitor):
 # %%
 def ensure_monitor_note_exists(title="监控笔记"):
     # 查找监控笔记
-    if (monitor_note_id := getcfpoptionvalue("happyjpmonitor", "monitor", "monitor_id")) is None:
-        results = searchnotes(f"title:{title}")
+    if (
+        monitor_note_id := getcfpoptionvalue("happyjpmonitor", "monitor", "monitor_id")
+    ) is None:
+        results = searchnotes(f"{title}")
         if results:
             monitor_note_id = results[0].id
         else:
@@ -331,7 +383,13 @@ def monitor_log_info(title, note_ids_to_monitor, note_monitor):
         if note_id in note_ids_to_monitor
     }
     # 排序，按照note_info的last_fetch_time倒序排列
-    targetdict = dict(sorted(targetdict.items(), key=lambda item: item[1]["last_fetch_time"], reverse=True))
+    targetdict = dict(
+        sorted(
+            targetdict.items(),
+            key=lambda item: item[1]["last_fetch_time"],
+            reverse=True,
+        )
+    )
     # print(len(targetdict))
     body_content = f"## {title}\n"
     for note_id, info in targetdict.items():
@@ -340,14 +398,20 @@ def monitor_log_info(title, note_ids_to_monitor, note_monitor):
             continue
         body_content += f"笔记ID: {note_id}\n"
         body_content += f"### 笔记标题: {info['title']}\n"
-        body_content += f"抓取时间起止: {info['first_fetch_time'].strftime('%Y-%m-%d %H:%M:%S')}，"
+        body_content += (
+            f"抓取时间起止: {info['first_fetch_time'].strftime('%Y-%m-%d %H:%M:%S')}，"
+        )
         body_content += f"{info['last_fetch_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         body_content += f"有效抓取次数: {info['fetch_count']}\n"
         body_content += f"笔记最近更新时间: {info['note_update_time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         body_content += f"字数历史变化: {info['word_count_history']}\n"
         body_content += f"笔记有效内容起止日期: {min(info['content_by_date'])}，"
         body_content += f"{max(info['content_by_date'])}\n"
-        valid_date = [son for son in info["content_by_date"] if info["content_by_date"][son][0][1] != 0]
+        valid_date = [
+            son
+            for son in info["content_by_date"]
+            if info["content_by_date"][son][0][1] != 0
+        ]
         # print(valid_date)
         body_content += f"笔记内容有效日期数量: {len(valid_date)}({len(info['content_by_date'])})\n\n"
 
@@ -362,7 +426,7 @@ def monitor_log_info(title, note_ids_to_monitor, note_monitor):
 def split_ref():
     # 从指定待监控笔记列表笔记获取内容，分区块处理
     title = "四件套笔记列表"
-    results = searchnotes(f"title:{title}")
+    results = searchnotes(f"{title}")
     if results:
         note_list_id = results[0].id
     else:

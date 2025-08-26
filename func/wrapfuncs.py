@@ -69,9 +69,13 @@ def logit(func):
         args4show = [truncate(x) for x in args]
         kwargs4show = {k: truncate(v) for k, v in kwargs.items()}
         if not_IPython():
-            log.info(f"{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}")
+            log.info(
+                f"{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}"
+            )
         else:
-            print(f"{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}")
+            print(
+                f"{func.__name__}函数被调用，参数列表：{args4show}, 关键字参数：{kwargs4show}"
+            )
 
         return func(*args, **kwargs)
 
@@ -126,9 +130,7 @@ def timethis(func):
         end = time.time()
         timelen = end - start
         if timelen >= (60 * 60):
-            timelenstr = (
-                f"{int(timelen / (60 * 60))}小时{int((timelen % (60 * 60)) / 60)}分钟{timelen % (60 * 60) % 60:.2f}秒"
-            )
+            timelenstr = f"{int(timelen / (60 * 60))}小时{int((timelen % (60 * 60)) / 60)}分钟{timelen % (60 * 60) % 60:.2f}秒"
         elif timelen >= 60:
             timelenstr = f"{int(timelen / 60)}分钟{timelen % 60:.2f}秒"
         else:

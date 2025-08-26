@@ -19,12 +19,13 @@
 # %%
 import datetime
 import os
-import pandas as pd
-import numpy as np
 import sqlite3 as lite
 from pathlib import Path
-import xlrd
+
+import numpy as np
+import pandas as pd
 import pygsheets
+import xlrd
 
 # %%
 import pathmagic
@@ -32,9 +33,14 @@ import pathmagic
 # %%
 with pathmagic.context():
     # from func.evernttest import imglist2note, get_notestore, tablehtml2evernote
-    from func.first import dbpathdingdanmingxi, dirmainpath, getdirmain, touchfilepath2depth
-    from func.logme import log
     from func.configpr import getcfp
+    from func.first import (
+        dbpathdingdanmingxi,
+        dirmainpath,
+        getdirmain,
+        touchfilepath2depth,
+    )
+    from func.logme import log
 
 
 # %%
@@ -52,7 +58,9 @@ def removeblanklinesfromtxt(fname):
         flst = fcontent.split("\n")
         blanklst = [x for x in flst if len(x) == 0]
         itemlst = [x for x in flst if len(x) > 0]
-        log.info(f"文件《{fname}》内容行数量为：\t{len(itemlst)}，空行数量为：\t{len(blanklst)}")
+        log.info(
+            f"文件《{fname}》内容行数量为：\t{len(itemlst)}，空行数量为：\t{len(blanklst)}"
+        )
     if len(blanklst) != 0:
         with open(fname, "w") as writer:
             writer.write("\n".join(itemlst))
@@ -71,7 +79,9 @@ def gettopicfilefromgoogledrive(topic: str, neirong: str):
     """
     # 验证登录
     #     gc = pygsheets.authorize(service_file=str(dirmainpath / 'data' / 'imp' / 'everwork-6a7e225e9947.json'))
-    gc = pygsheets.authorize(service_file=str(dirmainpath / "data" / "imp" / "ewjinchu.json"))
+    gc = pygsheets.authorize(
+        service_file=str(dirmainpath / "data" / "imp" / "ewjinchu.json")
+    )
     #     files = gc.spreadsheet_titles()
     #     print(files)
     files = gc.list_ssheets()
@@ -95,7 +105,9 @@ def gettopicfilefromgoogledrive(topic: str, neirong: str):
 def chulixls_zhifubao(orderfile):
     try:
         content = xlrd.open_workbook(filename=orderfile, encoding_override="gb18030")
-        df = pd.read_excel(content, index_col=0, header=2, parse_dates=True, engine="xlrd")[:-1]
+        df = pd.read_excel(
+            content, index_col=0, header=2, parse_dates=True, engine="xlrd"
+        )[:-1]
         log.info(f"读取{orderfile}， 共有{df.shape[0]}条有效记录")
         # print(df)
         df.columns = [
@@ -125,7 +137,9 @@ def chulixls_zhifubao(orderfile):
 
 
 # %%
-def chulidataindir(cnxp, tablename, mingmu, fnstart, notestr, pathorder: Path, chulixls):
+def chulidataindir(
+    cnxp, tablename, mingmu, fnstart, notestr, pathorder: Path, chulixls
+):
     """
 
     :param cnxp: 数据库连接
@@ -137,12 +151,19 @@ def chulidataindir(cnxp, tablename, mingmu, fnstart, notestr, pathorder: Path, c
     :param chulixls: 处理原始数据的函数
     :return:
     """
-    sqlstr = "select count(*)  from sqlite_master where type='table' and name = '%s'" % tablename
+    sqlstr = (
+        "select count(*)  from sqlite_master where type='table' and name = '%s'"
+        % tablename
+    )
     tablexists = pd.read_sql_query(sqlstr, cnxp).iloc[0, 0] > 0
     if tablexists:
         # dfresult = pd.DataFrame()
-        dfresult = pd.read_sql("select * from '%s'" % tablename, cnxp, parse_dates=["日期"])
-        log.info(f"{mingmu}数据表{tablename}已存在， 从中读取{dfresult.shape[0]}条数据记录。")
+        dfresult = pd.read_sql(
+            "select * from '%s'" % tablename, cnxp, parse_dates=["日期"]
+        )
+        log.info(
+            f"{mingmu}数据表{tablename}已存在， 从中读取{dfresult.shape[0]}条数据记录。"
+        )
     else:
         log.info(f"{mingmu}数据表{tablename}不存在，将创建之。")
         dfresult = pd.DataFrame()
@@ -154,7 +175,9 @@ def chulidataindir(cnxp, tablename, mingmu, fnstart, notestr, pathorder: Path, c
         cfpzysm.write(open(inizysmpath, "w", encoding="utf-8"))
     files = os.listdir(str(pathorder))
     for fname in files:
-        if fname.startswith(fnstart) and (fname.endswith("xls") or fname.endswith("xlsx")):
+        if fname.startswith(fnstart) and (
+            fname.endswith("xls") or fname.endswith("xlsx")
+        ):
             yichulifilelist = list()
             if cfpzysm.has_option(notestr, "已处理文件清单"):
                 yichulifilelist = cfpzysm.get(notestr, "已处理文件清单").split()
@@ -197,13 +220,17 @@ def chulidataindir(cnxp, tablename, mingmu, fnstart, notestr, pathorder: Path, c
 # %%
 def fenliu2note(dfall):
     cfpzysm, inizysmpath = getcfp("everzysm")
-    zhfromini = [[x, cfpzysm.get("支付宝账户", x).split()] for x in cfpzysm.options("支付宝账户")]
+    zhfromini = [
+        [x, cfpzysm.get("支付宝账户", x).split()] for x in cfpzysm.options("支付宝账户")
+    ]
     # print(zhfromini)
     zhonlyone = [x for x in zhfromini if len(x[1][0].split(",")) == 1]
     print(zhonlyone)
     zhmulti = [x for x in zhfromini if len(x[1][0].split(",")) > 1]
     print(zhmulti)
-    zhmultichaifen = [[[x[0], [y, x[1][1]]] for y in x[1][0].split(",")] for x in zhmulti]
+    zhmultichaifen = [
+        [[x[0], [y, x[1][1]]] for y in x[1][0].split(",")] for x in zhmulti
+    ]
     print(zhmultichaifen)
     zhmultichaifenchild = [x for y in zhmultichaifen for x in y]
     print(zhmultichaifenchild)
@@ -217,7 +244,9 @@ def fenliu2note(dfall):
     zhds = zhdf["codename"]
     dfall["账户名称"] = dfall["对方账户"] + "," + dfall["对方名称"]
     dfall["名称"] = dfall["账户名称"].map(
-        lambda x: zhds[zhds == x].index.values[0] if len(zhds[zhds == x].index.values) > 0 else np.NaN
+        lambda x: zhds[zhds == x].index.values[0]
+        if len(zhds[zhds == x].index.values) > 0
+        else np.NaN
     )
     dfall.sort_values("日期", ascending=False, inplace=True)
     cls = list(dfall.columns)
@@ -237,15 +266,24 @@ def fenliu2note(dfall):
         if pd.isnull(mingcheng) & (zhanghumingcheng != " , "):
             return "货款，" + "|".join([shangpinmingcheng, beizhu, zhanghumingcheng])
         elif (mingcheng != "白晔峰") & (not pd.isnull(mingcheng)):
-            return "货款，" + "|".join([shangpinmingcheng, beizhu, zhanghumingcheng]) + ",经手人" + mingcheng
+            return (
+                "货款，"
+                + "|".join([shangpinmingcheng, beizhu, zhanghumingcheng])
+                + ",经手人"
+                + mingcheng
+            )
         else:
             return
 
-    dfout["mingmu"] = dfout.apply(lambda x: showmingmu(x.ru, x.商品名称, x.备注, x.账户名称, x.名称), axis=1)
+    dfout["mingmu"] = dfout.apply(
+        lambda x: showmingmu(x.ru, x.商品名称, x.备注, x.账户名称, x.名称), axis=1
+    )
     dfout["card"] = "支付宝白晔峰流水条目"
     dfout["guid"] = "f5bad0ca-d7e4-4148-99ac-d3472f1c8d80"
 
-    dffine = dfout[dfout.mingmu.isnull() == False].loc[:, ["date", "ru", "jine", "mingmu", "card", "guid"]]
+    dffine = dfout[dfout.mingmu.isnull() == False].loc[
+        :, ["date", "ru", "jine", "mingmu", "card", "guid"]
+    ]
 
     return dffine
 
@@ -254,7 +292,15 @@ def fenliu2note(dfall):
 def alipay2note():
     cnxp = lite.connect(dbpathdingdanmingxi)
     pathalipay = dirmainpath / "data" / "finance" / "alipay"
-    dfall = chulidataindir(cnxp, "alipay", "支付宝流水", "2088802968197536", "支付宝", pathalipay, chulixls_zhifubao)
+    dfall = chulidataindir(
+        cnxp,
+        "alipay",
+        "支付宝流水",
+        "2088802968197536",
+        "支付宝",
+        pathalipay,
+        chulixls_zhifubao,
+    )
     zhds = fenliu2note(dfall)
     cnxp.close()
 

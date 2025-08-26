@@ -366,7 +366,7 @@ def upload_to_joplin(file_path, device_id, period, save_dir):
 
     # 查找指定月份的云端笔记是否存在
     note_title = f"位置数据_{period.strftime('%Y%m')}"
-    existing_notes = searchnotes(f"title:{note_title}")
+    existing_notes = searchnotes(f"{note_title}")
 
     if existing_notes:
         note = existing_notes[0]

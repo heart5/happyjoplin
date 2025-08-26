@@ -16,11 +16,11 @@
 # ## 引入重要库
 
 # %%
-import sys
-import os
 import json
-import wave
+import os
 import sqlite3 as lite
+import sys
+import wave
 # import vosk
 # from pydub import AudioSegment
 
@@ -28,25 +28,25 @@ import sqlite3 as lite
 import pathmagic
 
 with pathmagic.context():
-    from func.first import getdirmain, touchfilepath2depth
-    from func.logme import log
     from etc.getid import getdevicename
-    from func.wrapfuncs import timethis
-    from func.sysfunc import not_IPython, execcmd
-    from func.configpr import setcfpoptionvalue, getcfpoptionvalue
-    from func.litetools import ifnotcreate, showtablesindb, convert_intstr_datetime
+    from filedatafunc import getfilemtime as getfltime
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.first import getdirmain, touchfilepath2depth
     from func.jpfuncs import (
+        createnote,
         getapi,
         getinivaluefromcloud,
-        searchnotes,
-        searchnotebook,
-        createnote,
+        getnote,
         getreslst,
+        searchnotebook,
+        searchnotes,
         updatenote_body,
         updatenote_title,
-        getnote,
     )
-    from filedatafunc import getfilemtime as getfltime
+    from func.litetools import convert_intstr_datetime, ifnotcreate, showtablesindb
+    from func.logme import log
+    from func.sysfunc import execcmd, not_IPython
+    from func.wrapfuncs import timethis
     from life.wc2note import items2df
 
 
@@ -169,7 +169,9 @@ def v4txt(vfile, dbn):
         text = v2t_funasr([vfile])[0]
 
         # 将转换后的文本存入 v4txt 数据表
-        cursor.execute("INSERT INTO v4txt (filepath, text) VALUES (?, ?)", (vfile, text))
+        cursor.execute(
+            "INSERT INTO v4txt (filepath, text) VALUES (?, ?)", (vfile, text)
+        )
         conn.commit()
 
     # 关闭数据库连接
@@ -213,7 +215,10 @@ def batch_v4txt(vfilelst, dbn, batch_size=100):
 
             # 将转换后的文本存入 v4txt 数据表
             for vfile, text in zip(batch, texts):
-                cursor.execute("INSERT  OR REPLACE INTO v4txt (filepath, text) VALUES (?, ?)", (vfile, text))
+                cursor.execute(
+                    "INSERT  OR REPLACE INTO v4txt (filepath, text) VALUES (?, ?)",
+                    (vfile, text),
+                )
             conn.commit()
 
     # 关闭数据库连接
@@ -252,7 +257,9 @@ def query_v4txt(vfile, dbn):
 if __name__ == "__main__":
     if not_IPython():
         log.info(f"运行文件\t{__file__}")
-    loginstr = "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
+    loginstr = (
+        "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
+    )
     dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
     wcdatapath = getdirmain() / "data" / "webchat"
     dbname = os.path.abspath(wcdatapath / dbfilename)

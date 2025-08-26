@@ -51,6 +51,10 @@ with pathmagic.context():
     from func.logme import log
     from func.wrapfuncs import timethis
 
+# %%
+for note in notes:
+    print(note.title)
+
 
 # %% [markdown]
 # ## 配置参数
@@ -98,7 +102,7 @@ def load_location_data(scope, config: Config):
     for date in date_range:
         month_str = date.strftime("%Y%m")
         note_title = f"位置数据_{month_str}"
-        notes = searchnotes(f"title:{note_title}")
+        notes = searchnotes(f"{note_title}")
 
         if not notes:
             log.warning(f"未找到{month_str}的位置数据笔记")

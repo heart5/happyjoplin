@@ -516,7 +516,7 @@ def updatenote_imgdata(noteid, parent_id=None, imgdata64=None, imgtitle=None):
 # %%
 def test_updatenote_imgdata():
     global jpapi
-    note_health_lst = searchnotes("title:健康动态日日升")
+    note_health_lst = searchnotes("健康动态日日升")
     noteid = note_health_lst[0].id
     print(noteid)
     newfilename = os.path.abspath(f"{getdirmain() / 'img' / 'fengye.jpg'}")
@@ -653,7 +653,7 @@ def readinifromcloud():
     if (
         noteid_inifromcloud := getcfpoptionvalue("happyjp", "joplin", "ini_cloud_id")
     ) is None:
-        if (resultitems := searchnotes("title:happyjoplin云端配置")) and (
+        if (resultitems := searchnotes("happyjoplin云端配置")) and (
             len(resultitems) > 0
         ):
             noteid_inifromcloud = resultitems[0].id

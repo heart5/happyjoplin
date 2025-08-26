@@ -342,7 +342,7 @@ def showiprecords() -> bool:
         ip_cloud_id = safe_getcfpoptionvalue(section, "ip_cloud_id")
 
         if not ip_cloud_id:
-            ipnotefindlist = searchnotes(f"title:{noteip_title}")
+            ipnotefindlist = searchnotes(f"{noteip_title}")
             if ipnotefindlist:
                 ip_cloud_id = ipnotefindlist[-1].id
             else:

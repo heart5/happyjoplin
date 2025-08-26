@@ -18,17 +18,22 @@ txt数据文件操作函数
 """
 
 # %%
+import binascii
 import os
 import sqlite3 as lite
-import binascii
 
 # %%
 import pathmagic
 
 # %%
 with pathmagic.context():
+    from func.first import (
+        dbpathdingdanmingxi,
+        dbpathquandan,
+        dbpathworkplan,
+        touchfilepath2depth,
+    )
     from func.logme import log
-    from func.first import dbpathquandan, dbpathworkplan, dbpathdingdanmingxi, touchfilepath2depth
     # from func.wrapfuncs import timethis
 
 # %% [markdown]
@@ -97,7 +102,9 @@ def compact_sqlite3_db(dbpath):
     conn = lite.connect(dbpath)
     conn.execute("VACUUM")
     conn.close()
-    log.info(f"{dbpath}数据库压缩前大小为{sizebefore}MB，压缩之后为{get_filesize(dbpath)}MB。")
+    log.info(
+        f"{dbpath}数据库压缩前大小为{sizebefore}MB，压缩之后为{get_filesize(dbpath)}MB。"
+    )
 
 
 # %%
