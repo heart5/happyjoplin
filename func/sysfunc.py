@@ -18,25 +18,26 @@
 # ## 引入库
 
 # %%
-import os
-import traceback
-import inspect
-import sys
-import platform
-import signal
-import time
 import datetime
-import uuid
-import re
+import inspect
 import logging
+import os
+import platform
+import re
+import signal
 import subprocess
-from IPython import get_ipython
+import sys
+import time
+import traceback
+import uuid
+from collections import deque
 from hashlib import sha256
+
+import matplotlib
+from IPython import get_ipython
 
 # import wmi_client_wrapper as wmi
 from matplotlib.font_manager import FontManager
-from collections import deque
-import matplotlib
 
 # %%
 import pathmagic
@@ -78,7 +79,9 @@ def extract_traceback4exception(tbtuple, func_name, sleeptime=None):
         brief = False
     if not (shownums := getcfpoptionvalue("everinifromnote", "nettools", "shownums")):
         shownums = 3
-    if not (alltraceback := getcfpoptionvalue("everinifromnote", "nettools", "tracebackall")):
+    if not (
+        alltraceback := getcfpoptionvalue("everinifromnote", "nettools", "tracebackall")
+    ):
         alltraceback = True
     if alltraceback:
         rsttb = tblst
@@ -118,7 +121,10 @@ def convertframe2dic(frame):
     framestr = str(frame)
     filename = re.findall("filename=(.+)\s", framestr)[0].strip()
     lineno = re.findall("lineno=(.+)\s", framestr)[0].strip()
-    code_context = [line.strip() for line in eval(re.findall("code_context=(.+)\s", framestr)[0].strip())]
+    code_context = [
+        line.strip()
+        for line in eval(re.findall("code_context=(.+)\s", framestr)[0].strip())
+    ]
 
     return filename, lineno, code_context
 

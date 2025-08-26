@@ -23,34 +23,35 @@
 # # 引入库
 
 # %%
-import sys
-import ssl
-import socket
-import time
-import random
-import platform
 import os
+import platform
+import random
 import re
+import socket
+import ssl
+import struct
+import sys
+import time
 import traceback
+from functools import wraps
+
 import itchat
+import requests
+from bs4 import BeautifulSoup
 
 # from requests.packages.urllib3 import HTTPConnectionPool
 from evernote.edam.error.ttypes import EDAMSystemException
-from urllib3.exceptions import NewConnectionError, MaxRetryError
-from requests.exceptions import *
-import requests
-from bs4 import BeautifulSoup
-import struct
-from functools import wraps
 from py2ifttt import IFTTT
+from requests.exceptions import *
+from urllib3.exceptions import MaxRetryError, NewConnectionError
 
 # %%
 import pathmagic
 
 with pathmagic.context():
     from func.logme import log
+    from func.sysfunc import extract_traceback4exception, not_IPython
     from func.termuxtools import termux_sms_send
-    from func.sysfunc import not_IPython, extract_traceback4exception
 
 
 # %% [markdown]
@@ -107,7 +108,9 @@ def get_ip(*args):
         ip = my_addr.split("\n")[0]
         return ip
     else:
-        my_addr = os.popen("ifconfig | grep -A 1 %s|tail -1| awk '{print $2}'" % args[0]).read()
+        my_addr = os.popen(
+            "ifconfig | grep -A 1 %s|tail -1| awk '{print $2}'" % args[0]
+        ).read()
         print(my_addr)
         ipfind = re.search(
             r"(?<![\.\d])(?:25[0-5]\.|2[0-4]\d\.|[01]?\d\d?\.)"
@@ -164,7 +167,9 @@ def get_ip4alleth(*args):
         print(ethlst)
         ethlst2test = [x for x in ethlst if x != "lo"]
         for ethitem in ethlst2test:
-            my_addr = os.popen("ifconfig | grep -A 1 %s|tail -1| awk '{print $2}'" % ethitem).read()
+            my_addr = os.popen(
+                "ifconfig | grep -A 1 %s|tail -1| awk '{print $2}'" % ethitem
+            ).read()
             print(my_addr)
             ipfind = re.search(
                 r"(?<![\.\d])(?:25[0-5]\.|2[0-4]\d\.|[01]?\d\d?\.)"
@@ -218,7 +223,11 @@ def trycounttimes2(servname="服务器", maxtimes=100, maxsecs=50):
                     ValueError,
                 ) as eee:
                     eee_type, eee_value, eee_traceback = sys.exc_info()
-                    tbtuple = (eee_type, eee_value, [str(x) for x in traceback.extract_tb(eee_traceback)])
+                    tbtuple = (
+                        eee_type,
+                        eee_value,
+                        [str(x) for x in traceback.extract_tb(eee_traceback)],
+                    )
                     # buding^_^
                     # 5的倍数次尝试输出log，避免网络不佳时的log冗余
                     if i % showfreq == 0:
@@ -240,19 +249,27 @@ def trycounttimes2(servname="服务器", maxtimes=100, maxsecs=50):
                                     f"和{servname}连接失败。 Cannot establied a new  connection. no route to host。{eeestr}"
                                 )
                             elif eee.errno == 110:
-                                log.critical(f"和{servname}连接失败。 Connection timed out.\t{eeestr}")
+                                log.critical(
+                                    f"和{servname}连接失败。 Connection timed out.\t{eeestr}"
+                                )
                                 # 断网eptime *= 20
                                 # sleeptime *= 20
                             elif eee.errno == 103:
-                                log.critical(f"和{servname}连接失败。Software caused connetction abort.\t{eeestr}")
+                                log.critical(
+                                    f"和{servname}连接失败。Software caused connetction abort.\t{eeestr}"
+                                )
                             elif eee.errno == 101:
-                                log.critical(f"和{servname}连接失败。Network is unreached.\t{eeestr}")
+                                log.critical(
+                                    f"和{servname}连接失败。Network is unreached.\t{eeestr}"
+                                )
                             elif eee.errno == 13:
                                 log.critical(f"连接{servname}的权限不够哦。{eeestr}")
                             elif eee.errno == 8:
                                 log.critical(f"和{servname}握手失败。{eeestr}")
                             elif eee.errno == 7:
-                                log.critical(f"和{servname}连接失败。域名无法解析，断网了  。{eeestr}")
+                                log.critical(
+                                    f"和{servname}连接失败。域名无法解析，断网了  。{eeestr}"
+                                )
                                 # 断网eptime *= 20
                             elif eee.errno == 4:
                                 log.critical(f"和{servname}连接异常，被中断。{eeestr}")
@@ -278,7 +295,11 @@ def trycounttimes2(servname="服务器", maxtimes=100, maxsecs=50):
                         break
 
                     # 暂歇开始前终端输出，看看而已
-                    print(extract_traceback4exception(tbtuple, "trycounttimes2", sleeptime=sleeptime))
+                    print(
+                        extract_traceback4exception(
+                            tbtuple, "trycounttimes2", sleeptime=sleeptime
+                        )
+                    )
                     time.sleep(sleeptime)
 
         return wrapper

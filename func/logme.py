@@ -45,7 +45,8 @@ def mylog(dirlog):
         backupCount=23,
     )
     formats = lg.Formatter(
-        "%(asctime)s\t%(filename)s - [%(funcName)s]\t%(levelname)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        "%(asctime)s\t%(filename)s - [%(funcName)s]\t%(levelname)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     loghandler.setFormatter(formats)
     loghj.setLevel(lg.DEBUG)

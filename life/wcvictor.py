@@ -379,7 +379,7 @@ def wcliked2note():
             namestr, section, "healthstat_cloud_id"
         )
     ):
-        healthnotefindlist = searchnotes(f"title:{notestat_title}")
+        healthnotefindlist = searchnotes(f"{notestat_title}")
         if len(healthnotefindlist) == 0:
             healthstat_cloud_id = createnote(
                 title=notestat_title, parent_id=nbid, imgdata64=image_base64
@@ -678,7 +678,7 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
         dftfileguid := getcfpoptionvalue("happyjpwcitems", dftfilename, "guid")
     ) is None:
         # findnotelst = findnotefromnotebook(notebookguid, dftfilename, notecount=1)
-        findnotelst = searchnotes(f"title:{dftfilename}", parent_id=notebookguid)
+        findnotelst = searchnotes(f"{dftfilename}", parent_id=notebookguid)
         if len(findnotelst) == 1:
             dftfileguid = findnotelst[0].id
             log.info(f"数据文件《{dftfilename}》的笔记已经存在，取用")
@@ -813,7 +813,7 @@ def getnotelist(name, wcpath, notebookguid):
             "happyjpwcitems", "common", f"{name}_notelist_guid"
         )
     ) is None:
-        findnotelst = searchnotes(f"title:{notelisttitle}", parent_id=notebookguid)
+        findnotelst = searchnotes(f"{notelisttitle}", parent_id=notebookguid)
         if len(findnotelst) == 1:
             notelistguid = findnotelst[0].id
             log.info(f"文件列表《{notelisttitle}》的笔记已经存在，取用")
@@ -890,7 +890,7 @@ def getnotelist(name, wcpath, notebookguid):
     if numinnotedesc == numatlocal == len(finditems):
         log.info(f"《{notelisttitle}》中数量无更新，跳过。")
         return finditems
-    findnotelst = searchnotes(f"title:wcitems_{name}_", parent_id=notebookguid)
+    findnotelst = searchnotes(f"{name}_", parent_id=notebookguid)
     findnotelst = [
         [nt.title, nt.id, re.findall("记录数量\t(-?\d+)", nt.body)[0]]
         for nt in findnotelst

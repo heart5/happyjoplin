@@ -19,9 +19,10 @@
 
 # %%
 import re
-import arrow
 import time
 from datetime import datetime, timedelta
+
+import arrow
 # from tzlocal import get_localzone
 # from dateutil import tz
 
@@ -94,7 +95,9 @@ def getstartdate(period, thedatetime):
     elif period == "月":
         zuijindatestart = arrow.get(arrow.get(thedatetime).replace(day=1).date()).naive
     elif period == "年":
-        zuijindatestart = arrow.get(arrow.get(thedatetime).replace(month=1, day=1).date()).naive
+        zuijindatestart = arrow.get(
+            arrow.get(thedatetime).replace(month=1, day=1).date()
+        ).naive
     else:
         zuijindatestart = thedatetime
 
@@ -138,7 +141,11 @@ def gethumantimedelay(inputlocaltime, intervalseconds=120):
 
 # %%
 def test_gethumantimedelay():
-    hmtimetestlst = ["20210227 01:04:23", arrow.get("20210227 02:04:23", tzinfo="local"), "19761006"]
+    hmtimetestlst = [
+        "20210227 01:04:23",
+        arrow.get("20210227 02:04:23", tzinfo="local"),
+        "19761006",
+    ]
     for htt in hmtimetestlst:
         hmstr = gethumantimedelay(htt)
         print(hmstr)

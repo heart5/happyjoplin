@@ -20,6 +20,7 @@
 # %%
 import os
 import re
+
 import pandas as pd
 
 # from threading import Timer
@@ -27,13 +28,19 @@ import pathmagic
 
 # %%
 with pathmagic.context():
-    from func.first import getdirmain
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.jpfuncs import getinivaluefromcloud, createnote, updatenote_body, updatenote_title, searchnotebook
-    from func.logme import log
-    from func.wrapfuncs import timethis
     from etc.getid import getdeviceid
-    from func.sysfunc import not_IPython, set_timeout, after_timeout, execcmd
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.first import getdirmain
+    from func.jpfuncs import (
+        createnote,
+        getinivaluefromcloud,
+        searchnotebook,
+        updatenote_body,
+        updatenote_title,
+    )
+    from func.logme import log
+    from func.sysfunc import after_timeout, execcmd, not_IPython, set_timeout
+    from func.wrapfuncs import timethis
 
 
 # %% [markdown]
@@ -69,10 +76,16 @@ def log2note(noteid, loglimit, levelstr="", notetitle="happyjp日志信息"):
         with open(pathlog / fname, "r", encoding="utf-8") as flog:
             charsnum2showinline = getinivaluefromcloud(namestr, "charsnum2showinline")
             # print(f"log行最大显示字符数量为：\t{charsnum2showinline}")
-            loglines = loglines + [line.strip()[:charsnum2showinline] for line in flog if line.find(levelstrinner) >= 0]
+            loglines = loglines + [
+                line.strip()[:charsnum2showinline]
+                for line in flog
+                if line.find(levelstrinner) >= 0
+            ]
 
     ptn = re.compile(r"\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}")
-    tmlst = [pd.to_datetime(re.match(ptn, x).group()) for x in loglines if re.match(ptn, x)]
+    tmlst = [
+        pd.to_datetime(re.match(ptn, x).group()) for x in loglines if re.match(ptn, x)
+    ]
     loglines = [x for x in loglines if re.match(ptn, x)]
     logsr = pd.Series(loglines, index=tmlst)
     logsr = logsr.sort_index()
@@ -81,11 +94,15 @@ def log2note(noteid, loglimit, levelstr="", notetitle="happyjp日志信息"):
     loglines = list(logsr)
     # log.info(loglines[:20])
     # print(len(loglines))
-    print(f"日志的{levelstr4title}记录共有{len(loglines)}条，只取时间最近的{loglimit}条")
+    print(
+        f"日志的{levelstr4title}记录共有{len(loglines)}条，只取时间最近的{loglimit}条"
+    )
     if not (everlogc := getcfpoptionvalue(namestr, namestr, countnameinini)):
         everlogc = 0
     if len(loglines) == everlogc:  # <=调整为==，用来应对log文件崩溃重建的情况
-        print(f"暂无新的{levelstr4title}记录，不更新“happyjoplin的{levelstr}日志笔记”。")
+        print(
+            f"暂无新的{levelstr4title}记录，不更新“happyjoplin的{levelstr}日志笔记”。"
+        )
     else:
         loglinesloglimit = loglines[(-1 * loglimit) :]
         loglinestr = "\n".join(loglinesloglimit[::-1])
@@ -115,11 +132,15 @@ def log2notes():
 
     nbid = searchnotebook("ewmobile")
     if not (logid := getcfpoptionvalue(namestr, device_id, "logid")):
-        logid = createnote(f"服务器_{device_id}_{loginname}_日志信息", "", parent_id=nbid)
+        logid = createnote(
+            f"服务器_{device_id}_{loginname}_日志信息", "", parent_id=nbid
+        )
         setcfpoptionvalue(namestr, device_id, "logid", logid)
 
     if not (logcid := getcfpoptionvalue(namestr, device_id, "logcid")):
-        logcid = createnote(f"服务器_{device_id}_{loginname}_严重错误日志信息", "", parent_id=nbid)
+        logcid = createnote(
+            f"服务器_{device_id}_{loginname}_严重错误日志信息", "", parent_id=nbid
+        )
         setcfpoptionvalue(namestr, device_id, "logcid", logcid)
 
     if not (loglimitc := getinivaluefromcloud(namestr, "loglimit")):
@@ -130,9 +151,18 @@ def log2notes():
 
     if getinivaluefromcloud(namestr, "critical") == 1:
         levelstrc = "CRITICAL"
-        log2note(logcid, loglimitc, levelstrc, notetitle=f"服务器_{servername}_{loginname}_严重错误日志信息")
+        log2note(
+            logcid,
+            loglimitc,
+            levelstrc,
+            notetitle=f"服务器_{servername}_{loginname}_严重错误日志信息",
+        )
 
-    log2note(noteid=logid, loglimit=loglimitc, notetitle=f"服务器_{servername}_{loginname}_日志信息")
+    log2note(
+        noteid=logid,
+        loglimit=loglimitc,
+        notetitle=f"服务器_{servername}_{loginname}_日志信息",
+    )
 
 
 # %% [markdown]
