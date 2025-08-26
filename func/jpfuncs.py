@@ -608,20 +608,21 @@ def getreslst(noteid):
 
 
 # %% [markdown]
-# ### searchnotes(key, parent_id=None)
+# ### searchnotes(key: str, filter: str= "title", parent_id=None)
 
 
 # %%
 @timethis
-def searchnotes(key, parent_id=None):
+def searchnotes(key: str, filter: str = "title", parent_id: str = None):
     """
     传入关键字搜索并返回笔记列表，每个笔记中包含了所有可能提取field值
     """
     global jpapi
     # 经过测试，fields中不能携带的属性值有：latitude, longitude, altitude, master_key_id, body_html,  image_data_url, crop_rect，另外shared_id对于共享笔记本下的笔记无法查询，出错
     fields = "id, parent_id, title, body, created_time, updated_time, is_conflict, author, source_url, is_todo, todo_due, todo_completed, source, source_application, application_data, order, user_created_time, user_updated_time, encryption_cipher_text, encryption_applied, markup_language, is_shared, conflict_original_id"
-    results = jpapi.search(query=key, fields=fields).items
-    log.info(f"搜索“{key}”，找到{len(results)}条笔记")
+    query = f"{filter}:{key}"
+    results = jpapi.search(query=query, fields=fields).items
+    log.info(f"搜索“{query}”，找到{len(results)}条笔记")
     if parent_id:
         nb = jpapi.get_notebook(parent_id)
         results = [note for note in results if note.parent_id == parent_id]
