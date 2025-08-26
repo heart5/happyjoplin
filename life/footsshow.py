@@ -51,10 +51,6 @@ with pathmagic.context():
     from func.logme import log
     from func.wrapfuncs import timethis
 
-# %%
-for note in notes:
-    print(note.title)
-
 
 # %% [markdown]
 # ## 配置参数
