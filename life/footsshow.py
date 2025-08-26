@@ -25,6 +25,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
+import dask.dataframe as dd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -71,7 +72,7 @@ class Config:
                 "monthly": 1,
                 "quarterly": 3,
                 "yearly": 12,
-                "two_yearly": 24,
+                "two_year": 24,
             }
 
 # %% [markdown]
@@ -136,6 +137,7 @@ def load_location_data(scope, config: Config):
 
 
 # %%
+@timethis
 def analyze_location_data(indf, scope):
     """
     分析位置数据，返回统计结果
@@ -150,6 +152,7 @@ def analyze_location_data(indf, scope):
     )
     print(df.groupby("device_id").count()["time"])
     df = fuse_device_data(df, config)
+    # df = fuse_device_data_dask(df, config)
     print(
         f"融合设备数据后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
     )
@@ -261,7 +264,6 @@ def analyze_location_data(indf, scope):
 
 
 # %%
-@timethis
 def fuse_device_data(df, config: Config):
     """多设备数据智能融合"""
     print(f"多设备数据智能融合时间窗口为：{config.TIME_WINDOW}")
@@ -318,6 +320,176 @@ def fuse_device_data(df, config: Config):
 
     return outdf
 
+
+# %% [markdown]
+# ### fuse_device_data_dask(df, config: Config)
+
+# %%
+@timethis
+def fuse_device_data_dask(df, config: Config):
+    """使用Dask进行并行处理 - 修复版"""
+    # 如果数据量小，直接使用单进程
+    if len(df) < 10000:  # 小于1万行直接用单进程
+        print("数据量较小，使用单进程处理...")
+        return fuse_device_data_optimized(df, config)
+
+    # 确保df是Pandas DataFrame
+    if not isinstance(df, pd.DataFrame):
+        df = df.compute() if hasattr(df, "compute") else pd.DataFrame(df)
+
+    # 获取原始列名
+    original_columns = df.columns.tolist()
+
+    # 转换为Dask DataFrame，分区数根据数据大小调整
+    n_partitions = max(1, min(os.cpu_count(), len(df) // 5000))  # 每分区约5000行
+    ddf = dd.from_pandas(df, npartitions=n_partitions)
+
+    # 定义处理函数 - 确保返回与原始数据相同的列
+    def process_partition(partition):
+        # 调用优化后的fuse_device_data函数
+        result = fuse_device_data_optimized(partition, config)
+
+        # 确保返回的DataFrame只包含原始列
+        # 如果结果中有额外列，只保留原始列
+        result_columns = set(result.columns)
+        original_columns_set = set(original_columns)
+
+        if result_columns != original_columns_set:
+            # 找出缺失的列并添加（填充NaN）
+            missing_cols = original_columns_set - result_columns
+            for col in missing_cols:
+                result[col] = np.nan
+
+            # 移除多余的列
+            extra_cols = result_columns - original_columns_set
+            result = result.drop(columns=list(extra_cols))
+
+            # 确保列顺序一致
+            result = result[original_columns]
+
+        return result
+
+    # 提供正确的元数据
+    meta = df.iloc[:0].copy()
+
+    try:
+        # 应用处理函数
+        results = ddf.map_partitions(process_partition, meta=meta).compute()
+        return results
+    except Exception as e:
+        print(f"Dask处理失败: {e}")
+        # 回退到单进程处理
+        print("回退到单进程处理...")
+        return fuse_device_data_optimized(df, config)
+
+
+# %% [markdown]
+# ### fuse_device_data_optimized(df, config: Config)
+
+# %%
+# 优化后的fuse_device_data函数
+def fuse_device_data_optimized(df, config: Config):
+    """优化版的多设备数据智能融合"""
+    print(f"多设备数据智能融合时间窗口为：{config.TIME_WINDOW}")
+
+    # 预先计算时间窗口
+    df["time_window"] = df["time"].dt.floor(config.TIME_WINDOW)
+
+    # 使用更高效的分组和聚合方法
+    fused_points = []
+    prev_candidate = None
+
+    # 预先计算所有时间窗口
+    time_windows = df["time_window"].unique()
+
+    for window in time_windows:
+        group = df[df["time_window"] == window]
+
+        # 计算设备活跃度
+        device_activity = {}
+        for device_id in group["device_id"].unique():
+            device_activity[device_id] = calc_device_activity_fast(group, device_id)
+
+        # 选择最佳候选点
+        if len(group) > 1:
+            lat_std = group["latitude"].std()
+            lon_std = group["longitude"].std()
+
+            if lat_std < 0.002 and lon_std < 0.002:
+                candidate = group.loc[group["accuracy"].idxmin()].copy()
+            else:
+                candidate = group.loc[group["accuracy"].idxmin()].copy()
+        else:
+            candidate = group.iloc[0].copy()
+
+        # 筛选活跃设备
+        active_devices = [
+            did
+            for did, score in device_activity.items()
+            if score > 50 and did in group["device_id"].values
+        ]
+
+        if active_devices:
+            active_group = group[group["device_id"].isin(active_devices)]
+            candidate = active_group.loc[active_group["accuracy"].idxmin()].copy()
+
+        # 时空一致性检查
+        if prev_candidate is not None and not check_spatiotemporal_consistency(
+            prev_candidate, candidate
+        ):
+            # 计算所有点到上一个点的距离
+            distances = []
+            for _, row in group.iterrows():
+                dist = great_circle(
+                    (prev_candidate.latitude, prev_candidate.longitude),
+                    (row.latitude, row.longitude),
+                ).m
+                distances.append(dist)
+
+            # 添加距离列
+            group = group.copy()
+            group["dist_to_last"] = distances
+
+            # 选择距离最小的点
+            candidate = group.loc[group["dist_to_last"].idxmin()].copy()
+            # 移除临时列
+            candidate = (
+                candidate.drop("dist_to_last")
+                if "dist_to_last" in candidate
+                else candidate
+            )
+
+        fused_points.append(candidate)
+        prev_candidate = candidate
+
+    # 创建结果DataFrame，确保只包含原始列
+    outdf = pd.DataFrame(fused_points)
+
+    # 移除可能添加的临时列
+    original_columns = [col for col in df.columns if col != "time_window"]
+    outdf = outdf[original_columns]
+
+    return outdf
+
+
+# %% [markdown]
+# ### calc_device_activity_fast(group, device_id)
+
+# %%
+# 快速计算设备活跃度的函数
+def calc_device_activity_fast(group, device_id):
+    """快速计算设备活跃度"""
+    device_data = group[group["device_id"] == device_id]
+    if len(device_data) < 2:
+        return 0
+
+    # 简化计算逻辑
+    time_diff = (device_data["time"].max() - device_data["time"].min()).total_seconds()
+    if time_diff == 0:
+        return 0
+
+    activity_score = min(100, len(device_data) * 10 / (time_diff / 3600))
+    return activity_score
 
 # %% [markdown]
 # ### calc_device_activity(df, device_id)
