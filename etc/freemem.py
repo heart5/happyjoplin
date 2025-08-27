@@ -33,9 +33,10 @@ import pathmagic
 with pathmagic.context():
     # from func.first import getdirmain
     from etc.getid import getdevicename, gethostuser
-    from func.configpr import getcfpoptionvalue, is_log_details, setcfpoptionvalue
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.jpfuncs import (
         createnote,
+        getinivaluefromcloud,
         noteid_used,
         searchnotebook,
         searchnotes,
@@ -232,6 +233,7 @@ def freemem2note():
 
 # %%
 if __name__ == "__main__":
+    is_log_details = getinivaluefromcloud("happyjoplin", "is_log_details")
     if not_IPython() and is_log_details:
         log.info(f"运行文件\t{__file__}")
 
