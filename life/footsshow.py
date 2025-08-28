@@ -262,29 +262,11 @@ def analyze_location_data(indf, scope):
     }
     resource_ids = {}
     # 3.1 轨迹图
-    plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
-    if "segment" in df.columns:
-        for segment in df["segment"].unique():
-            seg_df = df[df["segment"] == segment]
-            plt.plot(
-                seg_df["longitude"],
-                seg_df["latitude"],
-                alpha=0.7,
-                linewidth=1.5,
-                label=f"段 {segment}",
-            )
-    else:
-        plt.plot(df["longitude"], df["latitude"], "b-", alpha=0.5, linewidth=1)
-    plt.title(f"{scope.capitalize()}位置轨迹")
-    plt.xlabel("经度")
-    plt.ylabel("纬度")
-    plt.grid(True)
-    buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=config.DPI)
-    plt.close()
-    resource_ids["trajectory"] = add_resource_from_bytes(
-        buf.getvalue(), title=f"轨迹图_{scope}.png"
-    )
+    # 3.1 轨迹图（带地图底图）
+    resource_ids["trajectory_with_map"] = generate_trajectory_map(df, scope, config)
+
+    # 保留原始轨迹图作为备选
+    resource_ids["trajectory"] = generate_trajectory_map_fallback(df, scope, config)
 
     # 3.2 设备分布饼图
     resource_ids["device_dist"] = generate_device_pie_chart(
@@ -848,6 +830,110 @@ def generate_geo_link(lat, lon):
 
 
 # %% [markdown]
+# ### generate_trajectory_map(df, scope, config)
+
+# %%
+def generate_trajectory_map(df, scope, config):
+    """生成带地图底图的轨迹图（优化版）"""
+    try:
+        import contextily as ctx
+
+        fig, ax = plt.subplots(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
+
+        # 绘制轨迹
+        if "segment" in df.columns:
+            for segment in df["segment"].unique():
+                seg_df = df[df["segment"] == segment]
+                ax.plot(
+                    seg_df["longitude"],
+                    seg_df["latitude"],
+                    alpha=0.7,
+                    linewidth=2.0,
+                    label=f"段 {segment}",
+                )
+        else:
+            ax.plot(df["longitude"], df["latitude"], "b-", alpha=0.7, linewidth=2.0)
+
+        # 计算合适的边距
+        min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
+        min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
+
+        lon_range = max_lon - min_lon
+        lat_range = max_lat - min_lat
+
+        # 动态边距：小范围数据使用较大边距，大范围数据使用较小边距
+        if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
+            margin = 0.02
+        else:  # 大范围数据
+            margin = 0.005
+
+        ax.set_xlim(min_lon - margin, max_lon + margin)
+        ax.set_ylim(min_lat - margin, max_lat + margin)
+
+        # 添加地图底图
+        ctx.add_basemap(
+            ax,
+            crs="EPSG:4326",
+            source=ctx.providers.OpenStreetMap.Mapnik,
+            alpha=0.8,  # 稍微透明，使轨迹更突出
+        )
+
+        ax.set_title(f"{scope.capitalize()}位置轨迹（带地图底图）", fontsize=14)
+        ax.set_xlabel("经度")
+        ax.set_ylabel("纬度")
+        ax.grid(True, alpha=0.3)
+
+        # 添加图例（如果有分段）
+        if "segment" in df.columns:
+            ax.legend()
+
+        buf = BytesIO()
+        plt.savefig(buf, format="png", dpi=config.DPI, bbox_inches="tight")
+        plt.close()
+
+        return add_resource_from_bytes(
+            buf.getvalue(), title=f"轨迹图_{scope}_带地图.png"
+        )
+
+    except ImportError:
+        log.warning("未安装contextily库，无法添加地图底图")
+        return generate_trajectory_map_fallback(df, scope, config)
+
+
+# %% [markdown]
+# ### generate_trajectory_map_fallback(df, scope, config)
+
+# %%
+def generate_trajectory_map_fallback(df, scope, config):
+    """生成不带地图底图的轨迹图（备用）"""
+    plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
+
+    if "segment" in df.columns:
+        for segment in df["segment"].unique():
+            seg_df = df[df["segment"] == segment]
+            plt.plot(
+                seg_df["longitude"],
+                seg_df["latitude"],
+                alpha=0.7,
+                linewidth=1.5,
+                label=f"段 {segment}",
+            )
+    else:
+        plt.plot(df["longitude"], df["latitude"], "b-", alpha=0.5, linewidth=1)
+
+    plt.title(f"{scope.capitalize()}位置轨迹")
+    plt.xlabel("经度")
+    plt.ylabel("纬度")
+    plt.grid(True)
+
+    buf = BytesIO()
+    plt.savefig(buf, format="png", dpi=config.DPI)
+    plt.close()
+
+    return add_resource_from_bytes(buf.getvalue(), title=f"轨迹图_{scope}.png")
+
+
+# %% [markdown]
 # ### generate_stay_points_map(df, scope, config)
 
 # %%
@@ -1212,7 +1298,7 @@ def build_report_content(analysis_results, resource_ids, scope):
     content += f"""
 ## 📈 空间分析
 ### 移动轨迹
-![移动轨迹](:/{resource_ids["trajectory"]})
+![移动轨迹](:/{resource_ids["trajectory_with_map"]})
 
 ### 位置精度分布
 ![位置精度分布](:/{resource_ids["accuracy"]})
