@@ -194,6 +194,7 @@ def getipwifi() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[s
                 wifi_info = termux_wifi_connectioninfo()
                 wifi = wifi_info.get("ssid", "")
                 wifiid = wifi_info.get("bssid", "") if wifi != "<unknown ssid>" else ""
+                wifi = "" if wifi == "<unknown ssid>" else wifi
             except Exception as e:
                 log.warning(f"Android WiFi信息获取失败: {e}")
         else:
