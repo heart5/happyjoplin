@@ -172,7 +172,7 @@ def parse_location_txt(fl):
         return df
 
     except Exception as e:
-        log.error(f"解析位置文件失败: {str(e)}", exc_info=True)
+        log.error(f"解析位置文件《{fl}》失败: {str(e)}", exc_info=True)
         return pd.DataFrame()
 
 # %% [markdown]
