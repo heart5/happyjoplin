@@ -501,7 +501,7 @@ def showiprecords() -> bool:
             # current_records = [f"{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}"]
             current_records = [current_record]
             if start_r and ip_local_r and ip_public_r:
-                current_records.extend(itemnewr[:10])  # 保留最近几条记录
+                current_records.extend(itemnewr[:30])  # 保留最近几条记录
 
             updatenote_title(ip_cloud_id, noteip_title, parent_id=nbid)
             updatenote_body(ip_cloud_id, "\n".join(current_records), parent_id=nbid)
