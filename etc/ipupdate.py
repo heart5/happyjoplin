@@ -499,6 +499,7 @@ def showiprecords() -> bool:
                 error_type = "NoPublicIP" if not is_valid_ip(ip_public) else "NoLocalIP"
                 current_record = f"# ERROR::timeout::{error_type}::{nowstr}:: Local={ip_local}, Public={ip_public}"
             # current_records = [f"{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}"]
+            current_records = [current_record]
             if start_r and ip_local_r and ip_public_r:
                 current_records.extend(itemnewr[:10])  # 保留最近几条记录
 
