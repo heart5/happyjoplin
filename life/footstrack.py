@@ -69,6 +69,8 @@ def foot2record():
     itemnewr = [nowstr]
     if locinfo == False:
         itemnewr.extend([f"{str(locinfo)}"])
+        log.critical(f"位置获取失败，不记录数据，直接退出")
+        return
     else:
         log.info(f"定位方式: {locinfo.get('provider', 'unknown')}")
         itemnewr.extend(locinfo.values())
@@ -78,14 +80,6 @@ def foot2record():
     print(itemline[:numlimit])
     write2txt(txtfilename, itemline)
 
-
-# %%
-itemnewr = ["2025-08-28 15:34:00"]
-locinfo = False
-if locinfo == False:
-    # itemnewr.extend["123"]
-    itemnewr.extend([str(locinfo)])
-print(itemnewr)
 
 # %%
 if __name__ == "__main__":
