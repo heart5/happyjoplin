@@ -42,6 +42,7 @@ with pathmagic.context():
     from func.jpfuncs import (
         add_resource_from_bytes,
         createnote,
+        createresource,
         getinivaluefromcloud,
         jpapi,
         searchnotebook,
@@ -952,15 +953,13 @@ def generate_interactive_map(df, scope, config):
             popup=f"停留时间: {row.get('duration', 0) / 60:.1f}分钟",
         ).add_to(m)
 
-    # 保存为HTML文件
+    # 保存为html文件
     map_path = f"/tmp/interactive_map_{scope}.html"
     m.save(map_path)
-
-    with open(map_path, "rb") as f:
-        map_data_bytes = f.read()
+    res_id = createresource(map_path, title="交互地图.html")
     os.remove(map_path)
 
-    return add_resource_from_bytes(map_data_bytes, "交互地图.html")
+    return res_id
 
 
 # %% [markdown]
