@@ -24,6 +24,7 @@ IP信息更新工具 (增强版)
 
 # %%
 import datetime
+import ipaddress
 import logging
 import os
 import platform
@@ -31,6 +32,7 @@ import re
 import sys
 from typing import Any, List, Optional, Tuple
 
+# %%
 try:
     import pathmagic
 
@@ -67,8 +69,76 @@ except ImportError as e:
 # %%
 CONFIG_NAME = "happyjpip"
 
+
 # %% [markdown]
 # ## 核心功能函数
+
+# %% [markdown]
+# ### is_valid_ip(ip_str: Optional[str]) -> bool
+
+# %%
+def is_valid_ip(ip_str: Optional[str]) -> bool:
+    """
+    验证一个字符串是否是有效的IPv4或IPv6地址。
+    使用标准库 ipaddress 进行验证，最为可靠。
+    """
+    if not ip_str:
+        return False
+    try:
+        ipaddress.ip_address(ip_str.strip())
+        return True
+    except ValueError:
+        return False
+
+
+# %% [markdown]
+# ### get_public_ip() -> Tuple[Optional[str], Optional[str]]
+
+# %%
+def get_public_ip() -> Tuple[Optional[str], Optional[str]]:
+    """
+    尝试从多个源获取公网IP地址。
+    返回一个元组 (ip_address, error_message)。
+    如果成功获取到有效IP，则error_message为None。
+    如果获取失败或IP无效，则ip_address为None，并返回错误信息。
+    """
+    # 定义多个可靠的公网IP查询服务
+    ip_services = [
+        " https://api.ipify.org ",  # 简单可靠
+        " https://ident.me ",
+        " https://ifconfig.me/ip ",
+        " https://ipinfo.io/ip ",
+    ]
+
+    for service in ip_services:
+        try:
+            # 使用带超时的curl命令，避免长时间阻塞
+            cmd = f"curl -s -m 8 {service}"
+            ip_candidate = execcmd(cmd).strip()
+
+            if is_valid_ip(ip_candidate):
+                # 成功获取到有效IP
+                return (ip_candidate, None)
+            else:
+                # 获取到了响应，但内容不是IP，记录日志
+                log.warning(f"服务 {service} 返回了无效内容: {ip_candidate}")
+                continue
+
+        except Exception as e:
+            # 命令执行失败（超时、网络错误等）
+            error_msg = f"从 {service} 获取IP失败: {str(e)}"
+            log.warning(error_msg)
+            continue
+
+    # 所有服务都尝试失败
+    return (None, "所有公网IP查询服务均不可用或返回无效数据")
+
+# %%
+# 在原有的 getipwifi() 函数中，替换获取公网IP的部分：
+# ip_public, ip_error = get_public_ip()
+# if ip_public is None:
+#     log.error(f"获取公网IP失败，原因: {ip_error}")
+# ... 其他逻辑 ...
 
 # %% [markdown]
 # ### getipwifi() - 获取IP和WiFi信息
@@ -113,12 +183,9 @@ def getipwifi() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[s
             log.warning(f"获取本地IP失败: {e}")
 
         # 获取公网IP - 使用通用的curl命令
-        try:
-            ip_public = execcmd("curl -s ifconfig.me").strip()
-            if not ip_public:
-                ip_public = execcmd("curl -s ipinfo.io/ip").strip()
-        except Exception as e:
-            log.warning(f"获取公网IP失败: {e}")
+        ip_public, ip_error = get_public_ip()
+        if ip_public is None:
+            log.error(f"获取公网IP失败，原因：{ip_error}")
 
         # 获取WiFi信息 - 首先检查nmcli是否存在，不存在则尝试其他方法
         if re.findall("Android", sys_platform_str):
@@ -333,9 +400,33 @@ def showiprecords() -> bool:
         ip_local, ip_public, wifi, wifiid = getipwifi()
         log.info(f"当前获取的信息: {ip_local}, {ip_public}, {wifi}, {wifiid}")
 
-        if not ip_public:
-            log.error("无效的公网IP，可能未联网")
-            return False
+        should_update = False
+        # 1. 检查公网IP是否有效
+        if not is_valid_ip(ip_public):
+            # 本次获取失败，但可能有之前有效的记录
+            log.error(
+                f"本次获取失败，公网IP无效: {ip_public}。将尝试使用上次的有效记录进行对比。"
+            )
+            # 从配置中读取上一次成功的公网IP记录
+            ip_public_r_prev = safe_getcfpoptionvalue(section, "ip_public_r")
+            # 如果上一次的记录是有效的，说明网络状态可能从“有IP”变成了“无IP”（如断网）
+            if is_valid_ip(ip_public_r_prev):
+                log.info("检测到公网IP丢失（从有到无），这是一种状态变化，需要记录。")
+                # 此处可以特殊处理，例如记录一条“网络断开”的日志
+                should_update = True
+            else:
+                log.info("本次和上次获取均失败，无有效状态变化，跳过更新。")
+                return False  # 不更新记录
+
+        # 2. 检查其他信息是否有效（例如本地IP）
+        if not is_valid_ip(ip_local):
+            log.warning(f"本地IP地址无效: {ip_local}，但仍可继续处理公网IP")
+
+        # 3. 只有所有核心信息（至少公网IP）有效，才与历史记录比较并决定是否更新
+        ip_public_r = evalnone(safe_getcfpoptionvalue(section, "ip_public_r"))
+        if is_valid_ip(ip_public):
+            if ip_public != ip_public_r:
+                should_update = True
 
         # 查找或创建笔记
         nbid = searchnotebook("ewmobile")
@@ -353,7 +444,6 @@ def showiprecords() -> bool:
         # 使用安全函数获取记录信息
         nowstr = datetime.datetime.now().strftime("%F %T")
         ip_local_r = evalnone(safe_getcfpoptionvalue(section, "ip_local_r"))
-        ip_public_r = evalnone(safe_getcfpoptionvalue(section, "ip_public_r"))
         wifi_r = evalnone(safe_getcfpoptionvalue(section, "wifi_r"))
         wifiid_r = evalnone(safe_getcfpoptionvalue(section, "wifiid_r"))
         start_r = safe_getcfpoptionvalue(section, "start_r")
@@ -368,7 +458,7 @@ def showiprecords() -> bool:
             or (str(wifiid) != str(wifiid_r))
         )
 
-        if has_changed or not start_r:
+        if has_changed or not start_r or should_update:
             log.info("检测到信息变化或首次运行，更新记录")
 
             # 保存变化记录到文件
@@ -379,13 +469,13 @@ def showiprecords() -> bool:
 
             # 读取现有记录
             itemread = readfromtxt(txtfilename) if os.path.exists(txtfilename) else []
-            itemclean = [x for x in itemread if "unknown" not in x]
-            itempolluted = [x for x in itemread if "unknown" in x]
+            itemclean = [x for x in itemread if "timeout" not in x]
+            itempolluted = [x for x in itemread if "timeout" in x]
 
             if itempolluted:
                 log.info(f"发现不合法记录: {itempolluted}")
 
-            # 添加新记录
+            # 添加新记录并写入文件
             if start_r and ip_local_r and ip_public_r:  # 有之前记录
                 new_record = f"{ip_local_r}\t{ip_public_r}\t{wifi_r}\t{wifiid_r}\t{start_r}\t{nowstr}"
                 itemnewr = [new_record] + itemclean
@@ -399,9 +489,17 @@ def showiprecords() -> bool:
             setcfpoptionvalue(CONFIG_NAME, section, "start_r", nowstr)
 
             # 更新笔记
-            current_records = [f"{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}"]
+            # 构建当前记录行
+            if is_valid_ip(ip_public) and is_valid_ip(ip_local):
+                # 一切正常，记录数据行
+                current_record = f"{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}"
+            else:
+                # 获取失败，记录一条错误日志行（以#或//开头以示区别）
+                error_type = "NoPublicIP" if not is_valid_ip(ip_public) else "NoLocalIP"
+                current_record = f"# ERROR::timeout::{error_type}::{nowstr}:: Local={ip_local}, Public={ip_public}"
+            # current_records = [f"{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}"]
             if start_r and ip_local_r and ip_public_r:
-                current_records.extend(itemnewr[:4])  # 保留最近几条记录
+                current_records.extend(itemnewr[:10])  # 保留最近几条记录
 
             updatenote_title(ip_cloud_id, noteip_title, parent_id=nbid)
             updatenote_body(ip_cloud_id, "\n".join(current_records), parent_id=nbid)
