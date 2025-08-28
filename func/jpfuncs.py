@@ -287,7 +287,7 @@ def createresource(filename, title=None):
     else:
         res_title = filename.split("/")[-1]
     res_id = jpapi.add_resource(filename=filename, title=res_title)
-    log.info(f"资源文件{filename}创建成功，纳入笔记资源系统管理，可以正常被调用！")
+    log.info(f"资源文件《{res_title}》创建成功，纳入笔记资源系统管理，可以正常被调用！")
 
     return res_id
 
