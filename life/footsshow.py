@@ -63,8 +63,10 @@ class Config:
     PLOT_WIDTH: int = 12
     PLOT_HEIGHT: int = 12
     DPI: int = 300
-    TIME_WINDOW: str = "30min"  # 默认2h，可以为30min等数值
-    STAY_DIST_THRESH: int = 200  # 默认200米
+    # TIME_WINDOW: str = "30min"  # 默认2h，可以为30min等数值
+    TIME_WINDOW: str = getinivaluefromcloud("foots", "time_window")
+    # STAY_DIST_THRESH: int = 200  # 默认200米
+    STAY_DIST_THRESH: int = getinivaluefromcloud("foots", "stay_dist_thresh")
     STAY_TIME_THRESH: int = 600  # 默认600秒，十分钟
 
     def __post_init__(self):
