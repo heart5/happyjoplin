@@ -834,58 +834,58 @@ def generate_geo_link(lat, lon):
 
 # %%
 def generate_trajectory_map(df, scope, config):
-    """生成带地图底图的轨迹图（优化版）"""
+    """生成带地图底图的轨迹图（优化版）- 显示分段起始日期"""
     try:
         import contextily as ctx
 
         fig, ax = plt.subplots(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
 
-        # 1. 优化图例处理 - 限制最大图例数量或完全移除
-        max_legend_items = 5  # 最多显示5个图例项
+        # 1. 优化图例处理 - 只显示最新的6个分段，并显示起始日期
+        max_legend_items = 6  # 最多显示6个图例项
 
         if "segment" in df.columns:
+            # 获取所有分段并按起始时间排序（最新的在前）
             segments = df["segment"].unique()
 
-            # 如果分段太多，只显示前几个重要的分段
-            if len(segments) > max_legend_items:
-                # 计算每个分段的数据点数量，选择数据量最大的几个分段
-                segment_sizes = [
-                    (seg, len(df[df["segment"] == seg])) for seg in segments
-                ]
-                segment_sizes.sort(key=lambda x: x[1], reverse=True)
-                segments_to_show = [
-                    seg for seg, size in segment_sizes[:max_legend_items]
-                ]
+            # 计算每个分段的起始时间
+            segment_start_time = {}
+            for segment in segments:
+                seg_df = df[df["segment"] == segment]
+                segment_start_time[segment] = seg_df[
+                    "time"
+                ].min()  # 使用min()获取起始时间
 
-                # 绘制所有分段但只显示部分图例
-                for segment in segments:
-                    seg_df = df[df["segment"] == segment]
-                    if segment in segments_to_show:
-                        ax.plot(
-                            seg_df["longitude"],
-                            seg_df["latitude"],
-                            alpha=0.7,
-                            linewidth=2.0,
-                            label=f"段 {segment}",
-                        )
-                    else:
-                        ax.plot(
-                            seg_df["longitude"],
-                            seg_df["latitude"],
-                            alpha=0.7,
-                            linewidth=2.0,
-                            color="gray",  # 使用灰色表示不重要的分段
-                        )
-            else:
-                # 分段数量适中，全部显示
-                for segment in segments:
-                    seg_df = df[df["segment"] == segment]
+            # 按起始时间排序（最新的在前）
+            sorted_segments = sorted(
+                segments, key=lambda x: segment_start_time[x], reverse=True
+            )
+
+            # 只保留前6个最新分段
+            segments_to_show = sorted_segments[:max_legend_items]
+
+            # 绘制所有分段但只显示最新6个的图例
+            for segment in segments:
+                seg_df = df[df["segment"] == segment]
+                if segment in segments_to_show:
+                    # 格式化日期为"25年9月1日"的格式
+                    start_date_str = segment_start_time[segment].strftime(
+                        "%y年%-m月%-d日"
+                    )
+
                     ax.plot(
                         seg_df["longitude"],
                         seg_df["latitude"],
                         alpha=0.7,
                         linewidth=2.0,
-                        label=f"段 {segment}",
+                        label=f"{start_date_str}",
+                    )
+                else:
+                    ax.plot(
+                        seg_df["longitude"],
+                        seg_df["latitude"],
+                        alpha=0.7,
+                        linewidth=2.0,
+                        color="gray",  # 使用灰色表示不显示图例的分段
                     )
         else:
             # 没有分段数据
@@ -899,7 +899,6 @@ def generate_trajectory_map(df, scope, config):
         lat_range = max_lat - min_lat
 
         # 动态计算边距 - 基于数据范围的比例
-        # 小范围数据使用较大比例边距，大范围数据使用较小比例边距
         if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
             margin_factor = 0.15  # 15%的边距
         else:  # 大范围数据
@@ -953,28 +952,20 @@ def generate_trajectory_map(df, scope, config):
                 alpha=0.8,
             )
 
-        # 5. 设置标题和标签（保持不变）
+        # 5. 设置标题和标签
         ax.set_title(f"{scope.capitalize()}位置轨迹（带地图底图）", fontsize=14)
         ax.set_xlabel("经度")
         ax.set_ylabel("纬度")
         ax.grid(True, alpha=0.3)
 
-        # 6. 优化图例显示
-        if "segment" in df.columns and len(df["segment"].unique()) <= max_legend_items:
-            # 只有分段数量适中时才显示图例
+        # 6. 只显示最新6个分段的图例
+        if "segment" in df.columns and len(segments_to_show) > 0:
             ax.legend(
                 loc="upper left",
                 bbox_to_anchor=(0, 1),
                 fontsize="small",
-                ncol=min(3, len(df["segment"].unique())),  # 最多3列
-            )
-        elif "segment" in df.columns and len(segments_to_show) <= max_legend_items:
-            # 显示筛选后的重要分段
-            ax.legend(
-                loc="upper left",
-                bbox_to_anchor=(0, 1),
-                fontsize="small",
-                ncol=min(3, len(segments_to_show)),
+                ncol=min(2, len(segments_to_show)),  # 最多2列
+                title="行程起始日期",  # 添加图例标题
             )
 
         # 7. 提高保存图像的质量
@@ -982,9 +973,9 @@ def generate_trajectory_map(df, scope, config):
         plt.savefig(
             buf,
             format="png",
-            dpi=config.DPI,  # 提高DPI到300以获得更清晰的图像
+            dpi=config.DPI,
             bbox_inches="tight",
-            facecolor="white",  # 确保背景为白色
+            facecolor="white",
         )
         plt.close()
 
@@ -1002,19 +993,59 @@ def generate_trajectory_map(df, scope, config):
 
 # %%
 def generate_trajectory_map_fallback(df, scope, config):
-    """生成不带地图底图的轨迹图（备用）"""
+    """生成不带地图底图的轨迹图（备用）- 显示分段起始日期"""
     plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
 
+    # 只显示最新6个分段
+    max_legend_items = 6
+
     if "segment" in df.columns:
-        for segment in df["segment"].unique():
+        # 获取所有分段并按起始时间排序（最新的在前）
+        segments = df["segment"].unique()
+
+        # 计算每个分段的起始时间
+        segment_start_time = {}
+        for segment in segments:
             seg_df = df[df["segment"] == segment]
-            plt.plot(
-                seg_df["longitude"],
-                seg_df["latitude"],
-                alpha=0.7,
-                linewidth=1.5,
-                label=f"段 {segment}",
-            )
+            segment_start_time[segment] = seg_df["time"].min()  # 使用min()获取起始时间
+
+        # 按起始时间排序（最新的在前）
+        sorted_segments = sorted(
+            segments, key=lambda x: segment_start_time[x], reverse=True
+        )
+
+        # 只保留前6个最新分段
+        segments_to_show = sorted_segments[:max_legend_items]
+
+        # 绘制所有分段但只显示最新6个的图例
+        for segment in segments:
+            seg_df = df[df["segment"] == segment]
+            if segment in segments_to_show:
+                # 格式化日期为"25年9月1日"的格式
+                start_date_str = segment_start_time[segment].strftime("%y年%-m月%-d日")
+
+                plt.plot(
+                    seg_df["longitude"],
+                    seg_df["latitude"],
+                    alpha=0.7,
+                    linewidth=1.5,
+                    label=f"{start_date_str}",
+                )
+            else:
+                plt.plot(
+                    seg_df["longitude"],
+                    seg_df["latitude"],
+                    alpha=0.7,
+                    linewidth=1.5,
+                    color="gray",
+                )
+
+        plt.legend(
+            loc="upper left",
+            fontsize="small",
+            ncol=min(2, len(segments_to_show)),
+            title="行程起始日期",  # 添加图例标题
+        )
     else:
         plt.plot(df["longitude"], df["latitude"], "b-", alpha=0.5, linewidth=1)
 
