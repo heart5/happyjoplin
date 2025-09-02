@@ -60,8 +60,8 @@ with pathmagic.context():
 @dataclass
 class Config:
     REPORT_LEVELS: dict = None
-    PLOT_WIDTH: int = 10
-    PLOT_HEIGHT: int = 8
+    PLOT_WIDTH: int = 12
+    PLOT_HEIGHT: int = 12
     DPI: int = 300
     TIME_WINDOW: str = "30min"  # 默认2h，可以为30min等数值
     STAY_DIST_THRESH: int = 200  # 默认200米
@@ -840,55 +840,152 @@ def generate_trajectory_map(df, scope, config):
 
         fig, ax = plt.subplots(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
 
-        # 绘制轨迹
+        # 1. 优化图例处理 - 限制最大图例数量或完全移除
+        max_legend_items = 5  # 最多显示5个图例项
+
         if "segment" in df.columns:
-            for segment in df["segment"].unique():
-                seg_df = df[df["segment"] == segment]
-                ax.plot(
-                    seg_df["longitude"],
-                    seg_df["latitude"],
-                    alpha=0.7,
-                    linewidth=2.0,
-                    label=f"段 {segment}",
-                )
+            segments = df["segment"].unique()
+
+            # 如果分段太多，只显示前几个重要的分段
+            if len(segments) > max_legend_items:
+                # 计算每个分段的数据点数量，选择数据量最大的几个分段
+                segment_sizes = [
+                    (seg, len(df[df["segment"] == seg])) for seg in segments
+                ]
+                segment_sizes.sort(key=lambda x: x[1], reverse=True)
+                segments_to_show = [
+                    seg for seg, size in segment_sizes[:max_legend_items]
+                ]
+
+                # 绘制所有分段但只显示部分图例
+                for segment in segments:
+                    seg_df = df[df["segment"] == segment]
+                    if segment in segments_to_show:
+                        ax.plot(
+                            seg_df["longitude"],
+                            seg_df["latitude"],
+                            alpha=0.7,
+                            linewidth=2.0,
+                            label=f"段 {segment}",
+                        )
+                    else:
+                        ax.plot(
+                            seg_df["longitude"],
+                            seg_df["latitude"],
+                            alpha=0.7,
+                            linewidth=2.0,
+                            color="gray",  # 使用灰色表示不重要的分段
+                        )
+            else:
+                # 分段数量适中，全部显示
+                for segment in segments:
+                    seg_df = df[df["segment"] == segment]
+                    ax.plot(
+                        seg_df["longitude"],
+                        seg_df["latitude"],
+                        alpha=0.7,
+                        linewidth=2.0,
+                        label=f"段 {segment}",
+                    )
         else:
+            # 没有分段数据
             ax.plot(df["longitude"], df["latitude"], "b-", alpha=0.7, linewidth=2.0)
 
-        # 计算合适的边距
+        # 2. 优化边界计算
         min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
         min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
 
         lon_range = max_lon - min_lon
         lat_range = max_lat - min_lat
 
-        # 动态边距：小范围数据使用较大边距，大范围数据使用较小边距
+        # 动态计算边距 - 基于数据范围的比例
+        # 小范围数据使用较大比例边距，大范围数据使用较小比例边距
         if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
-            margin = 0.02
+            margin_factor = 0.15  # 15%的边距
         else:  # 大范围数据
-            margin = 0.005
+            margin_factor = 0.05  # 5%的边距
 
-        ax.set_xlim(min_lon - margin, max_lon + margin)
-        ax.set_ylim(min_lat - margin, max_lat + margin)
+        lon_margin = lon_range * margin_factor
+        lat_margin = lat_range * margin_factor
 
-        # 添加地图底图
-        ctx.add_basemap(
-            ax,
-            crs="EPSG:4326",
-            source=ctx.providers.OpenStreetMap.Mapnik,
-            alpha=0.8,  # 稍微透明，使轨迹更突出
-        )
+        # 确保最小边距（避免数据点太靠近边缘）
+        min_abs_margin = 0.005  # 最小绝对边距（度）
+        lon_margin = max(lon_margin, min_abs_margin)
+        lat_margin = max(lat_margin, min_abs_margin)
 
+        ax.set_xlim(min_lon - lon_margin, max_lon + lon_margin)
+        ax.set_ylim(min_lat - lat_margin, max_lat + lat_margin)
+
+        # 3. 计算合适的缩放级别
+        lon_range = max_lon - min_lon
+        lat_range = max_lat - min_lat
+
+        # 根据数据范围动态确定缩放级别
+        max_range = max(lon_range, lat_range)
+        if max_range < 0.01:  # 非常小的范围
+            zoom_level = 15
+        elif max_range < 0.05:
+            zoom_level = 13
+        elif max_range < 0.1:
+            zoom_level = 12
+        elif max_range < 0.5:
+            zoom_level = 10
+        else:
+            zoom_level = 8  # 大范围使用较低缩放级别
+
+        # 4. 使用高分辨率地图源
+        try:
+            # 尝试使用Stamen Terrain背景，通常提供较高清晰度
+            ctx.add_basemap(
+                ax,
+                crs="EPSG:4326",
+                source=ctx.providers.Stamen.Terrain,
+                zoom=zoom_level,  # 指定缩放级别
+                alpha=0.8,
+            )
+        except:
+            # 备用方案：使用OpenStreetMap但指定缩放级别
+            ctx.add_basemap(
+                ax,
+                crs="EPSG:4326",
+                source=ctx.providers.OpenStreetMap.Mapnik,
+                zoom=zoom_level,
+                alpha=0.8,
+            )
+
+        # 5. 设置标题和标签（保持不变）
         ax.set_title(f"{scope.capitalize()}位置轨迹（带地图底图）", fontsize=14)
         ax.set_xlabel("经度")
         ax.set_ylabel("纬度")
         ax.grid(True, alpha=0.3)
 
-        # 添加图例（如果有分段）
-        if "segment" in df.columns:
-            ax.legend()
+        # 6. 优化图例显示
+        if "segment" in df.columns and len(df["segment"].unique()) <= max_legend_items:
+            # 只有分段数量适中时才显示图例
+            ax.legend(
+                loc="upper left",
+                bbox_to_anchor=(0, 1),
+                fontsize="small",
+                ncol=min(3, len(df["segment"].unique())),  # 最多3列
+            )
+        elif "segment" in df.columns and len(segments_to_show) <= max_legend_items:
+            # 显示筛选后的重要分段
+            ax.legend(
+                loc="upper left",
+                bbox_to_anchor=(0, 1),
+                fontsize="small",
+                ncol=min(3, len(segments_to_show)),
+            )
 
+        # 7. 提高保存图像的质量
         buf = BytesIO()
-        plt.savefig(buf, format="png", dpi=config.DPI, bbox_inches="tight")
+        plt.savefig(
+            buf,
+            format="png",
+            dpi=config.DPI,  # 提高DPI到300以获得更清晰的图像
+            bbox_inches="tight",
+            facecolor="white",  # 确保背景为白色
+        )
         plt.close()
 
         return add_resource_from_bytes(
