@@ -68,8 +68,25 @@ class Config:
     # STAY_DIST_THRESH: int = 200  # 默认200米
     STAY_DIST_THRESH: int = getinivaluefromcloud("foots", "stay_dist_thresh")
     STAY_TIME_THRESH: int = 600  # 默认600秒，十分钟
+    # 识别重要地点时最大抽样数量，最好从一万（10000）起
+    SAMPLE_FOR_IMPORTANT_POINTS: int = getinivaluefromcloud(
+        "foots", "sample_for_important_points"
+    )
+    # 新增时间跳跃相关配置
+    TIME_JUMP_DAY_THRESH: int = 30  # 白天阈值（分钟）
+    TIME_JUMP_NIGHT_THRESH: int = 240  # 夜间阈值（分钟）
 
     def __post_init__(self):
+        # 从配置读取阈值
+        self.TIME_JUMP_DAY_THRESH = int(
+            getinivaluefromcloud("foots", "time_jump_day_thresh")
+        )
+        self.TIME_JUMP_NIGHT_THRESH = int(
+            getinivaluefromcloud(
+                "foots",
+                "time_jump_night_thresh",
+            )
+        )
         if self.REPORT_LEVELS is None:
             self.REPORT_LEVELS = {
                 "monthly": 1,
@@ -162,7 +179,7 @@ def analyze_location_data(indf, scope):
     print(df.groupby("device_id").count()["time"])
 
     # 1.2. 处理时间跳跃
-    df = handle_time_jumps(df)
+    df = handle_time_jumps(df, config)
 
     # 1.3. 位置平滑
     df = smooth_coordinates(df)
@@ -216,7 +233,7 @@ def analyze_location_data(indf, scope):
     }
 
     # 2.8 重要地点分析
-    clustered = identify_important_places(df)
+    clustered = identify_important_places(df, config)
     important_places = (
         clustered.groupby("cluster")
         .agg(
@@ -232,7 +249,7 @@ def analyze_location_data(indf, scope):
     )
 
     # 2.9 停留点分析
-    df = identify_stay_points(df, dist_threshold=350, time_threshold=600)
+    df = identify_stay_points(df)
     # 计算停留点统计
     stay_stats = {
         "total_stays": df["is_stay"].sum(),
@@ -323,231 +340,53 @@ def analyze_location_data(indf, scope):
 
 # %%
 def fuse_device_data(df, config: Config):
-    """多设备数据智能融合"""
-    print(f"多设备数据智能融合时间窗口为：{config.TIME_WINDOW}")
+    """多设备数据智能选择：每个时间窗口选择最佳设备的数据"""
+    print(f"多设备数据智能选择时间窗口为：{config.TIME_WINDOW}")
+
+    # 1. 创建时间窗口
     df["time_window"] = df["time"].dt.floor(config.TIME_WINDOW)
-    # print(df.tail())
-    fused_points = []
+
+    # 2. 存储最终选择的数据点
+    selected_points = []
 
     for window, group in df.groupby("time_window"):
-        # 给设备活跃度赋权，基于时间窗口涵盖的数据
-        device_activity = {
-            device_id: calc_device_activity(group, device_id)
-            for device_id in group["device_id"].unique()
-        }
-        # 添加位置稳定性检测
-        if len(group) > 1:
-            # 计算组内位置标准差
-            lat_std = group["latitude"].std()
-            lon_std = group["longitude"].std()
+        if len(group) == 0:
+            continue
 
-            # 如果位置变化很小（稳定状态），选择精度最高的点
-            if lat_std < 0.002 and lon_std < 0.002:  # 约200米精度
-                candidate = group.loc[group["accuracy"].idxmin()]
-            else:
-                # 原有选择逻辑
-                candidate = group.loc[group["accuracy"].idxmin()]
-        else:
-            candidate = group.iloc[0]
+        # 3. 计算每个设备的综合评分
+        device_scores = {}
+        for device_id, device_data in group.groupby("device_id"):
+            # 3.1 计算设备活跃度
+            activity = calc_device_activity_optimized(device_data, device_id)
 
-        active_devices = [
-            did
-            for did, score in device_activity.items()
-            if score > 50 and did in group["device_id"].values
-        ]
-        if active_devices:
-            active_group = group[group["device_id"].isin(active_devices)]
-            candidate = active_group.loc[active_group["accuracy"].idxmin()]
-        else:
-            candidate = group.loc[group["accuracy"].idxmin()]
+            # 3.2 计算设备平均精度（精度越高越好）
+            avg_accuracy = device_data["accuracy"].mean()
 
-        if fused_points:
-            last_point = fused_points[-1]
-            if not check_spatiotemporal_consistency(last_point, candidate):
-                group["dist_to_last"] = group.apply(
-                    lambda row: great_circle(
-                        (last_point.latitude, last_point.longitude),
-                        (row.latitude, row.longitude),
-                    ).m,
-                    axis=1,
-                )
-                candidate = group.loc[group["dist_to_last"].idxmin()]
+            # 3.3 计算设备位置稳定性
+            lat_std = device_data["latitude"].std()
+            lon_std = device_data["longitude"].std()
+            stability = 1 / (lat_std + lon_std + 1e-6)  # 避免除零
 
-        fused_points.append(candidate)
-    outdf = pd.DataFrame(fused_points)
+            # 3.4 综合评分 = 活跃度 * 稳定性 * (1/平均精度)
+            score = activity * stability * (1 / max(avg_accuracy, 1))
+            device_scores[device_id] = score
 
-    return outdf
+        # 4. 选择评分最高的设备
+        best_device = max(device_scores, key=device_scores.get)
 
+        # 5. 获取该设备在本时间窗口的所有数据点
+        best_device_data = group[group["device_id"] == best_device]
 
-# %% [markdown]
-# ### fuse_device_data_dask(df, config: Config)
+        # 6. 添加元数据
+        best_device_data = best_device_data.copy()
+        best_device_data["selected_device"] = best_device
+        best_device_data["selection_score"] = device_scores[best_device]
 
-# %%
-@timethis
-def fuse_device_data_dask(df, config: Config):
-    """使用Dask进行并行处理 - 修复版"""
-    # 如果数据量小，直接使用单进程
-    if len(df) < 10000:  # 小于1万行直接用单进程
-        print("数据量较小，使用单进程处理...")
-        return fuse_device_data_optimized(df, config)
+        selected_points.append(best_device_data)
 
-    # 确保df是Pandas DataFrame
-    if not isinstance(df, pd.DataFrame):
-        df = df.compute() if hasattr(df, "compute") else pd.DataFrame(df)
-
-    # 获取原始列名
-    original_columns = df.columns.tolist()
-
-    # 转换为Dask DataFrame，分区数根据数据大小调整
-    n_partitions = max(1, min(os.cpu_count(), len(df) // 5000))  # 每分区约5000行
-    ddf = dd.from_pandas(df, npartitions=n_partitions)
-
-    # 定义处理函数 - 确保返回与原始数据相同的列
-    def process_partition(partition):
-        # 调用优化后的fuse_device_data函数
-        result = fuse_device_data_optimized(partition, config)
-
-        # 确保返回的DataFrame只包含原始列
-        # 如果结果中有额外列，只保留原始列
-        result_columns = set(result.columns)
-        original_columns_set = set(original_columns)
-
-        if result_columns != original_columns_set:
-            # 找出缺失的列并添加（填充NaN）
-            missing_cols = original_columns_set - result_columns
-            for col in missing_cols:
-                result[col] = np.nan
-
-            # 移除多余的列
-            extra_cols = result_columns - original_columns_set
-            result = result.drop(columns=list(extra_cols))
-
-            # 确保列顺序一致
-            result = result[original_columns]
-
-        return result
-
-    # 提供正确的元数据
-    meta = df.iloc[:0].copy()
-
-    try:
-        # 应用处理函数
-        results = ddf.map_partitions(process_partition, meta=meta).compute()
-        return results
-    except Exception as e:
-        print(f"Dask处理失败: {e}")
-        # 回退到单进程处理
-        print("回退到单进程处理...")
-        return fuse_device_data_optimized(df, config)
-
-
-# %% [markdown]
-# ### fuse_device_data_optimized(df, config: Config)
-
-# %%
-# 优化后的fuse_device_data函数
-def fuse_device_data_optimized(df, config: Config):
-    """优化版的多设备数据智能融合"""
-    print(f"多设备数据智能融合时间窗口为：{config.TIME_WINDOW}")
-
-    # 预先计算时间窗口
-    df["time_window"] = df["time"].dt.floor(config.TIME_WINDOW)
-
-    # 使用更高效的分组和聚合方法
-    fused_points = []
-    prev_candidate = None
-
-    # 预先计算所有时间窗口
-    time_windows = df["time_window"].unique()
-
-    for window in time_windows:
-        group = df[df["time_window"] == window]
-
-        # 计算设备活跃度
-        device_activity = {}
-        for device_id in group["device_id"].unique():
-            device_activity[device_id] = calc_device_activity_fast(group, device_id)
-
-        # 选择最佳候选点
-        if len(group) > 1:
-            lat_std = group["latitude"].std()
-            lon_std = group["longitude"].std()
-
-            if lat_std < 0.002 and lon_std < 0.002:
-                candidate = group.loc[group["accuracy"].idxmin()].copy()
-            else:
-                candidate = group.loc[group["accuracy"].idxmin()].copy()
-        else:
-            candidate = group.iloc[0].copy()
-
-        # 筛选活跃设备
-        active_devices = [
-            did
-            for did, score in device_activity.items()
-            if score > 50 and did in group["device_id"].values
-        ]
-
-        if active_devices:
-            active_group = group[group["device_id"].isin(active_devices)]
-            candidate = active_group.loc[active_group["accuracy"].idxmin()].copy()
-
-        # 时空一致性检查
-        if prev_candidate is not None and not check_spatiotemporal_consistency(
-            prev_candidate, candidate
-        ):
-            # 计算所有点到上一个点的距离
-            distances = []
-            for _, row in group.iterrows():
-                dist = great_circle(
-                    (prev_candidate.latitude, prev_candidate.longitude),
-                    (row.latitude, row.longitude),
-                ).m
-                distances.append(dist)
-
-            # 添加距离列
-            group = group.copy()
-            group["dist_to_last"] = distances
-
-            # 选择距离最小的点
-            candidate = group.loc[group["dist_to_last"].idxmin()].copy()
-            # 移除临时列
-            candidate = (
-                candidate.drop("dist_to_last")
-                if "dist_to_last" in candidate
-                else candidate
-            )
-
-        fused_points.append(candidate)
-        prev_candidate = candidate
-
-    # 创建结果DataFrame，确保只包含原始列
-    outdf = pd.DataFrame(fused_points)
-
-    # 移除可能添加的临时列
-    original_columns = [col for col in df.columns if col != "time_window"]
-    outdf = outdf[original_columns]
-
-    return outdf
-
-
-# %% [markdown]
-# ### calc_device_activity_fast(group, device_id)
-
-# %%
-# 快速计算设备活跃度的函数
-def calc_device_activity_fast(group, device_id):
-    """快速计算设备活跃度"""
-    device_data = group[group["device_id"] == device_id]
-    if len(device_data) < 2:
-        return 0
-
-    # 简化计算逻辑
-    time_diff = (device_data["time"].max() - device_data["time"].min()).total_seconds()
-    if time_diff == 0:
-        return 0
-
-    activity_score = min(100, len(device_data) * 10 / (time_diff / 3600))
-    return activity_score
+    # 7. 合并所有选择的数据点
+    result_df = pd.concat(selected_points)
+    return result_df
 
 # %% [markdown]
 # ### calc_device_activity(df, device_id)
@@ -595,28 +434,30 @@ def calc_device_activity_optimized(df, device_id):
     if len(device_data) < 2:
         return 0
 
-    # 向量化距离计算（效率提升10倍+）
+    # 向量化距离计算
     coords = device_data[["latitude", "longitude"]].values
-    dists = [great_circle(coords[i - 1], coords[i]).m for i in range(1, len(coords))]
-    total_dist = sum(dists)
+    dists = np.zeros(len(coords) - 1)
+    for i in range(1, len(coords)):
+        dists[i - 1] = great_circle(coords[i - 1], coords[i]).m
+    total_dist = np.sum(dists)
 
-    # 时间跨度计算（添加最小阈值）
+    # 时间跨度计算
     time_min = device_data["time"].min()
     time_max = device_data["time"].max()
-    time_span = max(0.1, (time_max - time_min).total_seconds() / 3600)  # 至少0.1小时
+    time_span = max(0.1, (time_max - time_min).total_seconds() / 3600)
 
-    # 位置变化计算（转换为米制单位）
-    lat_deg_to_m = 111000  # 1纬度≈111km
+    # 位置变化计算
+    lat_deg_to_m = 111000
     mean_lat = np.radians(device_data["latitude"].mean())
-    lon_deg_to_m = 111000 * np.cos(mean_lat)  # 经度距离随纬度变化
+    lon_deg_to_m = 111000 * np.cos(mean_lat)
 
     lat_std_m = device_data["latitude"].std() * lat_deg_to_m
     lon_std_m = device_data["longitude"].std() * lon_deg_to_m
-    pos_variation = (lat_std_m**2 + lon_std_m**2) ** 0.5  # 综合位置变化
+    pos_variation = np.sqrt(lat_std_m**2 + lon_std_m**2)
 
     # 改进评分公式
-    distance_score = min(100, total_dist / time_span) * 0.7  # 米/小时
-    variation_score = min(100, pos_variation / 1000) * 0.3  # 千米级变化
+    distance_score = min(100, total_dist / time_span) * 0.7
+    variation_score = min(100, pos_variation / 1000) * 0.3
 
     return min(100, distance_score + variation_score)
 
@@ -650,18 +491,68 @@ def smooth_coordinates(df, window_size=5):
     return df
 
 # %% [markdown]
-# ### handle_time_jumps(df)
+# ### handle_time_jumps(df, config: Config)
 
 
 # %%
-def handle_time_jumps(df):
+def handle_time_jumps(df, config: Config):
+    """
+    智能处理时间跳跃，考虑位置变化和设备切换
+    避免过度分割连续轨迹
+    """
     if df.empty:
         return df
 
+    # 1. 排序并计算时间差
     df = df.sort_values("time")
-    df["time_diff"] = df["time"].diff().dt.total_seconds() / 60
-    df["big_gap"] = df["time_diff"] > 2 * 60
-    df["segment"] = df["big_gap"].cumsum()
+    df["time_diff"] = df["time"].diff().dt.total_seconds().fillna(0) / 60
+
+    # 2. 动态阈值计算（基于活动模式）
+    # 工作日白天阈值较低（30分钟），夜间阈值较高（4小时）
+    hour = df["time"].dt.hour
+    is_weekday = df["time"].dt.dayofweek < 6
+    day_threshold = config.TIME_JUMP_DAY_THRESH  # 30分钟
+    night_threshold = config.TIME_JUMP_NIGHT_THRESH  # 4小时
+
+    # 动态阈值：白天工作时间阈值低，夜间阈值高
+    df["dynamic_threshold"] = np.where(
+        (hour >= 8) & (hour <= 20) & is_weekday, day_threshold, night_threshold
+    )
+
+    # 3. 智能跳跃检测（结合时间和位置变化）
+    df["prev_lat"] = df["latitude"].shift(1)
+    df["prev_lon"] = df["longitude"].shift(1)
+
+    # 计算位置变化（米）
+    df["dist_change"] = df.apply(
+        lambda row: great_circle(
+            (row["prev_lat"], row["prev_lon"]), (row["latitude"], row["longitude"])
+        ).m
+        if not pd.isna(row["prev_lat"])
+        else 0,
+        axis=1,
+    )
+
+    # 4. 跳跃条件：时间差超过阈值且位置变化小（可能为设备切换或静止）
+    df["big_gap"] = (df["time_diff"] > df["dynamic_threshold"]) & (
+        df["dist_change"] < 200
+    )
+
+    # 5. 设备切换检测（额外标记）
+    df["device_change"] = df["device_id"] != df["device_id"].shift(1)
+
+    # 6. 智能分段逻辑
+    # 组合时间跳跃和设备切换作为分段点
+    df["segment_point"] = df["big_gap"] | df["device_change"]
+    df["segment"] = df["segment_point"].cumsum()
+
+    # 清理临时列
+    df.drop(
+        ["prev_lat", "prev_lon", "dynamic_threshold", "segment_point", "device_change"],
+        axis=1,
+        inplace=True,
+        errors="ignore",
+    )
 
     return df
 
@@ -705,6 +596,7 @@ def detect_static_devices(df, var_threshold=0.0002):
 
 # %%
 def identify_stay_points(df, dist_threshold=350, time_threshold=600):
+    # log.info(f"识别停留点初始数据记录数为：\t{df.shape[0]}")
     # 确保数据按时间排序
     df = df.sort_values("time").reset_index(drop=True)
 
@@ -740,15 +632,65 @@ def identify_stay_points(df, dist_threshold=350, time_threshold=600):
     df["duration"] = stay_groups["time_diff"].transform("sum")
 
     # print(df.tail(10))
+    # log.info(f"识别停留点完毕后数据记录数为：\t{df.shape[0]}")
     return df
 
 # %% [markdown]
-# ### `identify_important_places(df, radius_km=0.5, min_points=3)`
+# ### identify_important_places(df, radius_km=0.5, min_points=3)
 # 识别重要地点（停留点）
 
 
 # %%
-def identify_important_places(df, radius_km=0.5, min_points=3):
+def identify_important_places(df, config, radius_km=0.5, min_points=3):
+    """
+    识别重要地点（停留点）
+    优化内存使用，避免大数据集处理时的内存溢出
+    """
+    # log.info(f"识别重要地点初始数据记录数为：\t{df.shape[0]}")
+    # 使用平滑后的坐标
+    if "smoothed_lat" in df.columns and "smoothed_lon" in df.columns:
+        coords = df[["smoothed_lat", "smoothed_lon"]].values
+    else:
+        coords = df[["latitude", "longitude"]].values
+
+    # 优化1：对数据进行采样，减少处理量
+    sample_size = min(config.SAMPLE_FOR_IMPORTANT_POINTS, len(coords))
+    if len(coords) > sample_size:
+        indices = np.random.choice(len(coords), sample_size, replace=False)
+        coords = coords[indices]
+    # log.info(f"识别重要地点初始数据记录数抽样后为：\t{len(coords)}")
+
+    kms_per_radian = 6371.0088
+    epsilon = radius_km / kms_per_radian  # 500米半径
+
+    # 优化3：使用更高效的算法参数
+    db = DBSCAN(
+        eps=epsilon,
+        min_samples=min_points,
+        algorithm="ball_tree",
+        metric="haversine",
+        n_jobs=-1,  # 使用所有CPU核心并行计算
+    ).fit(np.radians(coords))
+
+    # 为原始数据添加聚类标签
+    df["cluster"] = -1  # 默认-1表示噪声点
+    if len(coords) < len(df):
+        # 只更新采样点的聚类标签
+        df.iloc[indices, df.columns.get_loc("cluster")] = db.labels_
+    else:
+        df["cluster"] = db.labels_
+
+    # 只保留有效聚类（排除噪声点）
+    clustered = df[df["cluster"] >= 0]
+
+    return clustered
+
+
+# %% [markdown]
+# ### identify_important_places_before(df, radius_km=0.5, min_points=3)
+
+# %%
+def identify_important_places_before(df, radius_km=0.5, min_points=3):
     """
     识别重要地点（停留点）
     减小聚类半径以处理位置扰动
@@ -920,19 +862,24 @@ def generate_trajectory_map(df, scope, config):
         # 3. 计算合适的缩放级别
         lon_range = max_lon - min_lon
         lat_range = max_lat - min_lat
+        max_range = max(lon_range, lat_range)
 
         # 根据数据范围动态确定缩放级别
-        max_range = max(lon_range, lat_range)
-        if max_range < 0.01:  # 非常小的范围
+        # 更精确的缩放级别映射
+        if max_range < 0.001:  # 非常小的范围（约100米）
+            zoom_level = 18
+        elif max_range < 0.005:  # 约500米
+            zoom_level = 16
+        elif max_range < 0.01:  # 约1公里
             zoom_level = 15
-        elif max_range < 0.05:
+        elif max_range < 0.05:  # 约5公里
+            zoom_level = 14
+        elif max_range < 0.1:  # 约10公里
             zoom_level = 13
-        elif max_range < 0.1:
+        elif max_range < 0.5:  # 约50公里
             zoom_level = 12
-        elif max_range < 0.5:
+        else:  # 大范围
             zoom_level = 10
-        else:
-            zoom_level = 8  # 大范围使用较低缩放级别
 
         # 4. 使用高分辨率地图源
         try:
@@ -1202,9 +1149,23 @@ def generate_time_series_analysis(df, scope, config):
     # 移动速度分析（如果有时间差和距离数据）
     if "dist_to_prev" in df.columns and "time_diff" in df.columns:
         df["speed"] = df["dist_to_prev"] / (df["time_diff"] / 3600)  # km/h
-        ax3.hist(df["speed"].dropna(), bins=50, alpha=0.7)
-        ax3.set_title("移动速度分布")
-        ax3.set_xlabel("速度 (km/h)")
+        valid_speeds = df["speed"][np.isfinite(df["speed"])]  # 过滤inf/nan
+
+        if not valid_speeds.empty:
+            ax3.hist(valid_speeds, bins=50, alpha=0.7)
+            ax3.set_title("速度分布")
+            ax3.set_xlabel("速度 (公里/小时)")
+            ax3.set_ylabel("数量")
+        else:
+            ax3.text(
+                0.5,
+                0.5,
+                "无有效速度数据",
+                horizontalalignment="center",
+                verticalalignment="center",
+                transform=ax3.transAxes,
+            )
+            ax3.set_title("速度分布 (无数据)")
 
     # 记录间隔分布
     if "time_diff" in df.columns:
