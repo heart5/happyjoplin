@@ -285,7 +285,7 @@ def analyze_location_data(indf, scope):
     resource_ids["trajectory_with_map"] = generate_trajectory_map(df, scope, config)
 
     # 保留原始轨迹图作为备选
-    resource_ids["trajectory"] = generate_trajectory_map_fallback(df, scope, config)
+    # resource_ids["trajectory"] = generate_trajectory_map_fallback(df, scope, config)
 
     # 3.2 设备分布饼图
     resource_ids["device_dist"] = generate_device_pie_chart(

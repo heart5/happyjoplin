@@ -55,12 +55,12 @@ with pathmagic.context():
 # %% [markdown]
 # ### def set_devicename2ini(id, sysstr)
 
-
 # %%
 def set_devicename2ini(id, sysstr):
     from func.jpfuncs import getinivaluefromcloud
 
     if (device_name := getcfpoptionvalue("happyjphard", id, "device_name")) is None:
+        log.info(f"设备名称{device_name}为None，可能是尚未设置或从云端获取。")
         if device_name_fromcloud := getinivaluefromcloud("device", id):
             setcfpoptionvalue("happyjphard", id, "device_name", device_name_fromcloud)
         else:
@@ -186,8 +186,6 @@ if __name__ == "__main__":
         log.info(f"运行文件\t{__file__}")
     deviceid = getdeviceid()
     print(deviceid)
-    #     set_devicename2ini(id, 'Linux')
-    #     devicename = get_devicenamefromini(id)
     devicename = getdevicename()
     print(f"{devicename}")
     if not_IPython():
