@@ -15,9 +15,7 @@
 # # 获取主机id和名称
 
 # %%
-"""
-获取主机的唯一id
-"""
+"""获取主机的唯一id."""
 
 # %% [markdown]
 # ## 库引入
@@ -56,7 +54,17 @@ with pathmagic.context():
 # ### def set_devicename2ini(id, sysstr)
 
 # %%
-def set_devicename2ini(id, sysstr):
+def set_devicename2ini(id: str, sysstr: str) -> None:
+    """设置设备名称到ini配置文件.
+
+    Args:
+        id (str): id
+        sysstr (str): str
+
+    Returns:
+        None: 不返回值
+
+    """
     from func.jpfuncs import getinivaluefromcloud
 
     if (device_name := getcfpoptionvalue("happyjphard", id, "device_name")) is None:
@@ -76,7 +84,16 @@ def set_devicename2ini(id, sysstr):
 
 
 # %%
-def get_devicenamefromini(id):
+def get_devicenamefromini(id: str) -> str:
+    """从ini配置文件中获取设备名称.
+
+    Args:
+        id: id
+
+    Returns:
+        str: 设备名称
+
+    """
     return getcfpoptionvalue("happyjphard", id, "device_name")
 
 
@@ -86,7 +103,12 @@ def get_devicenamefromini(id):
 
 # %%
 # @timethis
-def getdeviceid():
+def getdeviceid() -> None:
+    """获取设备id.
+
+    Returns:
+        None: 空值
+    """
     # printCPU()
     # printMain_board()
     # printBIOS()
@@ -159,7 +181,7 @@ def getdeviceid():
 
 
 # %%
-def getdevicename():
+def getdevicename() -> str:
     id = getdeviceid()
     set_devicename2ini(id, "Linux")
 
@@ -171,7 +193,7 @@ def getdevicename():
 
 
 # %%
-def gethostuser():
+def gethostuser() -> str:
     hostuser = getdevicename() + "(" + execcmd("whoami") + ")"
 
     return hostuser
