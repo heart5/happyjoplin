@@ -3,10 +3,12 @@ target-version = "py310"
 # 启用核心规则集
 line-length = 120
 select = ["E", "F", "W", "I", "N", "ANN"] # ANN为类型注解规则，N强制执行PEP8命名规范，I自动排序import语句
-ignore = ["E501"]
+ignore = ["E501", "D413", "D103"]
 extend-include = ["*.ipynb"]
 
 [tool.ruff.lint]
+# 启用文档字符串规则
+extend-select = ["D"]
 # 强制要求公共函数有类型注解
 # require-annotations = true
 # 自动修复缺失的类型注解
@@ -21,7 +23,7 @@ indent-style = "space"
 
 [tool.ruff.isort]
 # 按类型分组排序import
-profile = "black"
+# profile = "black"
 
 [tool.jupytext]
 formats = "ipynb,py:percent"
