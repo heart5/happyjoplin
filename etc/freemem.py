@@ -58,10 +58,8 @@ with pathmagic.context():
 
 # %%
 @timethis
-def getmemdf():
-    """
-    从指定路径获取内存情况并处理数据，生成DataFrame返回
-    """
+def getmemdf() -> (int, pd.DataFrame):
+    """从指定路径获取内存情况并处理数据，生成DataFrame返回."""
     # 根据不同的系统复制家目录
     sysinfo = execcmd("uname -a")
     if re.search("Android", sysinfo) is None:
@@ -116,10 +114,8 @@ def getmemdf():
 
 # %%
 @timethis
-def gap2img(gap=30):
-    """
-    把内存记录按照间隔（30分钟）拆离，并生成最近的动图和所有数据集的总图
-    """
+def gap2img(gap: int=30) -> str:
+    """把内存记录按照间隔（30分钟）拆离，并生成最近的动图和所有数据集的总图."""
     totalmem, memdfdone = getmemdf()
     tmemg = totalmem / (1024 * 1024)
 
@@ -131,7 +127,7 @@ def gap2img(gap=30):
     for ix in tm_gap.index:
         gaplst.append(f"{ix}\t{memdfdone['time'].loc[ix]}\t{tm_gap[ix]}")
     log.info(
-        f"{gethostuser()}的内存记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}"
+        f"{gethostuser()}的内存({tmemg})记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}"
     )
 
     # 处理无断点的情况
@@ -189,11 +185,8 @@ def gap2img(gap=30):
 
 # %%
 @timethis
-def freemem2note():
-    """
-    综合输出内存动态图并更新至笔记
-    """
-
+def freemem2note() -> None:
+    """综合输出内存动态图并更新至笔记."""
     login_user = execcmd("whoami")
     namestr = "happyjp_life"
     section = f"health_{getdevicename()}_{login_user}"
