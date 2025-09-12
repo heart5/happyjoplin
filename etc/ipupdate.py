@@ -13,10 +13,10 @@
 # ---
 
 # %%
-"""
-IP信息更新工具 (增强版)
+"""IP信息更新工具 (增强版).
+
 功能：获取设备IP和WiFi信息，记录变化并更新至Jupyter笔记
-优化点：修复数字类型处理、增强错误处理、添加Markdown函数声明
+优化点：修复数字类型处理、增强错误处理、添加Markdown函数声明.
 """
 
 # %% [markdown]
@@ -25,12 +25,11 @@ IP信息更新工具 (增强版)
 # %%
 import datetime
 import ipaddress
-import logging
 import os
 import platform
 import re
 import sys
-from typing import Any, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 # %%
 try:
@@ -44,7 +43,6 @@ try:
         from func.jpfuncs import (
             createnote,
             getinivaluefromcloud,
-            noteid_used,
             searchnotebook,
             searchnotes,
             updatenote_body,
@@ -78,8 +76,8 @@ CONFIG_NAME = "happyjpip"
 
 # %%
 def is_valid_ip(ip_str: Optional[str]) -> bool:
-    """
-    验证一个字符串是否是有效的IPv4或IPv6地址。
+    """验证一个字符串是否是有效的IPv4或IPv6地址.
+
     使用标准库 ipaddress 进行验证，最为可靠。
     """
     if not ip_str:
@@ -96,11 +94,11 @@ def is_valid_ip(ip_str: Optional[str]) -> bool:
 
 # %%
 def get_public_ip() -> Tuple[Optional[str], Optional[str]]:
-    """
-    尝试从多个源获取公网IP地址。
+    """尝试从多个源获取公网IP地址.
+
     返回一个元组 (ip_address, error_message)。
     如果成功获取到有效IP，则error_message为None。
-    如果获取失败或IP无效，则ip_address为None，并返回错误信息。
+    如果获取失败或IP无效，则ip_address为None，并返回错误信息。.
     """
     # 定义多个可靠的公网IP查询服务
     ip_services = [
@@ -152,8 +150,8 @@ def get_public_ip() -> Tuple[Optional[str], Optional[str]]:
 
 # %%
 def getipwifi() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """
-    根据不同操作系统，调用命令行工具获取ip（本地、外部）和wifi信息
+    """根据不同操作系统，调用命令行工具获取ip（本地、外部）和wifi信息.
+
     返回格式: (ip_local, ip_public, wifi, wifiid)
     """
     ip_local, ip_public, wifi, wifiid = "", "", "", ""
@@ -316,8 +314,7 @@ def getipwifi() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[s
 def safe_getcfpoptionvalue(
     section: str, option: str, default: str = None
 ) -> Optional[str]:
-    """
-    安全获取配置值，确保所有值以字符串形式返回，避免数字类型自动转换
+    """安全获取配置值，确保所有值以字符串形式返回，避免数字类型自动转换.
 
     Args:
         section: 配置节名称
@@ -351,8 +348,7 @@ def safe_getcfpoptionvalue(
 
 # %%
 def evalnone(input_val: Any) -> Any:
-    """
-    安全处理字符串'None'，同时处理数字类型的字符串转换问题
+    """安全处理字符串'None'，同时处理数字类型的字符串转换问题.
 
     Args:
         input_val: 输入值，可能是各种类型
@@ -386,8 +382,7 @@ def evalnone(input_val: Any) -> Any:
 
 # %%
 def showiprecords() -> bool:
-    """
-    主函数：获取IP记录并更新笔记，处理数字类型转换问题
+    """主函数：获取IP记录并更新笔记，处理数字类型转换问题.
 
     Returns:
         bool: 执行是否成功
