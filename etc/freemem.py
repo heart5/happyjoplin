@@ -226,6 +226,7 @@ def freemem2note() -> None:
 
 # %%
 if __name__ == "__main__":
+    # 显性获取云端配置中的相关参数
     is_log_details = getinivaluefromcloud("happyjoplin", "is_log_details")
     if not_IPython() and is_log_details:
         log.info(f"运行文件\t{__file__}")
