@@ -182,6 +182,11 @@ def getdeviceid() -> None:
 
 # %%
 def getdevicename() -> str:
+    """获取设备名称.
+
+    Returns:
+        str: 设备名称
+    """
     id = getdeviceid()
     set_devicename2ini(id, "Linux")
 
