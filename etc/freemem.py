@@ -17,7 +17,6 @@
 # ## 引入重要库
 
 # %%
-import base64
 import io
 import os
 import re
@@ -35,18 +34,21 @@ with pathmagic.context():
     from etc.getid import getdevicename, gethostuser
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.jpfuncs import (
+        add_resource_from_bytes,
         createnote,
+        deleteresourcesfromnote,
         getinivaluefromcloud,
         noteid_used,
         searchnotebook,
         searchnotes,
-        updatenote_imgdata,
+        updatenote_body,
     )
     from func.logme import log
 
     # from func.termuxtools import termux_telephony_deviceinfo
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
+
 
 
 # %% [markdown]
@@ -165,18 +167,13 @@ def gap2img(gap: int=30) -> str:
             ax2.plot(tmpdf)
     plt.title(f"全部周期内存占用动态图[{gethostuser()}]")
 
-    # convert the plot to a base64 encoded image
+    # 保存图片至字节池
     buffer = io.BytesIO()
-    plt.savefig(buffer, format="png")
-    buffer.seek(0)
-    image_base64 = base64.b64encode(buffer.read()).decode()
-    # now, 'image_base64' contains the base64 encoded image
-    # close the plot to free up resources
-    plt.tight_layout()
-    plt.show()
+    plt.savefig(buffer, format="png", dpi=120)
     plt.close()
 
-    return image_base64
+    # 生成笔记资源并返回id
+    return add_resource_from_bytes(buffer.getvalue(), "内存占用.png")
 
 
 # %% [markdown]
@@ -195,7 +192,8 @@ def freemem2note() -> None:
     if not (gapinmin := getcfpoptionvalue(namestr, section, "gapinmin")):
         gapinmin = 60
         setcfpoptionvalue(namestr, section, "gapinmin", "60")
-    image_base64 = gap2img(gap=gapinmin)
+    res_id = gap2img(gap=gapinmin)
+    content = f"![内存动态图【{gethostuser()}】](:/{res_id})"
     nbid = searchnotebook("ewmobile")
     if not (
         freestat_cloud_id := getcfpoptionvalue(namestr, section, "freestat_cloud_id")
@@ -203,7 +201,7 @@ def freemem2note() -> None:
         freenotefindlist = searchnotes(f"{notestat_title}")
         if len(freenotefindlist) == 0:
             freestat_cloud_id = createnote(
-                title=notestat_title, parent_id=nbid, imgdata64=image_base64
+                title=notestat_title, parent_id=nbid, body=content
             )
             log.info(f"新的内存动态图笔记“{freestat_cloud_id}”新建成功！")
         else:
@@ -212,13 +210,15 @@ def freemem2note() -> None:
 
     if not noteid_used(freestat_cloud_id):
         freestat_cloud_id = createnote(
-            title=notestat_title, parent_id=nbid, imgdata64=image_base64
+            title=notestat_title, parent_id=nbid, body=content
         )
+        setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
     else:
-        freestat_cloud_id, res_lst = updatenote_imgdata(
-            noteid=freestat_cloud_id, parent_id=nbid, imgdata64=image_base64
+        deleteresourcesfromnote(freestat_cloud_id)
+        updatenote_body(
+            noteid=freestat_cloud_id, bodystr=content, parent_id=nbid
         )
-    setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
+        log.info(f"内存动态图笔记“{freestat_cloud_id}”更新成功！")
 
 
 # %% [markdown]
