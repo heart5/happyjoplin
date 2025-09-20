@@ -328,7 +328,7 @@ def showiprecords() -> bool:
                 f"本次获取失败，公网IP无效: {ip_public}。将尝试使用上次的有效记录进行对比。"
             )
             # 从配置中读取上一次成功的公网IP记录
-            ip_public_r_prev = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r_prev")) else None
+            ip_public_r_prev = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r_prev"))
             # 如果上一次的记录是有效的，说明网络状态可能从“有IP”变成了“无IP”（如断网）
             if is_valid_ip(ip_public_r_prev):
                 log.info("检测到公网IP丢失（从有到无），这是一种状态变化，需要记录。")
@@ -343,14 +343,14 @@ def showiprecords() -> bool:
             log.warning(f"本地IP地址无效: {ip_local}，但仍可继续处理公网IP")
 
         # 3. 只有所有核心信息（至少公网IP）有效，才与历史记录比较并决定是否更新
-        ip_public_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ippublic_r")) else None
+        ip_public_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ippublic_r"))
         if is_valid_ip(ip_public):
             if ip_public != ip_public_r:
                 should_update = True
 
         # 查找或创建笔记
         nbid = searchnotebook("ewmobile")
-        ip_cloud_id = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ip_cloud_id")) else None
+        ip_cloud_id = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_cloud_id"))
         if not ip_cloud_id:
             ipnotefindlist = searchnotes(f"{noteip_title}")
             if ipnotefindlist:
@@ -362,10 +362,10 @@ def showiprecords() -> bool:
 
         # 使用安全函数获取记录信息
         nowstr = datetime.datetime.now().strftime("%F %T")
-        ip_local_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ip_local_r")) else None
-        wifi_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "wifi_r")) else None
-        wifiid_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "wifiid_r")) else None
-        start_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "start_r")) else None
+        ip_local_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_local_r"))
+        wifi_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifi_r"))
+        wifiid_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifiid_r"))
+        start_r = str(getcfpoptionvalue(CONFIG_NAME, section, "start_r"))
 
         log.info(f"上次记录的信息: {ip_local_r}, {ip_public_r}, {wifi_r}, {wifiid_r}")
 
