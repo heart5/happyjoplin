@@ -46,11 +46,12 @@ try:
             searchnotebook,
             searchnotes,
             updatenote_body,
-            updatenote_imgdata,
+            # updatenote_imgdata,
             updatenote_title,
         )
         from func.logme import log
-        from func.nettools import get_ip4alleth
+
+        # from func.nettools import get_ip4alleth
         from func.sysfunc import execcmd, is_tool_valid, not_IPython
         from func.termuxtools import termux_wifi_connectioninfo
 except ImportError as e:
@@ -130,13 +131,6 @@ def get_public_ip() -> Tuple[Optional[str], Optional[str]]:
 
     # 所有服务都尝试失败
     return (None, "所有公网IP查询服务均不可用或返回无效数据")
-
-# %%
-# 在原有的 getipwifi() 函数中，替换获取公网IP的部分：
-# ip_public, ip_error = get_public_ip()
-# if ip_public is None:
-#     log.error(f"获取公网IP失败，原因: {ip_error}")
-# ... 其他逻辑 ...
 
 # %% [markdown]
 # ### getipwifi() - 获取IP和WiFi信息
@@ -250,7 +244,7 @@ def getipwifi() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[s
                             f"无线设备 {dev_name} 活跃，但无法通过文件直接获取SSID"
                         )
                 except (IOError, IndexError) as e:
-                    log.info("无法读取 /proc/net/wireless 或无线设备未激活")
+                    log.info(f"无法读取 /proc/net/wireless 或无线设备未激活{e}")
 
     # 对于Windows系统，可以使用netsh
     elif platform.system() == "Windows":
@@ -298,76 +292,6 @@ def getipwifi() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[s
 
 
 # %% [markdown]
-# ### safe_getcfpoptionvalue() - 安全获取配置值
-#
-# 解决getoptionvalue自动转换数字类型的问题，确保所有值以字符串形式返回
-#
-# **参数:**
-# - section: 配置节名称
-# - option: 配置项名称
-# - default: 默认值（可选）
-#
-# **返回:** 字符串类型的配置值
-
-
-# %%
-def safe_getcfpoptionvalue(
-    section: str, option: str, default: str = None
-) -> Optional[str]:
-    """安全获取配置值，确保所有值以字符串形式返回，避免数字类型自动转换.
-
-    Args:
-        section: 配置节名称
-        option: 配置项名称
-        default: 默认值（可选）
-
-    Returns:
-        Optional[str]: 字符串类型的配置值，不存在时返回default
-    """
-    try:
-        value = getcfpoptionvalue(CONFIG_NAME, section, option)
-        if value is None:
-            return default
-
-        # 确保返回字符串类型，避免数字自动转换
-        return str(value)
-    except Exception as e:
-        log.warning(f"获取配置值失败 [{section}]/{option}: {e}")
-        return default
-
-
-# %% [markdown]
-# ### evalnone() - 安全处理None值
-#
-# 转换从终端接收数据的数据类型，安全处理字符串'None'
-#
-# **参数:** input_val - 输入值
-#
-# **返回:** 处理后的值
-
-
-# %%
-def evalnone(input_val: Any) -> Any:
-    """安全处理字符串'None'，同时处理数字类型的字符串转换问题.
-
-    Args:
-        input_val: 输入值，可能是各种类型
-
-    Returns:
-        处理后的值，保持原始字符串类型
-    """
-    if input_val is None:
-        return None
-
-    # 如果是字符串"None"，转换为Python的None
-    if isinstance(input_val, str) and input_val == "None":
-        return None
-
-    # 确保返回字符串类型，避免数字转换问题
-    return str(input_val)
-
-
-# %% [markdown]
 # ### showiprecords() - 显示IP记录
 #
 # 综合输出ip记录，处理IP信息变化并更新笔记
@@ -404,7 +328,7 @@ def showiprecords() -> bool:
                 f"本次获取失败，公网IP无效: {ip_public}。将尝试使用上次的有效记录进行对比。"
             )
             # 从配置中读取上一次成功的公网IP记录
-            ip_public_r_prev = safe_getcfpoptionvalue(section, "ip_public_r")
+            ip_public_r_prev = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r_prev")) else None
             # 如果上一次的记录是有效的，说明网络状态可能从“有IP”变成了“无IP”（如断网）
             if is_valid_ip(ip_public_r_prev):
                 log.info("检测到公网IP丢失（从有到无），这是一种状态变化，需要记录。")
@@ -419,15 +343,14 @@ def showiprecords() -> bool:
             log.warning(f"本地IP地址无效: {ip_local}，但仍可继续处理公网IP")
 
         # 3. 只有所有核心信息（至少公网IP）有效，才与历史记录比较并决定是否更新
-        ip_public_r = evalnone(safe_getcfpoptionvalue(section, "ip_public_r"))
+        ip_public_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ippublic_r")) else None
         if is_valid_ip(ip_public):
             if ip_public != ip_public_r:
                 should_update = True
 
         # 查找或创建笔记
         nbid = searchnotebook("ewmobile")
-        ip_cloud_id = safe_getcfpoptionvalue(section, "ip_cloud_id")
-
+        ip_cloud_id = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ip_cloud_id")) else None
         if not ip_cloud_id:
             ipnotefindlist = searchnotes(f"{noteip_title}")
             if ipnotefindlist:
@@ -439,10 +362,10 @@ def showiprecords() -> bool:
 
         # 使用安全函数获取记录信息
         nowstr = datetime.datetime.now().strftime("%F %T")
-        ip_local_r = evalnone(safe_getcfpoptionvalue(section, "ip_local_r"))
-        wifi_r = evalnone(safe_getcfpoptionvalue(section, "wifi_r"))
-        wifiid_r = evalnone(safe_getcfpoptionvalue(section, "wifiid_r"))
-        start_r = safe_getcfpoptionvalue(section, "start_r")
+        ip_local_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "ip_local_r")) else None
+        wifi_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "wifi_r")) else None
+        wifiid_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "wifiid_r")) else None
+        start_r = str(value) if (value := getcfpoptionvalue(CONFIG_NAME, section, "start_r")) else None
 
         log.info(f"上次记录的信息: {ip_local_r}, {ip_public_r}, {wifi_r}, {wifiid_r}")
 
