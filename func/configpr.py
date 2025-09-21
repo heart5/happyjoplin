@@ -22,6 +22,7 @@ import os
 import re
 from configparser import ConfigParser, DuplicateOptionError, DuplicateSectionError
 from pathlib import Path
+from typing import Any, Tuple
 
 import pathmagic
 
@@ -40,17 +41,15 @@ with pathmagic.context():
 
 
 # %%
-def dropdup4option(opcontent):
-    ptno = re.compile("(\w+)\s*=\s*(\w*)")
+def dropdup4option(opcontent: str) -> str:
+    ptno = re.compile(r"(\w+)\s*=\s*(\w*)")
     opdict = dict()
     fdlst = re.findall(ptno, opcontent)
     for item in fdlst:
         if item[0] in opdict.keys():
             log.critical(f"出现option名称重复：\t{item[0]}，取用最新的数据")
         opdict.update(dict({item[0]: item[1]}))
-    # opdict
     rstlst = [" = ".join(list(x)) for x in list(zip(opdict.keys(), opdict.values()))]
-    # rstlst
     return "\n" + "\n".join(rstlst) + "\n\n"
 
 
@@ -59,7 +58,7 @@ def dropdup4option(opcontent):
 
 
 # %%
-def dropdup4section(fcontent):
+def dropdup4section(fcontent: str) -> str:
     ftn = re.compile(r"\[\w+\]")
     sectionlst = re.findall(ftn, fcontent)
     optionlst = re.split(ftn, fcontent)
@@ -85,7 +84,7 @@ def dropdup4section(fcontent):
 
 
 # %%
-def fixinifile(inipath):
+def fixinifile(inipath: Path) -> str:
     with open(inipath, "r") as f:
         fcontent = f.read()
         with open(str(inipath) + ".bak", "w") as writer:
@@ -101,10 +100,8 @@ def fixinifile(inipath):
 
 
 # %%
-def removesection(cfpfilename: str, sectionname: str):
-    """
-    删除指定section，默认清除其下面的所有option
-    """
+def removesection(cfpfilename: str, sectionname: str) -> None:
+    """删除指定section，默认清除其下面的所有option"""
     cfpin, cfpinpath = getcfp(cfpfilename)
     if cfpin.has_section(sectionname):
         cfpin.remove_section(sectionname)
@@ -117,7 +114,7 @@ def removesection(cfpfilename: str, sectionname: str):
 
 
 # %%
-def getcfp(cfpfilename: str):
+def getcfp(cfpfilename: str) -> Tuple[ConfigParser, Path]:
     cfpson = ConfigParser()
     inipathson = Path(getdirmain()) / "data" / (cfpfilename + ".ini")
     touchfilepath2depth(inipathson)
@@ -148,7 +145,7 @@ def getcfp(cfpfilename: str):
 
 
 # %%
-def setcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str, optionvalue):
+def setcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str, optionvalue: str) -> None:
     cfpin, cfpinpath = getcfp(cfpfilename)
     if not cfpin.has_section(sectionname):
         cfpin.add_section(sectionname)
@@ -162,7 +159,7 @@ def setcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str, optio
 
 
 # %%
-def getcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str):
+def getcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str) -> Any:  # noqa: ANN401
     cfpin, cfpinpath = getcfp(cfpfilename)
     if not cfpin.has_section(sectionname):
         print(f"seticon {sectionname} is not exists. Then creating it now ...")
@@ -174,6 +171,10 @@ def getcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str):
         return
 
     targetvalue = str(cfpin.get(sectionname, optionname))
+
+    # 处理None
+    if targetvalue.strip().lower() == "none":
+        return None
 
     # 处理布尔值
     if targetvalue.strip().lower() == "true":
@@ -208,17 +209,14 @@ def getcfpoptionvalue(cfpfilename: str, sectionname: str, optionname: str):
 
 # %%
 if __name__ == "__main__":
+    from jpfuncs import getinivaluefromcloud
+    is_log_details = getinivaluefromcloud('happyjoplin', 'is_log_details')
     if not_IPython() and is_log_details:
         print(f"开始测试文件\t{__file__}")
-    #     cp, cppath = getcfp('everwork')
-    #     print(cp, cppath)
     cfpapiname = "happyjp"
     inipathson = Path(getdirmain()) / "data" / (cfpapiname + ".ini")
-    # name = '[notestore]'
     cp, cppath = getcfp(cfpapiname)
     print(cp)
     print(cppath)
-    #     removesection(cfpapiname, nssectionname)
-    #     ict = fixinifile(inipathson)
     if not_IPython() and is_log_details:
         print("Done.")
