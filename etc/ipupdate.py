@@ -29,7 +29,7 @@ import os
 import platform
 import re
 import sys
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 
 # %%
 try:
@@ -328,7 +328,7 @@ def showiprecords() -> bool:
                 f"本次获取失败，公网IP无效: {ip_public}。将尝试使用上次的有效记录进行对比。"
             )
             # 从配置中读取上一次成功的公网IP记录
-            ip_public_r_prev = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r_prev"))
+            ip_public_r_prev = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r_prev")).strip()
             # 如果上一次的记录是有效的，说明网络状态可能从“有IP”变成了“无IP”（如断网）
             if is_valid_ip(ip_public_r_prev):
                 log.info("检测到公网IP丢失（从有到无），这是一种状态变化，需要记录。")
@@ -343,14 +343,14 @@ def showiprecords() -> bool:
             log.warning(f"本地IP地址无效: {ip_local}，但仍可继续处理公网IP")
 
         # 3. 只有所有核心信息（至少公网IP）有效，才与历史记录比较并决定是否更新
-        ip_public_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ippublic_r"))
+        ip_public_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r")).strip()
         if is_valid_ip(ip_public):
-            if ip_public != ip_public_r:
+            if ip_public.strip() != ip_public_r.strip():
                 should_update = True
 
         # 查找或创建笔记
         nbid = searchnotebook("ewmobile")
-        ip_cloud_id = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_cloud_id"))
+        ip_cloud_id = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_cloud_id")).strip()
         if not ip_cloud_id:
             ipnotefindlist = searchnotes(f"{noteip_title}")
             if ipnotefindlist:
@@ -362,19 +362,19 @@ def showiprecords() -> bool:
 
         # 使用安全函数获取记录信息
         nowstr = datetime.datetime.now().strftime("%F %T")
-        ip_local_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_local_r"))
-        wifi_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifi_r"))
-        wifiid_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifiid_r"))
-        start_r = str(getcfpoptionvalue(CONFIG_NAME, section, "start_r"))
+        ip_local_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_local_r")).strip()
+        wifi_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifi_r")).strip()
+        wifiid_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifiid_r")).strip()
+        start_r = str(getcfpoptionvalue(CONFIG_NAME, section, "start_r")).strip()
 
         log.info(f"上次记录的信息: {ip_local_r}, {ip_public_r}, {wifi_r}, {wifiid_r}")
 
         # 检查信息是否有变化（全部作为字符串比较）
         has_changed = (
-            (str(ip_local) != str(ip_local_r))
-            or (str(ip_public) != str(ip_public_r))
-            or (str(wifi) != str(wifi_r))
-            or (str(wifiid) != str(wifiid_r))
+            (str(ip_local).strip() != str(ip_local_r).strip())
+            or (str(ip_public).strip() != str(ip_public_r).strip())
+            or (str(wifi).strip() != str(wifi_r).strip())
+            or (str(wifiid).strip() != str(wifiid_r).strip())
         )
 
         if has_changed or not start_r or should_update:
@@ -401,10 +401,10 @@ def showiprecords() -> bool:
                 write2txt(txtfilename, itemnewr)
 
             # 更新当前记录（确保存储为字符串）
-            setcfpoptionvalue(CONFIG_NAME, section, "ip_local_r", str(ip_local))
-            setcfpoptionvalue(CONFIG_NAME, section, "ip_public_r", str(ip_public))
-            setcfpoptionvalue(CONFIG_NAME, section, "wifi_r", str(wifi))
-            setcfpoptionvalue(CONFIG_NAME, section, "wifiid_r", str(wifiid))
+            setcfpoptionvalue(CONFIG_NAME, section, "ip_local_r", str(ip_local).strip())
+            setcfpoptionvalue(CONFIG_NAME, section, "ip_public_r", str(ip_public).strip())
+            setcfpoptionvalue(CONFIG_NAME, section, "wifi_r", str(wifi).strip())
+            setcfpoptionvalue(CONFIG_NAME, section, "wifiid_r", str(wifiid).strip())
             setcfpoptionvalue(CONFIG_NAME, section, "start_r", nowstr)
 
             # 更新笔记
