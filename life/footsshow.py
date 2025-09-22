@@ -187,11 +187,6 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     )
     print(df.groupby("device_id").count()["time"])
 
-    # 1.4. 添加必要的时间差列
-    # df["time_diff"] = df["time"].diff().dt.total_seconds().fillna(0)
-    # df["timestamp"] = df["time"].dt.strftime("%Y-%m-%d %H:%M:%S")
-    # df["time_diff"] = df["time"].diff().dt.total_seconds().fillna(0) / 60
-
     # 2. 计算分析结果
     print(f"分析启动时数据列为: {df.columns.tolist()}")
 
@@ -591,11 +586,10 @@ def detect_static_devices(df: pd.DataFrame, var_threshold: float=0.0002) -> pd.D
 
 
 # %% [markdown]
-# ### identify_stay_points(df, dist_threshold=350, time_threshold=600)
+# ### identify_stay_points(df, dist_threshold=500, time_threshold=1800)
 
 # %%
-def identify_stay_points(df: pd.DataFrame, dist_threshold: int=350, time_threshold: int=600) -> pd.DataFrame:
-    # log.info(f"识别停留点初始数据记录数为：\t{df.shape[0]}")
+def identify_stay_points(df: pd.DataFrame, dist_threshold: int=500, time_threshold: int=1800) -> pd.DataFrame:
     # 确保数据按时间排序
     df = df.sort_values("time").reset_index(drop=True)
 
@@ -630,17 +624,15 @@ def identify_stay_points(df: pd.DataFrame, dist_threshold: int=350, time_thresho
     stay_groups = df[df["is_stay"]].groupby("stay_group")
     df["duration"] = stay_groups["time_diff"].transform("sum")
 
-    # print(df.tail(10))
-    # log.info(f"识别停留点完毕后数据记录数为：\t{df.shape[0]}")
     return df
 
 # %% [markdown]
-# ### identify_important_places(df, radius_km=0.5, min_points=3)
+# ### identify_important_places(df, radius_km=1.0, min_points=3)
 # 识别重要地点（停留点）
 
 
 # %%
-def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float=0.5, min_points: int=3) -> pd.DataFrame:
+def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float=1.0, min_points: int=3) -> pd.DataFrame:
     """识别重要地点（停留点）
 
     优化内存使用，避免大数据集处理时的内存溢出
@@ -1045,15 +1037,6 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
         cluster_df = stay_df[stay_df["cluster"] == cluster_id]
         center_lon = cluster_df["longitude"].mean()
         center_lat = cluster_df["latitude"].mean()
-        # 用emoji符号，绘图时字体貌似不支持
-        # plt.text(
-        #     center_lon,
-        #     center_lat,
-        #     f"📍{cluster_id}",
-        #     fontsize=12,
-        #     ha="center",
-        #     va="bottom",
-        # )
         # 先绘制标记，再添加文本
         plt.plot(
             center_lon, center_lat, "o", markersize=8, color="red"
@@ -1084,15 +1067,8 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
     # 保存为图片资源
     buf = BytesIO()
 
-    # plt.rcParams["font.sans-serif"] = [
-    #     "SimHei",
-    #     "DejaVu Sans",
-    #     "Noto Sans CJK JP",
-    # ]  # 搞了半天应该那个糖葫芦emoji字体导致的问题，特意多放几个字体尝试尝试
-    # plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
-    # buf.seek(0)
     return add_resource_from_bytes(buf.getvalue(), f"停留点分布_{scope}.png")
 
 
