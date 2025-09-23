@@ -19,17 +19,17 @@
 # ## 引入库
 
 # %%
-# import base64
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
+from typing import Optional
 
-# import dask.dataframe as dd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+
 
 # %%
 from geopy.distance import great_circle
@@ -60,34 +60,26 @@ with pathmagic.context():
 class Config:
     """参数配置类"""
 
-    REPORT_LEVELS: dict = None
-    PLOT_WIDTH: int = 12
-    PLOT_HEIGHT: int = 12
-    DPI: int = 300
-    # TIME_WINDOW: str = "30min"  # 默认2h，可以为30min等数值
-    TIME_WINDOW: str = getinivaluefromcloud("foots", "time_window")
-    # STAY_DIST_THRESH: int = 200  # 默认200米
-    STAY_DIST_THRESH: int = getinivaluefromcloud("foots", "stay_dist_thresh")
-    STAY_TIME_THRESH: int = 600  # 默认600秒，十分钟
-    # 识别重要地点时最大抽样数量，最好从一万（10000）起
-    SAMPLE_FOR_IMPORTANT_POINTS: int = getinivaluefromcloud(
-        "foots", "sample_for_important_points"
-    )
-    # 新增时间跳跃相关配置
-    TIME_JUMP_DAY_THRESH: int = 30  # 白天阈值（分钟）
-    TIME_JUMP_NIGHT_THRESH: int = 240  # 夜间阈值（分钟）
+    REPORT_LEVELS: Optional[dict] = None
+    PLOT_WIDTH: int = 8 # 图像宽度默认8英寸
+    PLOT_HEIGHT: int = 12 # 图像高度默认12英寸
+    DPI: int = 300 # 图像分辨率默认300
+    TIME_WINDOW: str = "2h"  # 判断设备活跃的时间窗口，默认2h，可以为30min等数值
+    STAY_DIST_THRESH: int = 500  # 停留点距离阈值（米），默认500米
+    STAY_TIME_THRESH: int = 15  # 停留点时间阈值（分钟），默认十五分钟
+    SAMPLE_FOR_IMPORTANT_POINTS: int = 10000  # 重要地点采样数，默认10000
+    TIME_JUMP_DAY_THRESH: int = 30  # 时间跳跃，白天阈值（分钟）
+    TIME_JUMP_NIGHT_THRESH: int = 240  # 时间跳跃，夜间阈值（分钟）
 
     def __post_init__(self) -> None:
-        """从配置读取阈值"""
-        self.TIME_JUMP_DAY_THRESH = int(
-            getinivaluefromcloud("foots", "time_jump_day_thresh")
-        )
-        self.TIME_JUMP_NIGHT_THRESH = int(
-            getinivaluefromcloud(
-                "foots",
-                "time_jump_night_thresh",
-            )
-        )
+        """从配置读取阈值，如果读取不到则使用默认值"""
+        self.TIME_WINDOW = getinivaluefromcloud("foots", "time_window") or self.TIME_WINDOW
+        self.STAY_DIST_THRESH = getinivaluefromcloud("foots", "stay_dist_thresh") or self.STAY_DIST_THRESH
+        self.STAY_TIME_THRESH = getinivaluefromcloud("foots", "stay_time_thresh") or self.STAY_TIME_THRESH
+        self.SAMPLE_FOR_IMPORTANT_POINTS = getinivaluefromcloud("foots", "sample_for_important_points") or self.SAMPLE_FOR_IMPORTANT_POINTS
+        self.TIME_JUMP_DAY_THRESH = int(getinivaluefromcloud("foots", "time_jump_day_thresh") or self.TIME_JUMP_DAY_THRESH)
+        self.TIME_JUMP_NIGHT_THRESH = int(getinivaluefromcloud("foots", "time_jump_night_thresh") or self.TIME_JUMP_NIGHT_THRESH)
+
         if self.REPORT_LEVELS is None:
             self.REPORT_LEVELS = {
                 "monthly": 1,
@@ -95,6 +87,7 @@ class Config:
                 "yearly": 12,
                 "two_year": 24,
             }
+
 
 # %% [markdown]
 # ## 数据加载函数
@@ -147,7 +140,6 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
 
     return pd.concat(monthly_dfs).reset_index(drop=True)
 
-
 # %% [markdown]
 # ## 数据分析函数
 
@@ -177,7 +169,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     )
     print(df.groupby("device_id").count()["time"])
 
-    # 1.2. 处理时间跳跃
+    # 1.2. 处理时间跳跃，添加time_diff列，big_gap列和segment列
     df = handle_time_jumps(df, config)
 
     # 1.3. 位置平滑
@@ -205,12 +197,16 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
     min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
     distance_km = great_circle((min_lat, min_lon), (max_lat, max_lon)).kilometers
+
     # 2.5 大跨越
     if "big_gap" in df.columns:
         big_gaps = df[df["big_gap"]]
         gap_stats = {
             "count": len(big_gaps),
             "longest_gap": df["time_diff"].max() if "time_diff" in df.columns else 0,
+            # "time_gaps": df[df['time_diff'] > 24].shape[0],
+            # "affected_days": (df['time'].max() - df['time'].min()).days,
+            # "anomaly_examples": df.nlargest(3, 'time_diff')
         }
     else:
         gap_stats = {"count": 0, "longest_gap": 0}
@@ -243,7 +239,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     )
 
     # 2.9 停留点分析
-    df = identify_stay_points(df)
+    df = identify_stay_points(df, config)
     # 计算停留点统计
     stay_stats = {
         "total_stays": df["is_stay"].sum(),
@@ -258,6 +254,8 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     }
     stay_stats["resource_id"] = generate_stay_points_map(df, scope, config)
     print(f"分析完成后数据列为: {df.columns.tolist()}")
+    print(df.tail(15))
+    print(df[df['is_stay']].tail(10))
 
     # 3. 生成所有可视化资源
     analysis_results = {
@@ -529,7 +527,7 @@ def handle_time_jumps(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
     # 4. 跳跃条件：时间差超过阈值且位置变化小（可能为设备切换或静止）
     df["big_gap"] = (df["time_diff"] > df["dynamic_threshold"]) & (
-        df["dist_change"] < 200
+        df["dist_change"] < config.STAY_DIST_THRESH
     )
 
     # 5. 设备切换检测（额外标记）
@@ -589,7 +587,7 @@ def detect_static_devices(df: pd.DataFrame, var_threshold: float=0.0002) -> pd.D
 # ### identify_stay_points(df, dist_threshold=500, time_threshold=1800)
 
 # %%
-def identify_stay_points(df: pd.DataFrame, dist_threshold: int=500, time_threshold: int=1800) -> pd.DataFrame:
+def identify_stay_points(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     # 确保数据按时间排序
     df = df.sort_values("time").reset_index(drop=True)
 
@@ -608,13 +606,9 @@ def identify_stay_points(df: pd.DataFrame, dist_threshold: int=500, time_thresho
         axis=1,
     )
 
-    # 添加时间差列（如果不存在）
-    if "time_diff" not in df.columns:
-        df["time_diff"] = df["time"].diff().dt.total_seconds().fillna(0)
-
     # 标记停留点
-    df["is_stay"] = (df["dist_to_prev"] < dist_threshold) & (
-        df["time_diff"] > time_threshold
+    df["is_stay"] = (df["dist_to_prev"] < config.STAY_DIST_THRESH) & (
+        df["time_diff"] > config.STAY_TIME_THRESH
     )
 
     # 分组连续停留点
@@ -632,7 +626,8 @@ def identify_stay_points(df: pd.DataFrame, dist_threshold: int=500, time_thresho
 
 
 # %%
-def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float=1.0, min_points: int=3) -> pd.DataFrame:
+@timethis
+def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float=0.5, min_points: int=3) -> pd.DataFrame:
     """识别重要地点（停留点）
 
     优化内存使用，避免大数据集处理时的内存溢出
@@ -722,7 +717,6 @@ def generate_device_pie_chart(device_stats: dict) -> str:
     return res_id: str
     """
     plt.figure(figsize=(6, 6))
-    # labels = [f"设备{i + 1}" for i in range(len(device_stats))]
     labels = [
         getinivaluefromcloud("device", str(device_id)) for device_id in device_stats
     ]
@@ -1324,7 +1318,6 @@ def generate_visualizations(analysis_results: str, scope: str) -> dict:
 def build_report_content(analysis_results: dict, resource_ids:str, scope: str) -> str:
     """构建Markdown报告内容"""
     # 使用 analysis_results 和 resource_ids 构建报告
-    # 现有代码基本不变，但确保所有资源 ID 来自 resource_ids
     content = f"""
 # 📍 {scope.capitalize()}位置分析报告
 **{analysis_results["time_range"][0]} 至 {analysis_results["time_range"][1]}**
@@ -1368,7 +1361,7 @@ def build_report_content(analysis_results: dict, resource_ids:str, scope: str) -
         visit_count = int(place["visit_count"])
         lat = place["latitude"]
         lon = place["longitude"]
-        content += f"""| **地点{i + 1}** | {visit_count}次 | {place["avg_stay_min"]:.1f}分 | [{lat}, {lon}]({generate_geo_link(lat, lon)}) |"""
+        content += f"""| **地点{i + 1}** | {visit_count}次 | {place["avg_stay_min"]:.1f}分 | [{lat}, {lon}]({generate_geo_link(lat, lon)}) |\n"""
 
     content += f"""
 ## 📈 空间分析
