@@ -65,9 +65,10 @@ class Config:
     PLOT_HEIGHT: int = 12 # 图像高度默认12英寸
     DPI: int = 300 # 图像分辨率默认300
     TIME_WINDOW: str = "2h"  # 判断设备活跃的时间窗口，默认2h，可以为30min等数值
-    STAY_DIST_THRESH: int = 500  # 停留点距离阈值（米），默认500米
-    STAY_TIME_THRESH: int = 15  # 停留点时间阈值（分钟），默认十五分钟
+    STAY_DIST_THRESH: int = 200  # 停留点距离阈值（米），默认200米
     SAMPLE_FOR_IMPORTANT_POINTS: int = 10000  # 重要地点采样数，默认10000
+    RADIUS_KM: float = 1.5  # 识别重要地点时的半径，单位为公里
+    MIN_POINTS: int = 100  # 最小点数
     TIME_JUMP_DAY_THRESH: int = 30  # 时间跳跃，白天阈值（分钟）
     TIME_JUMP_NIGHT_THRESH: int = 240  # 时间跳跃，夜间阈值（分钟）
 
@@ -75,8 +76,9 @@ class Config:
         """从配置读取阈值，如果读取不到则使用默认值"""
         self.TIME_WINDOW = getinivaluefromcloud("foots", "time_window") or self.TIME_WINDOW
         self.STAY_DIST_THRESH = getinivaluefromcloud("foots", "stay_dist_thresh") or self.STAY_DIST_THRESH
-        self.STAY_TIME_THRESH = getinivaluefromcloud("foots", "stay_time_thresh") or self.STAY_TIME_THRESH
         self.SAMPLE_FOR_IMPORTANT_POINTS = getinivaluefromcloud("foots", "sample_for_important_points") or self.SAMPLE_FOR_IMPORTANT_POINTS
+        self.RADIUS_KM = getinivaluefromcloud("foots", "radius_km") or self.RADIUS_KM
+        self.MIN_POINTS = getinivaluefromcloud("foots", "min_points") or self.MIN_POINTS
         self.TIME_JUMP_DAY_THRESH = int(getinivaluefromcloud("foots", "time_jump_day_thresh") or self.TIME_JUMP_DAY_THRESH)
         self.TIME_JUMP_NIGHT_THRESH = int(getinivaluefromcloud("foots", "time_jump_night_thresh") or self.TIME_JUMP_NIGHT_THRESH)
 
@@ -156,8 +158,16 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     """
     config = Config()
     df = indf.copy()
+
     # 1. 数据预处理
-    # 1.1 设备融合
+    # 1.1. 按设备和时间列去重
+    df = df.sort_values(by=["device_id", "time"]).drop_duplicates(subset=["device_id", "time"])
+    print(
+        f"去重后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
+    )
+    print(df.groupby("device_id").count()["time"])
+
+    # 1.2 设备融合
     print(
         f"融合设备数据前大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
     )
@@ -169,18 +179,23 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     )
     print(df.groupby("device_id").count()["time"])
 
-    # 1.2. 处理时间跳跃，添加time_diff列，big_gap列和segment列
+    # 1.3. 处理时间跳跃，添加time_diff列，big_gap列和segment列
     df = handle_time_jumps(df, config)
 
-    # 1.3. 位置平滑
+    # 1.4. 位置平滑
     df = smooth_coordinates(df)
     print(
         f"处理融合设备、时间跳跃和位置平滑后设备数据后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
     )
     print(df.groupby("device_id").count()["time"])
 
+    # 1.5. 重要地点分析
+    clustered = identify_important_places(df, config)
+    if "cluster" in clustered.columns:
+        df["cluster"] = clustered["cluster"]
+    print(f"重要地点分析后数据列为: {df.columns.tolist()}")
+
     # 2. 计算分析结果
-    print(f"分析启动时数据列为: {df.columns.tolist()}")
 
     # 2.1 时间范围分析
     start_time = df["time"].min().strftime("%Y-%m-%d")
@@ -204,9 +219,6 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
         gap_stats = {
             "count": len(big_gaps),
             "longest_gap": df["time_diff"].max() if "time_diff" in df.columns else 0,
-            # "time_gaps": df[df['time_diff'] > 24].shape[0],
-            # "affected_days": (df['time'].max() - df['time'].min()).days,
-            # "anomaly_examples": df.nlargest(3, 'time_diff')
         }
     else:
         gap_stats = {"count": 0, "longest_gap": 0}
@@ -223,26 +235,29 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     }
 
     # 2.8 重要地点分析
-    clustered = identify_important_places(df, config)
-    important_places = (
-        clustered.groupby("cluster")
-        .agg(
-            {
-                "latitude": "mean",
-                "longitude": "mean",
-            }
+    if "cluster" in df.columns:
+        important_places = (
+            df[df["cluster"] >= 0]
+            .groupby("cluster")
+            .agg(
+                {
+                    "latitude": "mean",
+                    "longitude": "mean",
+                }
+            )
+            .assign(visit_count=1)
+            .assign(avg_stay_min=0)
+            .sort_values("visit_count", ascending=False)
+            .head(5)
         )
-        .assign(visit_count=1)
-        .assign(avg_stay_min=0)
-        .sort_values("visit_count", ascending=False)
-        .head(5)
-    )
+    else:
+        important_places = pd.DataFrame()
 
     # 2.9 停留点分析
     df = identify_stay_points(df, config)
     # 计算停留点统计
     stay_stats = {
-        "total_stays": df["is_stay"].sum(),
+        "total_stays": df["stay_group"].nunique(),  # 调整total_stays的计算逻辑
         "avg_duration": df[df["is_stay"]]["duration"].mean() / 60
         if "duration" in df
         else 0,
@@ -254,8 +269,17 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     }
     stay_stats["resource_id"] = generate_stay_points_map(df, scope, config)
     print(f"分析完成后数据列为: {df.columns.tolist()}")
-    print(df.tail(15))
-    print(df[df['is_stay']].tail(10))
+
+    # 随机选择一个stay_group值，并打印该值第一次出现的前五条记录和后五条记录
+    if df["stay_group"].isna().all():
+        print("没有找到stay_group的记录。")
+    else:
+        stay_groups = df[df["stay_group"].notna()]["stay_group"].unique()
+        random_stay_group = np.random.choice(stay_groups)
+        first_occurrence_index = df[df["stay_group"] == random_stay_group].index[0]
+        print(f"随机选取的stay_group为: {random_stay_group}")
+        print("该stay_group第一次出现的前五条记录和后五条记录如下：")
+        print(df.iloc[max(0, first_occurrence_index-5):first_occurrence_index+6])
 
     # 3. 生成所有可视化资源
     analysis_results = {
@@ -273,7 +297,6 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     }
     resource_ids = {}
     # 3.1 轨迹图
-    # 3.1 轨迹图（带地图底图）
     resource_ids["trajectory_with_map"] = generate_trajectory_map(df, scope, config)
 
     # 保留原始轨迹图作为备选
@@ -325,6 +348,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     analysis_results["resource_ids"] = resource_ids
 
     return analysis_results
+
 
 # %% [markdown]
 # ### fuse_device_data(df, config: Config)
@@ -584,10 +608,11 @@ def detect_static_devices(df: pd.DataFrame, var_threshold: float=0.0002) -> pd.D
 
 
 # %% [markdown]
-# ### identify_stay_points(df, dist_threshold=500, time_threshold=1800)
+# ### identify_stay_points(df, config)
 
 # %%
 def identify_stay_points(df: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """识别停留点并做相应处理，增加数据列is_stay、stay_group、duration"""
     # 确保数据按时间排序
     df = df.sort_values("time").reset_index(drop=True)
 
@@ -606,31 +631,60 @@ def identify_stay_points(df: pd.DataFrame, config: Config) -> pd.DataFrame:
         axis=1,
     )
 
-    # 标记停留点
-    df["is_stay"] = (df["dist_to_prev"] < config.STAY_DIST_THRESH) & (
-        df["time_diff"] > config.STAY_TIME_THRESH
-    )
+    # 初始化is_stay列为False
+    df["is_stay"] = False
 
-    # 分组连续停留点
-    df["stay_group"] = (df["is_stay"] != df["is_stay"].shift(1)).cumsum()
+    # 初始化stay_group列
+    df["stay_group"] = None
+
+    # 初始化duration列
+    df["duration"] = None
+
+    # 标记停留点
+    stay_group_counter = 0
+    current_stay_group = None
+
+    for i in range(1, len(df)):
+        if (df.loc[i, "dist_to_prev"] < config.STAY_DIST_THRESH):
+            if current_stay_group is None:
+                stay_group_counter += 1
+                current_stay_group = stay_group_counter
+            df.loc[i, "is_stay"] = True
+            df.loc[i, "stay_group"] = current_stay_group
+        else:
+            current_stay_group = None
 
     # 计算每组停留时间
     stay_groups = df[df["is_stay"]].groupby("stay_group")
-    df["duration"] = stay_groups["time_diff"].transform("sum")
+    df.loc[df["is_stay"], "duration"] = stay_groups["time_diff"].transform("sum")
+
+    # 删除过程数据列prev_lat和prev_lon
+    df.drop(columns=["prev_lat", "prev_lon"], inplace=True)
 
     return df
 
+
+
 # %% [markdown]
-# ### identify_important_places(df, radius_km=1.0, min_points=3)
+# ### identify_important_places(df, radius_km=1.5, min_points=200)
 # 识别重要地点（停留点）
 
 
 # %%
 @timethis
-def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float=0.5, min_points: int=3) -> pd.DataFrame:
-    """识别重要地点（停留点）
+def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float=1.5, min_points: int=200) -> pd.DataFrame:
+    """识别重要地点
 
-    优化内存使用，避免大数据集处理时的内存溢出
+    1.5公里半径内的点数量大于200个，则认为是重要地点。
+
+    Args:
+        df (pd.DataFrame): 原始数据
+        config (Config): 配置信息
+        radius_km (float, optional): 半径，单位为公里. Defaults to 1.5.
+        min_points (int, optional): 最小点数. Defaults to 200.
+
+    Returns:
+        pd.DataFrame: 重要地点数据
     """
     # log.info(f"识别重要地点初始数据记录数为：\t{df.shape[0]}")
     # 使用平滑后的坐标
@@ -647,7 +701,7 @@ def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float
     # log.info(f"识别重要地点初始数据记录数抽样后为：\t{len(coords)}")
 
     kms_per_radian = 6371.0088
-    epsilon = radius_km / kms_per_radian  # 500米半径
+    epsilon = radius_km / kms_per_radian  # 1500米半径
 
     # 优化3：使用更高效的算法参数
     db = DBSCAN(
