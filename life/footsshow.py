@@ -61,7 +61,7 @@ class Config:
     """参数配置类"""
 
     REPORT_LEVELS: Optional[dict] = None
-    PLOT_WIDTH: int = 8 # 图像宽度默认8英寸
+    PLOT_WIDTH: int = 10 # 图像宽度默认8英寸
     PLOT_HEIGHT: int = 12 # 图像高度默认12英寸
     DPI: int = 300 # 图像分辨率默认300
     TIME_WINDOW: str = "2h"  # 判断设备活跃的时间窗口，默认2h，可以为30min等数值
@@ -84,6 +84,8 @@ class Config:
 
         if self.REPORT_LEVELS is None:
             self.REPORT_LEVELS = {
+                "weekly": 0.25,
+                "two_weekly": 0.5,
                 "monthly": 1,
                 "quarterly": 3,
                 "yearly": 12,
@@ -105,8 +107,12 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
     # 获取包含当前月份第一天日期的列表
     end_date = datetime.now()
     months = config.REPORT_LEVELS[scope]
-    start_date = end_date - timedelta(days=30 * months)
-    date_range = pd.date_range(start_date, end_date, freq="MS")
+    start_date = end_date - timedelta(days=int(30 * months))
+    if start_date.strftime("%Y%m") == end_date.strftime("%Y%m"):
+        date_range = [start_date]
+    else:
+        date_range = pd.date_range(start_date, end_date, freq="MS")
+    print(months, start_date, end_date, date_range)
     monthly_dfs = []
 
     for date in date_range:
@@ -139,8 +145,11 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
     if not monthly_dfs:
         log.warning(f"未找到{scope}的位置数据")
         return pd.DataFrame()
+    else:
+        df = pd.concat(monthly_dfs).reset_index(drop=True)
+        outdf = df[(df["time"] >= start_date) & (df["time"] <= end_date)]
 
-    return pd.concat(monthly_dfs).reset_index(drop=True)
+    return outdf
 
 # %% [markdown]
 # ## 数据分析函数
@@ -1064,8 +1073,6 @@ def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Confi
 # %%
 def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> str:
     """生成停留点分布图"""
-    # import matplotlib.pyplot as plt
-
     plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
 
     # 绘制所有轨迹点
@@ -1075,9 +1082,17 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
 
     # 突出显示停留点
     stay_df = df[df["is_stay"]]
-    plt.scatter(
-        stay_df["longitude"], stay_df["latitude"], c="red", s=50, label="停留点"
-    )
+    unique_stay_groups = stay_df["stay_group"].unique()
+    colors = plt.colormaps.get_cmap('tab20')  # 使用推荐的方法获取颜色映射
+
+    for i, stay_group_id in enumerate(unique_stay_groups):
+        group_df = stay_df[stay_df["stay_group"] == stay_group_id]
+        plt.scatter(
+            group_df["longitude"], group_df["latitude"],
+            c=[colors(i / len(unique_stay_groups)) for _ in range(len(group_df))],
+            s=50,
+            # label=f"停留组 {stay_group_id}"
+        )
 
     # 标注高频停留点
     top_stays = stay_df.groupby("cluster").size().nlargest(5).index
@@ -1097,15 +1112,6 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
             ha="center",
             va="bottom",
         )
-        # 绘制Latex倒三角形，空心
-        # plt.text(
-        #     center_lon,
-        #     center_lat,
-        #     r"$\triangledown$" + f"{cluster_id}",
-        #     fontsize=12,
-        #     ha="center",
-        #     va="bottom",
-        # )
 
     plt.title(f"{scope.capitalize()}停留点分布")
     plt.xlabel("经度")
@@ -1114,10 +1120,11 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
 
     # 保存为图片资源
     buf = BytesIO()
-
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
+
     return add_resource_from_bytes(buf.getvalue(), f"停留点分布_{scope}.png")
+
 
 
 # %% [markdown]
@@ -1382,7 +1389,7 @@ def build_report_content(analysis_results: dict, resource_ids:str, scope: str) -
 | **总记录** | {analysis_results["total_points"]} | 位置点数量 |
 | **覆盖天数** | {analysis_results["unique_days"]} | 数据完整度 |
 | **活动半径** | {analysis_results["distance_km"]:.2f}km | 最大移动距离 |
-| **时间断层** | {analysis_results["gap_stats"]["count"]} | 最长间隔 {analysis_results["gap_stats"]["longest_gap"]:.1f}h |
+| **时间断层** | {analysis_results["gap_stats"]["count"]} | 最长间隔 {analysis_results["gap_stats"]["longest_gap"] / 60:.1f}h |
 
 ## 📱 设备分布
 ![设备分布](:/{resource_ids["device_dist"]})
