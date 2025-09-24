@@ -753,6 +753,64 @@ def generate_geo_link(lat: float, lon: float) -> str:
 
 
 # %% [markdown]
+# ### compute_figsizes(df: pd.DataFrame, config: Config) -> tuple
+
+# %%
+def compute_figsizes(df: pd.DataFrame, config: Config) -> tuple:
+    """根据数据范围动态计算figsize和边距
+
+    Args:
+        df: 数据框
+        config: 配置类
+
+    Returns:
+        figsize: 动态计算的figsize
+        lon_margin: 经度方向的边距
+        lat_margin: 纬度方向的边距
+    """
+    # 优化边界计算
+    min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
+    min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
+
+    lon_range = max_lon - min_lon
+    lat_range = max_lat - min_lat
+
+    # 动态计算边距 - 基于数据范围的比例
+    if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
+        margin_factor = 0.15  # 15%的边距
+    else:  # 大范围数据
+        margin_factor = 0.05  # 5%的边距
+
+    # 兼顾处理lon_range和lat_range相除比例过大的问题
+    if (lon_range / lat_range > 4):
+        lon_margin = lon_range * margin_factor
+        lat_margin = lat_range * 0.6  # 纬度方向的边距设置为60%
+    elif (lat_range / lon_range > 4):
+        lon_margin = lon_range * 0.6  # 经度方向的边距设置为60%
+        lat_margin = lat_range * margin_factor
+    else:
+        lon_margin = lon_range * margin_factor
+        lat_margin = lat_range * margin_factor
+
+    # 确保最小边距（避免数据点太靠近边缘）
+    min_abs_margin = 0.005  # 最小绝对边距（度）
+    lon_margin = max(lon_margin, min_abs_margin)
+    lat_margin = max(lat_margin, min_abs_margin)
+
+    # 计算动态的 figsize 以保持经纬度比例为1:1
+    if lon_range > lat_range:
+        figsize = (config.PLOT_WIDTH, config.PLOT_WIDTH * lat_range / lon_range)
+    else:
+        figsize = (config.PLOT_WIDTH * lon_range / lat_range, config.PLOT_WIDTH)
+
+    # 处理lon_range和lat_range相处比例过大的情况，强制设置figsize
+    if (lon_range / lat_range > 5) or (lat_range / lon_range > 5):
+        figsize = (config.PLOT_WIDTH, config.PLOT_WIDTH)
+
+    return figsize, lon_margin, lat_margin
+
+
+# %% [markdown]
 # ### generate_trajectory_map(df, scope, config)
 
 # %%
@@ -770,33 +828,7 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
     try:
         import contextily as ctx
 
-        # 优化边界计算
-        min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
-        min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
-
-        lon_range = max_lon - min_lon
-        lat_range = max_lat - min_lat
-
-        # 动态计算边距 - 基于数据范围的比例
-        if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
-            margin_factor = 0.15  # 15%的边距
-        else:  # 大范围数据
-            margin_factor = 0.05  # 5%的边距
-
-        lon_margin = lon_range * margin_factor
-        lat_margin = lat_range * margin_factor
-
-        # 确保最小边距（避免数据点太靠近边缘）
-        min_abs_margin = 0.005  # 最小绝对边距（度）
-        lon_margin = max(lon_margin, min_abs_margin)
-        lat_margin = max(lat_margin, min_abs_margin)
-
-        # 计算动态的 figsize 以保持经纬度比例为1:1
-        if lon_range > lat_range:
-            figsize = (config.PLOT_WIDTH, config.PLOT_WIDTH * lat_range / lon_range)
-        else:
-            figsize = (config.PLOT_WIDTH * lon_range / lat_range, config.PLOT_WIDTH)
-
+        figsize, lon_margin, lat_margin = compute_figsizes(df, config)
         fig, ax = plt.subplots(figsize=figsize)
 
         # 1. 优化图例处理 - 只显示最新的6个分段，并显示起始日期
@@ -849,6 +881,10 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         else:
             # 没有分段数据
             ax.plot(df["longitude"], df["latitude"], "b-", alpha=0.7, linewidth=2.0)
+
+        # 计算边界并设置纵横坐标范围
+        min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
+        min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
 
         ax.set_xlim(min_lon - lon_margin, max_lon + lon_margin)
         ax.set_ylim(min_lat - lat_margin, max_lat + lat_margin)
@@ -1010,33 +1046,7 @@ def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Confi
 # %%
 def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> str:
     """生成停留点分布图"""
-    # 优化边界计算
-    min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
-    min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
-
-    lon_range = max_lon - min_lon
-    lat_range = max_lat - min_lat
-
-    # 动态计算边距 - 基于数据范围的比例
-    if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
-        margin_factor = 0.15  # 15%的边距
-    else:  # 大范围数据
-        margin_factor = 0.05  # 5%的边距
-
-    lon_margin = lon_range * margin_factor
-    lat_margin = lat_range * margin_factor
-
-    # 确保最小边距（避免数据点太靠近边缘）
-    min_abs_margin = 0.005  # 最小绝对边距（度）
-    lon_margin = max(lon_margin, min_abs_margin)
-    lat_margin = max(lat_margin, min_abs_margin)
-
-    # 计算动态的 figsize 以保持经纬度比例为1:1
-    if lon_range > lat_range:
-        figsize = (config.PLOT_WIDTH, config.PLOT_WIDTH * lat_range / lon_range)
-    else:
-        figsize = (config.PLOT_WIDTH * lon_range / lat_range, config.PLOT_WIDTH)
-
+    figsize, lon_margin, lat_margin = compute_figsizes(df, config)
     fig, ax = plt.subplots(figsize=figsize)
 
     # 绘制所有轨迹点
@@ -1071,11 +1081,18 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
         plt.text(
             center_lon,
             center_lat + 0.001,  # 稍微偏移以避免重叠
-            str(cluster_id),
+            str(int(cluster_id)),
             fontsize=10,
             ha="center",
             va="bottom",
         )
+
+    # 计算边界并设置纵横坐标范围
+    min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
+    min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
+
+    ax.set_xlim(min_lon - lon_margin, max_lon + lon_margin)
+    ax.set_ylim(min_lat - lat_margin, max_lat + lat_margin)
 
     plt.title(f"{scope.capitalize()}停留点分布")
     plt.xlabel("经度")
@@ -1235,7 +1252,7 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
 
     # 数据完整性时间序列
     daily_completeness = (
-        df.resample("D", on="time").count()["latitude"] / 1440 / 5
+        df.resample("D", on="time").count()["latitude"] / 1440 * 5
     )  # 完整数据为1440条/天，但是我的取样周期是五分钟
     axes[0, 0].plot(daily_completeness.index, daily_completeness.values)
     axes[0, 0].set_title("每日数据完整性")
@@ -1244,7 +1261,7 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
     # 精度随时间变化
     if "accuracy" in df.columns:
         # 过滤掉精度过高的数据
-        daily_accuracy = df[df["accuracy"] > 1000].resample("D", on="time")["accuracy"].mean()
+        daily_accuracy = df[df["accuracy"] < 1000].resample("D", on="time")["accuracy"].mean()
         axes[0, 1].plot(daily_accuracy.index, daily_accuracy.values)
         axes[0, 1].set_title("日均定位精度")
         axes[0, 1].set_ylabel("精度 (米)")
