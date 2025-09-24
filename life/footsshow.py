@@ -177,7 +177,6 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     sizeinit = df.shape[0]
     df = df.sort_values(by=["device_id", "time"]).drop_duplicates(subset=["device_id", "time"])
     sizeatfterdropdup = df.shape[0]
-    print(df.groupby("device_id").count()["time"])
 
     # 1.2 设备融合
     print(df.groupby("device_id").count()["time"])
@@ -1011,7 +1010,34 @@ def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Confi
 # %%
 def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> str:
     """生成停留点分布图"""
-    plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
+    # 优化边界计算
+    min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
+    min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
+
+    lon_range = max_lon - min_lon
+    lat_range = max_lat - min_lat
+
+    # 动态计算边距 - 基于数据范围的比例
+    if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
+        margin_factor = 0.15  # 15%的边距
+    else:  # 大范围数据
+        margin_factor = 0.05  # 5%的边距
+
+    lon_margin = lon_range * margin_factor
+    lat_margin = lat_range * margin_factor
+
+    # 确保最小边距（避免数据点太靠近边缘）
+    min_abs_margin = 0.005  # 最小绝对边距（度）
+    lon_margin = max(lon_margin, min_abs_margin)
+    lat_margin = max(lat_margin, min_abs_margin)
+
+    # 计算动态的 figsize 以保持经纬度比例为1:1
+    if lon_range > lat_range:
+        figsize = (config.PLOT_WIDTH, config.PLOT_WIDTH * lat_range / lon_range)
+    else:
+        figsize = (config.PLOT_WIDTH * lon_range / lat_range, config.PLOT_WIDTH)
+
+    fig, ax = plt.subplots(figsize=figsize)
 
     # 绘制所有轨迹点
     plt.scatter(
