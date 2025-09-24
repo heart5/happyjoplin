@@ -88,8 +88,8 @@ class Config:
 
         if self.REPORT_LEVELS is None:
             self.REPORT_LEVELS = {
-                "weekly": 0.25,
-                "two_weekly": 0.5,
+                "weekly": 0.24,
+                "two_weekly": 0.47,
                 "monthly": 1,
                 "quarterly": 3,
                 "yearly": 12,
@@ -115,7 +115,7 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
     if start_date.strftime("%Y%m") == end_date.strftime("%Y%m"):
         date_range = [start_date]
     else:
-        date_range = pd.date_range(start_date, end_date, freq="MS")
+        date_range = pd.date_range(start_date.replace(day=1), end_date, freq="MS")
     print(months, start_date, end_date, date_range)
     monthly_dfs = []
 
@@ -273,7 +273,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
                 }
             )
             .assign(visit_count=visit_counts)
-            .assign(avg_stay_min=stay_durations)
+            .assign(avg_stay_hour=stay_durations)
             .sort_values("visit_count", ascending=False)
             .head(config.IMPORTANT_POINT_SHOW_MAX)
         )
@@ -311,49 +311,22 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     # 3.1 轨迹图
     resource_ids["trajectory_with_map"] = generate_trajectory_map(df, scope, config)
 
-    # 保留原始轨迹图作为备选
-    # resource_ids["trajectory"] = generate_trajectory_map_fallback(df, scope, config)
-
-    # 3.2 设备分布饼图
-    resource_ids["device_dist"] = generate_device_pie_chart(
-        analysis_results["device_stats"]
-    )
-
-    # 3.3 时间分布热力图
-    resource_ids["time_heatmap"] = generate_time_heatmap(
-        analysis_results["hourly_distribution"]
-    )
-
-    # 3.4 精度分布图
-    if "accuracy" in df.columns:
-        plt.figure(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT - 2))
-        sns.histplot(df["accuracy"].dropna(), bins=30, kde=True, color="#55a868")
-        plt.title(f"{scope.capitalize()}定位精度分布")
-        plt.xlabel("精度 (米)")
-        plt.grid(True, alpha=0.3)
-        buf_acc = BytesIO()
-        plt.savefig(buf_acc, format="png", dpi=config.DPI)
-        plt.close()
-        resource_ids["accuracy"] = add_resource_from_bytes(
-            buf_acc.getvalue(), f"精度分布_{scope}.png"
-        )
-
-    # 3.5 停留点地图（已在前面计算，这里直接使用）
+    # 3.2 停留点地图（已在前面计算，这里直接使用）
     resource_ids["stay_points_map"] = analysis_results["stay_stats"]["resource_id"]
 
-    # 3.6 交互式地图
+    # 3.3 交互式地图
     resource_ids["interactive_map"] = generate_interactive_map(df, scope, config)
 
-    # 3.7 时间序列分析
+    # 3.4 时间序列分析
     resource_ids["time_series"] = generate_time_series_analysis(df, scope, config)
 
-    # 3.8 深度停留分析
+    # 3.5 深度停留分析
     resource_ids["enhanced_stays"] = enhanced_stay_points_analysis(df, scope, config)
 
-    # 3.9 移动模式识别
+    # 3.6 移动模式识别
     resource_ids["movement_patterns"] = movement_pattern_analysis(df, scope, config)
 
-    # 3.10 数据质量监控
+    # 3.7 数据质量监控
     resource_ids["data_quality"] = data_quality_dashboard(df, scope, config)
 
     # 将资源 ID 添加到分析结果中
@@ -772,54 +745,6 @@ def identify_important_places_before(df: pd.DataFrame, radius_km: float=0.5, min
 # ## 可视化函数
 
 # %% [markdown]
-# ### generate_device_pie_chart(device_stats)
-
-# %%
-def generate_device_pie_chart(device_stats: dict) -> str:
-    """生成设备分布饼图
-
-    return res_id: str
-    """
-    plt.figure(figsize=(6, 6))
-    labels = [
-        getinivaluefromcloud("device", str(device_id)) for device_id in device_stats
-    ]
-    sizes = list(device_stats.values())
-    plt.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=90)
-    plt.axis("equal")
-
-    buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=120)
-    plt.close()
-    return add_resource_from_bytes(buf.getvalue(), "设备分布.png")
-
-
-# %% [markdown]
-# ### generate_time_heatmap(hourly_distribution)
-
-# %%
-def generate_time_heatmap(hourly_distribution: dict) -> str:
-    """生成24小时热力图
-
-    return res_id: str
-    """
-    hours = list(range(24))
-    values = [hourly_distribution.get(h, 0) for h in hours]
-
-    plt.figure(figsize=(10, 3))
-    plt.bar(hours, values, color="#4c72b0")
-    plt.xticks(hours)
-    plt.xlabel("小时")
-    plt.ylabel("记录数")
-    plt.grid(axis="y", alpha=0.3)
-
-    buf = BytesIO()
-    plt.savefig(buf, format="png", dpi=120)
-    plt.close()
-    return add_resource_from_bytes(buf.getvalue(), "时间分布热力图.png")
-
-
-# %% [markdown]
 # ### generate_geo_link(lat, lon)
 
 # %%
@@ -835,12 +760,45 @@ def generate_geo_link(lat: float, lon: float) -> str:
 def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str:
     """生成带地图底图的轨迹图（优化版）- 显示分段起始日期
 
+    Args:
+    df: pd.DataFrame，轨迹数据
     scope: str，日期范围名称
+    config: Config，全局配置
+
+    Returns:
+    str，包含地图底图的轨迹图的资源ID
     """
     try:
         import contextily as ctx
 
-        fig, ax = plt.subplots(figsize=(config.PLOT_WIDTH, config.PLOT_HEIGHT))
+        # 优化边界计算
+        min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
+        min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
+
+        lon_range = max_lon - min_lon
+        lat_range = max_lat - min_lat
+
+        # 动态计算边距 - 基于数据范围的比例
+        if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
+            margin_factor = 0.15  # 15%的边距
+        else:  # 大范围数据
+            margin_factor = 0.05  # 5%的边距
+
+        lon_margin = lon_range * margin_factor
+        lat_margin = lat_range * margin_factor
+
+        # 确保最小边距（避免数据点太靠近边缘）
+        min_abs_margin = 0.005  # 最小绝对边距（度）
+        lon_margin = max(lon_margin, min_abs_margin)
+        lat_margin = max(lat_margin, min_abs_margin)
+
+        # 计算动态的 figsize 以保持经纬度比例为1:1
+        if lon_range > lat_range:
+            figsize = (config.PLOT_WIDTH, config.PLOT_WIDTH * lat_range / lon_range)
+        else:
+            figsize = (config.PLOT_WIDTH * lon_range / lat_range, config.PLOT_WIDTH)
+
+        fig, ax = plt.subplots(figsize=figsize)
 
         # 1. 优化图例处理 - 只显示最新的6个分段，并显示起始日期
         max_legend_items = 6  # 最多显示6个图例项
@@ -893,31 +851,10 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
             # 没有分段数据
             ax.plot(df["longitude"], df["latitude"], "b-", alpha=0.7, linewidth=2.0)
 
-        # 2. 优化边界计算
-        min_lon, max_lon = df["longitude"].min(), df["longitude"].max()
-        min_lat, max_lat = df["latitude"].min(), df["latitude"].max()
-
-        lon_range = max_lon - min_lon
-        lat_range = max_lat - min_lat
-
-        # 动态计算边距 - 基于数据范围的比例
-        if lon_range < 0.1 or lat_range < 0.1:  # 小范围数据
-            margin_factor = 0.15  # 15%的边距
-        else:  # 大范围数据
-            margin_factor = 0.05  # 5%的边距
-
-        lon_margin = lon_range * margin_factor
-        lat_margin = lat_range * margin_factor
-
-        # 确保最小边距（避免数据点太靠近边缘）
-        min_abs_margin = 0.005  # 最小绝对边距（度）
-        lon_margin = max(lon_margin, min_abs_margin)
-        lat_margin = max(lat_margin, min_abs_margin)
-
         ax.set_xlim(min_lon - lon_margin, max_lon + lon_margin)
         ax.set_ylim(min_lat - lat_margin, max_lat + lat_margin)
 
-        # 3. 计算合适的缩放级别
+        # 2. 计算合适的缩放级别
         lon_range = max_lon - min_lon
         lat_range = max_lat - min_lat
         max_range = max(lon_range, lat_range)
@@ -939,13 +876,13 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         else:  # 大范围
             zoom_level = 10
 
-        # 4. 使用高分辨率地图源
+        # 3. 使用高分辨率地图源
         try:
             # 尝试使用Stamen Terrain背景，通常提供较高清晰度
             ctx.add_basemap(
                 ax,
                 crs="EPSG:4326",
-                source=ctx.providers.Stamen.Terrain,
+                source=ctx.providers.Stamen.Terrain.background,
                 zoom=zoom_level,  # 指定缩放级别
                 alpha=0.8,
             )
@@ -959,13 +896,13 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
                 alpha=0.8,
             )
 
-        # 5. 设置标题和标签
+        # 4. 设置标题和标签
         ax.set_title(f"{scope.capitalize()}位置轨迹（带地图底图）", fontsize=14)
         ax.set_xlabel("经度")
         ax.set_ylabel("纬度")
         ax.grid(True, alpha=0.3)
 
-        # 6. 只显示最新6个分段的图例
+        # 5. 只显示最新6个分段的图例
         if "segment" in df.columns and len(segments_to_show) > 0:
             ax.legend(
                 loc="upper left",
@@ -975,7 +912,7 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
                 title="行程起始日期",  # 添加图例标题
             )
 
-        # 7. 提高保存图像的质量
+        # 6. 提高保存图像的质量
         buf = BytesIO()
         plt.savefig(
             buf,
@@ -1272,15 +1209,16 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
 
     # 数据完整性时间序列
     daily_completeness = (
-        df.resample("D", on="time").count()["latitude"] / 1440
-    )  # 假设完整数据为1440条/天
+        df.resample("D", on="time").count()["latitude"] / 1440 / 5
+    )  # 完整数据为1440条/天，但是我的取样周期是五分钟
     axes[0, 0].plot(daily_completeness.index, daily_completeness.values)
     axes[0, 0].set_title("每日数据完整性")
     axes[0, 0].set_ylim(0, 1)
 
     # 精度随时间变化
     if "accuracy" in df.columns:
-        daily_accuracy = df.resample("D", on="time")["accuracy"].mean()
+        # 过滤掉精度过高的数据
+        daily_accuracy = df[df["accuracy"] > 1000].resample("D", on="time")["accuracy"].mean()
         axes[0, 1].plot(daily_accuracy.index, daily_accuracy.values)
         axes[0, 1].set_title("日均定位精度")
         axes[0, 1].set_ylabel("精度 (米)")
@@ -1288,7 +1226,7 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
     # 设备数据贡献比例
     device_contrib = df["device_id"].value_counts()
     axes[1, 0].pie(
-        device_contrib.values, labels=device_contrib.index, autopct="%1.1f%%"
+        device_contrib.values, labels=[getinivaluefromcloud("device", str(d)) for d in device_contrib.index], autopct="%1.1f%%"
     )
     axes[1, 0].set_title("设备数据贡献比例")
 
@@ -1391,23 +1329,6 @@ def build_report_content(analysis_results: dict, resource_ids:str, scope: str) -
 | **覆盖天数** | {analysis_results["unique_days"]} | 数据完整度 |
 | **活动半径** | {analysis_results["distance_km"]:.2f}km | 最大移动距离 |
 | **时间断层** | {analysis_results["gap_stats"]["count"]} | 最长间隔 {analysis_results["gap_stats"]["longest_gap"] / 60:.1f}h |
-
-## 📱 设备分布
-![设备分布](:/{resource_ids["device_dist"]})
-
-## 🎯 定位精度
-| 指标 | 值 |
-|------|----|
-| **最佳精度** | {analysis_results["accuracy_stats"]["min"]:.1f}m |
-| **最差精度** | {analysis_results["accuracy_stats"]["max"]:.1f}m |
-| **平均精度** | {analysis_results["accuracy_stats"]["mean"]:.1f}m |
-
-## 🕒 时间分布
-![时间分布](:/{resource_ids["time_heatmap"]})
-
-## 🛑 停留点分析
-| 指标 | 值 | 说明 |
-|---|---|---|
 | 总停留次数 | {analysis_results["stay_stats"]["total_stays"]} | 识别到的停留点数量 |
 | 平均停留时长 | {analysis_results["stay_stats"]["avg_duration"]:.1f}分钟 | 每次停留的平均时间 |
 | 高频停留点 | {len(analysis_results["stay_stats"]["top_locations"])}处 | 访问最频繁的地点 |
@@ -1423,15 +1344,12 @@ def build_report_content(analysis_results: dict, resource_ids:str, scope: str) -
         visit_count = int(place["visit_count"])
         lat = place["latitude"]
         lon = place["longitude"]
-        content += f"""| **地点{i + 1}** | {visit_count}次 | {place["avg_stay_min"]:.1f}小时 | [{lat}, {lon}]({generate_geo_link(lat, lon)}) |\n"""
+        content += f"""| **地点{i + 1}** | {visit_count}次 | {place["avg_stay_hour"]:.1f}小时 | [{lat}, {lon}]({generate_geo_link(lat, lon)}) |\n"""
 
     content += f"""
 ## 📈 空间分析
 ### 移动轨迹
 ![移动轨迹](:/{resource_ids["trajectory_with_map"]})
-
-### 位置精度分布
-![位置精度分布](:/{resource_ids["accuracy"]})
 
 ## 🗺️ 交互式地图
 [查看交互式地图](:/{resource_ids["interactive_map"]})
