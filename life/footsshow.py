@@ -61,16 +61,18 @@ class Config:
     """参数配置类"""
 
     REPORT_LEVELS: Optional[dict] = None
-    PLOT_WIDTH: int = 10 # 图像宽度默认8英寸
+    PLOT_WIDTH: int = 12 # 图像宽度默认10英寸
     PLOT_HEIGHT: int = 12 # 图像高度默认12英寸
     DPI: int = 300 # 图像分辨率默认300
     TIME_WINDOW: str = "2h"  # 判断设备活跃的时间窗口，默认2h，可以为30min等数值
     STAY_DIST_THRESH: int = 200  # 停留点距离阈值（米），默认200米
-    SAMPLE_FOR_IMPORTANT_POINTS: int = 10000  # 重要地点采样数，默认10000
-    RADIUS_KM: float = 1.5  # 识别重要地点时的半径，单位为公里
-    MIN_POINTS: int = 100  # 最小点数
     TIME_JUMP_DAY_THRESH: int = 30  # 时间跳跃，白天阈值（分钟）
     TIME_JUMP_NIGHT_THRESH: int = 240  # 时间跳跃，夜间阈值（分钟）
+    SAMPLE_FOR_IMPORTANT_POINTS: int = 10000  # 重要地点采样数，默认10000
+    RADIUS_KM: float = 1.5  # 识别重要地点时的半径，单位为公里
+    IMPORTANT_POINT_MIN_INCLUDE: int = 100  # 重要地点最小包含点数，默认100个
+    IMPORTANT_POINT_SHOW_MAX: int = 5  # 重要地点显示最大数量，默认5个
+    REPORT_COUNT: int = 3  # 报告层级的数量，默认3层
 
     def __post_init__(self) -> None:
         """从配置读取阈值，如果读取不到则使用默认值"""
@@ -78,9 +80,11 @@ class Config:
         self.STAY_DIST_THRESH = getinivaluefromcloud("foots", "stay_dist_thresh") or self.STAY_DIST_THRESH
         self.SAMPLE_FOR_IMPORTANT_POINTS = getinivaluefromcloud("foots", "sample_for_important_points") or self.SAMPLE_FOR_IMPORTANT_POINTS
         self.RADIUS_KM = getinivaluefromcloud("foots", "radius_km") or self.RADIUS_KM
-        self.MIN_POINTS = getinivaluefromcloud("foots", "min_points") or self.MIN_POINTS
+        self.IMPORTANT_POINT_MIN_INCLUDE = getinivaluefromcloud("foots", "important_point_min_include") or self.IMPORTANT_POINT_MIN_INCLUDE
+        self.IMPORTANT_POINT_SHOW_MAX = getinivaluefromcloud("foots", "important_point_show_max") or self.IMPORTANT_POINT_SHOW_MAX
         self.TIME_JUMP_DAY_THRESH = int(getinivaluefromcloud("foots", "time_jump_day_thresh") or self.TIME_JUMP_DAY_THRESH)
         self.TIME_JUMP_NIGHT_THRESH = int(getinivaluefromcloud("foots", "time_jump_night_thresh") or self.TIME_JUMP_NIGHT_THRESH)
+        self.REPORT_COUNT = getinivaluefromcloud("foots", "report_count") or self.REPORT_COUNT
 
         if self.REPORT_LEVELS is None:
             self.REPORT_LEVELS = {
@@ -170,21 +174,17 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
 
     # 1. 数据预处理
     # 1.1. 按设备和时间列去重
+    sizeinit = df.shape[0]
     df = df.sort_values(by=["device_id", "time"]).drop_duplicates(subset=["device_id", "time"])
-    print(
-        f"去重后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
-    )
+    sizeatfterdropdup = df.shape[0]
     print(df.groupby("device_id").count()["time"])
 
     # 1.2 设备融合
-    print(
-        f"融合设备数据前大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
-    )
     print(df.groupby("device_id").count()["time"])
     df = fuse_device_data(df, config)
     # df = fuse_device_data_dask(df, config)
     print(
-        f"融合设备数据后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
+        f"初始数据大小为：{sizeinit}；去重后大小为：{sizeatfterdropdup}；融合设备数据后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
     )
     print(df.groupby("device_id").count()["time"])
 
@@ -193,16 +193,11 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
 
     # 1.4. 位置平滑
     df = smooth_coordinates(df)
-    print(
-        f"处理融合设备、时间跳跃和位置平滑后设备数据后大小为：{df.shape[0]}；起自{df['time'].min()}，止于{df['time'].max()}。"
-    )
-    print(df.groupby("device_id").count()["time"])
 
     # 1.5. 重要地点分析
     clustered = identify_important_places(df, config)
     if "cluster" in clustered.columns:
         df["cluster"] = clustered["cluster"]
-    print(f"重要地点分析后数据列为: {df.columns.tolist()}")
 
     # 2. 计算分析结果
 
@@ -243,26 +238,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
         "mean": df["accuracy"].mean(),
     }
 
-    # 2.8 重要地点分析
-    if "cluster" in df.columns:
-        important_places = (
-            df[df["cluster"] >= 0]
-            .groupby("cluster")
-            .agg(
-                {
-                    "latitude": "mean",
-                    "longitude": "mean",
-                }
-            )
-            .assign(visit_count=1)
-            .assign(avg_stay_min=0)
-            .sort_values("visit_count", ascending=False)
-            .head(5)
-        )
-    else:
-        important_places = pd.DataFrame()
-
-    # 2.9 停留点分析
+    # 2.8 停留点分析
     df = identify_stay_points(df, config)
     # 计算停留点统计
     stay_stats = {
@@ -273,10 +249,37 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
         "top_locations": df[df["is_stay"]]
         .groupby("cluster")
         .size()
-        .nlargest(3)
+        .nlargest(config.IMPORTANT_POINT_SHOW_MAX)
         .to_dict(),
     }
     stay_stats["resource_id"] = generate_stay_points_map(df, scope, config)
+
+    # 2.9 重要地点分析
+    if "cluster" in df.columns and "stay_group" in df.columns:
+        # 计算访问次数为stay_segment唯一值的数量
+        visit_counts = df[df["cluster"] >= 0].groupby("cluster")["stay_group"].nunique()
+
+        # 计算停留时长为duration列的总和，先确保stay_group是唯一的
+        unique_stay_groups = df[df["cluster"] >= 0].drop_duplicates(subset=["cluster", "stay_group"])
+        stay_durations = unique_stay_groups.groupby("cluster")["duration"].sum() / 60  # 转换为小时
+        # 合并访问次数和停留时长，并排序
+        important_places = (
+            unique_stay_groups[unique_stay_groups["cluster"] >= 0]
+            .groupby("cluster")
+            .agg(
+                {
+                    "latitude": "mean",
+                    "longitude": "mean",
+                }
+            )
+            .assign(visit_count=visit_counts)
+            .assign(avg_stay_min=stay_durations)
+            .sort_values("visit_count", ascending=False)
+            .head(config.IMPORTANT_POINT_SHOW_MAX)
+        )
+    else:
+        important_places = pd.DataFrame()
+
     print(f"分析完成后数据列为: {df.columns.tolist()}")
 
     # 随机选择一个stay_group值，并打印该值第一次出现的前五条记录和后五条记录
@@ -357,6 +360,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     analysis_results["resource_ids"] = resource_ids
 
     return analysis_results
+
 
 
 # %% [markdown]
@@ -675,22 +679,19 @@ def identify_stay_points(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
 
 # %% [markdown]
-# ### identify_important_places(df, radius_km=1.5, min_points=200)
+# ### identify_important_places(df, config)
 # 识别重要地点（停留点）
 
 
 # %%
-@timethis
-def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float=1.5, min_points: int=200) -> pd.DataFrame:
+def identify_important_places(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     """识别重要地点
 
-    1.5公里半径内的点数量大于200个，则认为是重要地点。
+    1.5公里半径内的点数量大于100个，则认为是重要地点。
 
     Args:
         df (pd.DataFrame): 原始数据
         config (Config): 配置信息
-        radius_km (float, optional): 半径，单位为公里. Defaults to 1.5.
-        min_points (int, optional): 最小点数. Defaults to 200.
 
     Returns:
         pd.DataFrame: 重要地点数据
@@ -710,12 +711,12 @@ def identify_important_places(df: pd.DataFrame, config: Config, radius_km: float
     # log.info(f"识别重要地点初始数据记录数抽样后为：\t{len(coords)}")
 
     kms_per_radian = 6371.0088
-    epsilon = radius_km / kms_per_radian  # 1500米半径
+    epsilon = config.RADIUS_KM / kms_per_radian  # 默认半径为1.5公里
 
     # 优化3：使用更高效的算法参数
     db = DBSCAN(
         eps=epsilon,
-        min_samples=min_points,
+        min_samples=config.IMPORTANT_POINT_MIN_INCLUDE, # 默认100个点
         algorithm="ball_tree",
         metric="haversine",
         n_jobs=-1,  # 使用所有CPU核心并行计算
@@ -1418,11 +1419,11 @@ def build_report_content(analysis_results: dict, resource_ids:str, scope: str) -
 | 位置 | 访问 | 停留 | 坐标 |
 |------|------|------|------|
 """
-    for i, place in enumerate(analysis_results["important_places"][:3]):
+    for i, place in enumerate(analysis_results["important_places"]):
         visit_count = int(place["visit_count"])
         lat = place["latitude"]
         lon = place["longitude"]
-        content += f"""| **地点{i + 1}** | {visit_count}次 | {place["avg_stay_min"]:.1f}分 | [{lat}, {lon}]({generate_geo_link(lat, lon)}) |\n"""
+        content += f"""| **地点{i + 1}** | {visit_count}次 | {place["avg_stay_min"]:.1f}小时 | [{lat}, {lon}]({generate_geo_link(lat, lon)}) |\n"""
 
     content += f"""
 ## 📈 空间分析
@@ -1465,7 +1466,9 @@ def update_joplin_report(report_content: str, scope: str) -> None:
     existing_notes = searchnotes(f"{note_title}")
 
     if existing_notes:
-        note_id = existing_notes[0].id
+        for note in existing_notes:
+            if note.title == note_title:
+                note_id = note.id
         # 更新笔记内容
         updatenote_body(note_id, report_content)
     else:
@@ -1488,8 +1491,21 @@ def update_joplin_report(report_content: str, scope: str) -> None:
 # %%
 @timethis
 def generate_location_reports(config: Config) -> None:
-    """生成三个层级的报告：月报、季报、年报"""
-    for scope in list(config.REPORT_LEVELS.keys())[:]:
+    """生成各个层级的报告：周报、月报、季报、年报等"""
+    now = datetime.now()
+    month = now.month
+    day = now.day
+
+    # 指定的日子，例如15号
+    specified_day = 15
+
+    # 判断是否为每三个月的指定日子
+    if month % 3 == 0 and day == specified_day:
+        scopes = config.REPORT_LEVELS.keys()  # 执行所有层级的报告
+    else:
+        scopes = list(config.REPORT_LEVELS.keys())[:config.REPORT_COUNT]  # 执行指定数量的报告
+
+    for scope in scopes:
         log.info(f"开始生成 {scope} 位置报告...")
 
         # 1. 加载数据
@@ -1509,6 +1525,7 @@ def generate_location_reports(config: Config) -> None:
 
         # 5. 更新笔记
         update_joplin_report(report_content, scope)
+
 
 
 # %% [markdown]
