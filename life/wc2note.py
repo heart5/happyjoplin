@@ -36,8 +36,9 @@ import xlsxwriter
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdevicename
     from filedatafunc import getfilemtime as getfltime
+
+    from etc.getid import getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain, touchfilepath2depth
     from func.jpfuncs import (
@@ -55,6 +56,7 @@ with pathmagic.context():
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
+
 
 
 # %% [markdown]
@@ -106,18 +108,25 @@ def items2df(fl):
 
 
 # %% [markdown]
-# ### getaccountowner(fn)
+# ### getownerfromfilename(fn)
 
 
 # %%
-def getownerfromfilename(fn):
-    """
-    从文件名中获取账号
-    文件名称示例：chatitems(heart5).txt.1
+def getownerfromfilename(fn: str) -> str:
+    """从文件名中获取账号
+
+    文件名格式：chatitems(账号).txt.1
+
+    Args:
+        fn (str): 文件名
+
+    Returns:
+        str: 账号
     """
     ptn = re.compile(r"\((\w*)\)")
     ac = ac if (ac := re.search(ptn, fn).groups()[0]) not in ["", "None"] else "白晔峰"
     return ac
+
 
 
 # %% [markdown]
@@ -126,12 +135,16 @@ def getownerfromfilename(fn):
 
 # %%
 @timethis
-def txtfiles2dfdict(dpath, newfileonly=False):
-    """
-    读取传入目录下符合标准（固定格式文件名）的文本文件并提取融合分账号的df，
-    返回字典{name:dict}
-    """
+def txtfiles2dfdict(dpath: Path, newfileonly: bool=False) -> dict:
+    """读取传入目录下符合标准（固定格式文件名）的文本文件并提取融合分账号的df，
 
+    Args:
+        dpath: 文本文件所在目录
+        newfileonly: 是否只处理最新两个文本文件，默认为False
+
+    Returns:
+        dfdict: 字典，key为账号名，value为DataFrame，包含该账号的所有聊天记录
+    """
     fllst = [f for f in os.listdir(dpath) if f.startswith("chatitems")]
     names = list(set([getownerfromfilename(nm) for nm in fllst]))
     print(names)
@@ -176,22 +189,20 @@ def txtfiles2dfdict(dpath, newfileonly=False):
 
 
 # %%
-def getdaterange(start, end):
-    """
-    根据输入的起止时间按照月尾分割生成时间点列表返回
-    """
+def getdaterange(start, end) -> list:
+    """根据输入的起止时间按照月尾分割生成时间点列表返回"""
     start = start + pd.Timedelta(-1, "sec")
     if start.strftime("%Y-%m") == end.strftime("%Y-%m"):
         drlst = [start, end]
     else:
-        dr = pd.date_range(pd.to_datetime(start.strftime("%F 23:59:59")), end, freq="M")
-        drlst = list(dr)
         """
         start = pd.to_datetime("2024-1-9")
         end = pd.to_datetime("2024-11-18")
         output:
         [Timestamp('2024-01-31 23:59:59'), Timestamp('2024-02-29 23:59:59'), Timestamp('2024-03-31 23:59:59'), Timestamp('2024-04-30 23:59:59'), Timestamp('2024-05-31 23:59:59'), Timestamp('2024-06-30 23:59:59'), Timestamp('2024-07-31 23:59:59'), Timestamp('2024-08-31 23:59:59'), Timestamp('2024-09-30 23:59:59'), Timestamp('2024-10-31 23:59:59')]
         """
+        dr = pd.date_range(pd.to_datetime(start.strftime("%F 23:59:59")), end, freq="M")
+        drlst = list(dr)
         drlst.insert(0, start)
         drlst.append(end)
 
@@ -199,75 +210,72 @@ def getdaterange(start, end):
 
 
 # %% [markdown]
-# ### txtdfsplit2xlsx(name, df, dpath, newfileonly=False):
+# ### txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=False) -> None
 
 
 # %%
-def txtdfsplit2xlsx(name, df, dpath, newfileonly=False):
-    """
-    按月份拆分指定账号的数据记录df，如果尚不存在本地相应资源文件，直接写入并更新ini中登记
-    数量；如果存在相应本地资源文件，则读取并融合df中的记录，存入对应格式化名称的excel表格
-    中，相应更新ini中登记数量
-    """
-    dftimestart = df["time"].min()
-    dftimeend = df["time"].max()
-    dr = getdaterange(dftimestart, dftimeend)
-    if newfileonly:
-        dr = dr[-2:]
-    log.info(f"时间范围横跨{len(dr) - 1}个月")
+def txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=False) -> None:
+    """按月份拆分指定账号的数据记录df，如果尚不存在本地相应资源文件，直接写入并更新ini中登记数量；如果存在相应本地资源文件，则读取并融合df中的记录，存入对应格式化名称的excel表格中，相应更新ini中登记数量
 
-    outlst = list()
-    for i in range(len(dr) - 1):
-        print(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tBegin\t{'-' * 15}")
-        dfp = df[(df.time >= dr[i]) & (df.time <= dr[i + 1])]
-        if dfp.shape[0] != 0:
-            ny = dfp["time"].iloc[0].strftime("%y%m")
-            fn = f"wcitems_{name}_{ny}.xlsx"  # 纯文件名称
-            fn_all = dpath / fn
-            fn_all = touchfilepath2depth(fn_all)
-            fna = os.path.abspath(fn_all)  # 全路径文件名（绝对路径）
-            if not os.path.exists(fna):
-                logstr = f"创建文件{fn}，记录共有{dfp.shape[0]}条。"
-                log.info(logstr)
-                dfp.to_excel(fna, engine="xlsxwriter", index=False)
-                setcfpoptionvalue(
-                    "happyjpwcitems", fn, "itemsnumfromtxt", f"{dfp.shape[0]}"
-                )
-            else:
-                if (
-                    oldnum := getcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt")
-                ) is None:
-                    oldnum = 0
-                if oldnum != dfp.shape[0]:
-                    dftmp = pd.read_excel(fna)
-                    dfpall = (
-                        pd.concat([dfp, dftmp]).drop_duplicates().sort_values(["time"])
-                    )
-                    logstr = (
-                        f"{fn}\t本地（文本文件）登记的记录数量为（{oldnum}），但新文本文件中"
-                        f"记录数量（{dfp.shape[0]}）条记录，"
-                        f"融合本地excel文件后记录数量为({dfpall.shape[0]})。覆盖写入所有新数据！"
-                    )
+    Args:
+        name: 账号名称
+        df: 待处理的数据记录df
+        dpath: 本地资源文件路径
+        newfileonly: 是否只处理最新两个月的数据，默认为False
+    Returns:
+        None
+    """
+    try:
+        dftimestart = df["time"].min()
+        dftimeend = df["time"].max()
+        dr = getdaterange(dftimestart, dftimeend)
+        if newfileonly:
+            dr = dr[-2:]
+        log.info(f"时间范围横跨{len(dr) - 1}个月")
+
+        for i in range(len(dr) - 1):
+            print(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tBegin\t{'-' * 15}")
+            dfp = df[(df.time >= dr[i]) & (df.time <= dr[i + 1])]
+            if not dfp.empty:
+                ny = dfp["time"].iloc[0].strftime("%y%m")
+                fn = f"wcitems_{name}_{ny}.xlsx"  # 纯文件名称
+                fn_all = touchfilepath2depth(dpath / fn)
+                fna = os.path.abspath(fn_all)  # 全路径文件名（绝对路径）
+
+                if not os.path.exists(fna):
+                    logstr = f"创建文件{fn}，记录共有{len(dfp)}条。"
                     log.info(logstr)
-                    dfpall.to_excel(fna, engine="xlsxwriter", index=False)
-                    setcfpoptionvalue(
-                        "happyjpwcitems", fn, "itemsnumfromtxt", f"{dfp.shape[0]}"
-                    )
+                    dfp.to_excel(fna, engine="xlsxwriter", index=False)
+                    setcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt", str(len(dfp)))
                 else:
-                    print(f"{fn}已经存在，且文本文件中记录数量没有变化。")
-            print(i, ny, dr[i], dr[i + 1], dfp.shape[0])
-        print(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tDone!\t{'-' * 15}")
+                    oldnum = getcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt") or 0
+                    if oldnum != len(dfp):
+                        dftmp = pd.read_excel(fna)
+                        dfpall = pd.concat([dfp, dftmp]).drop_duplicates().sort_values(["time"])
+                        logstr = (
+                            f"{fn}\t本地（文本文件）登记的记录数量为（{oldnum}），但新文本文件中"
+                            f"记录数量（{len(dfp)}）条记录，"
+                            f"融合本地excel文件后记录数量为({len(dfpall)})。覆盖写入所有新数据！"
+                        )
+                        log.info(logstr)
+                        dfpall.to_excel(fna, engine="xlsxwriter", index=False)
+                        setcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt", str(len(dfp)))
+                    else:
+                        print(f"{fn}已经存在，且文本文件中记录数量没有变化。")
+                print(i, ny, dr[i], dr[i + 1], len(dfp))
+            print(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tDone!\t{'-' * 15}")
 
+    except Exception as e:
+        log.error(f"在处理 {name} 的数据时发生错误: {e}")
+        raise
 
 # %% [markdown]
 # ### df2db(name, df4name, wcpath)
 
 
 # %%
-def df2db(name, df4name, wcpath):
-    """
-    把指定微信账号的记录df写入db相应表中
-    """
+def df2db(name: str, df4name: pd.DataFrame, wcpath: Path) -> None:
+    """把指定微信账号的记录df写入db相应表中"""
     ny = df4name["time"].iloc[0].strftime("%y%m")
     dftfilename = f"wcitems_{name}_{ny}.xlsx"
     if (
@@ -288,7 +296,7 @@ def df2db(name, df4name, wcpath):
             tablename = f"wc_{name}"
             csql = (
                 f"create table if not exists {tablename} "
-                + f"(id INTEGER PRIMARY KEY AUTOINCREMENT, time DATETIME, send BOOLEAN, sender TEXT, type TEXT, content TEXT)"
+                + "(id INTEGER PRIMARY KEY AUTOINCREMENT, time DATETIME, send BOOLEAN, sender TEXT, type TEXT, content TEXT)"
             )
             ifnotcreate(tablename, csql, dbname)
             cursor = conn.cursor()
@@ -313,16 +321,12 @@ def df2db(name, df4name, wcpath):
 
 
 # %% [markdown]
-# ### updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid)
+# ### updatewcitemsxlsx2note(name: str, df4name: pd.DataFrame, wcpath: Path, notebookguid: str) -> None
 
 
 # %%
-def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
-    """
-    处理从本地资源文件读取生成的df，如果和ini登记数量相同，则返回；如果不同，则从笔记端读取相应登记
-    数量再次对比，相同，则跳过，如果不同，则拉取笔记资源文件和本地资源文件融合，更新笔记端资源文件并
-    更新ini登记数量（用融合后的记录数量）
-    """
+def updatewcitemsxlsx2note(name: str, df4name: pd.DataFrame, wcpath: Path, notebookguid: str) -> None:
+    """处理从本地资源文件读取生成的df，如果和ini登记数量相同，则返回；如果不同，则从笔记端读取相应登记数量再次对比，相同，则跳过，如果不同，则拉取笔记资源文件和本地资源文件融合，更新笔记端资源文件并更新ini登记数量（用融合后的记录数量）"""
     # global jpapi
 
     forcerefresh = getinivaluefromcloud("wcitems", "forcerefresh")
@@ -485,10 +489,8 @@ def updatewcitemsxlsx2note(name, df4name, wcpath, notebookguid):
 
 # %%
 @timethis
-def getnotelist(name, wcpath, notebookguid):
-    """
-    根据传入的微信账号名称获得云端记录笔记列表
-    """
+def getnotelist(name: str, wcpath: Path, notebookguid: str) -> list:
+    """根据传入的微信账号名称获得云端记录笔记列表"""
     notelisttitle = f"微信账号（{name}）记录笔记列表"
     loginstr = (
         ""
@@ -614,10 +616,8 @@ def getnotelist(name, wcpath, notebookguid):
 
 # %%
 # @timethis
-def merge2note(dfdict, wcpath, notebookguid, newfileonly=False):
-    """
-    处理从文本文件读取生成的dfdict，分账户读取本地资源文件和笔记进行对照，并做相应更新或跳过
-    """
+def merge2note(dfdict: dict, wcpath: Path, notebookguid: str, newfileonly: bool=False) -> None:
+    """处理从文本文件读取生成的dfdict，分账户读取本地资源文件和笔记进行对照，并做相应更新或跳过"""
     for name in dfdict.keys():
         fllstfromnote = getnotelist(name, wcpath, notebookguid=notebookguid)
         ptn = f"wcitems_{name}_" + r"\d{4}.xlsx"  # wcitems_heart5_2201.xlsx
@@ -674,7 +674,7 @@ def merge2note(dfdict, wcpath, notebookguid, newfileonly=False):
 
 # %%
 @timethis
-def refreshres(wcpath):
+def refreshres(wcpath: Path) -> None:
     notebookname = "微信记录数据仓"
     notebookguid = searchnotebook(notebookname)
     if (new := getinivaluefromcloud("wcitems", "txtfilesonlynew")) is None:
@@ -696,10 +696,8 @@ def refreshres(wcpath):
 
 # %%
 @timethis
-def alldfdesc2note(wcpath):
-    """
-    读取本地所有资源文件的聊天记录到DataFrame中，输出描述性信息到相应笔记中
-    """
+def alldfdesc2note(wcpath: Path) -> dict:
+    """读取本地所有资源文件的聊天记录到DataFrame中，输出描述性信息到相应笔记中"""
     ptn4name = r"wcitems_(\w+)_(\d{4}.xlsx)"
     names = list(
         set(
@@ -723,7 +721,7 @@ def alldfdesc2note(wcpath):
             # dbname中可能不存在指定表，没有则创建之。2025年8月22日，pixel termux发现的bug
             csql = (
                 f"create table if not exists {tbname} "
-                + f"(id INTEGER PRIMARY KEY AUTOINCREMENT, time DATETIME, send BOOLEAN, sender TEXT, type TEXT, content TEXT)"
+                + "(id INTEGER PRIMARY KEY AUTOINCREMENT, time DATETIME, send BOOLEAN, sender TEXT, type TEXT, content TEXT)"
             )
             ifnotcreate(tbname, csql, dbname)
             sql = f"select * from {tbname}"
@@ -758,6 +756,6 @@ if __name__ == "__main__":
 
 
 # %%
-def explodedf():
+def explodedf() -> None:
     mydf = mydict["heart5"]
     mydf[mydf.time >= "2022-10-01"].sort_values("time")
