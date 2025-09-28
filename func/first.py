@@ -47,9 +47,10 @@ with pathmagic.context():
 
 # %%
 def touchfilepath2depth(filepath: Path) -> Path:
-    filepath.parent.mkdir(parents=True, exist_ok=True)
+    filep = Path(filepath)
+    filep.parent.mkdir(parents=True, exist_ok=True)
 
-    return filepath
+    return filep
 
 # %% [markdown]
 # ### getdirmain()
