@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import xlsxwriter
+# import xlsxwriter
 
 # %%
 import pathmagic
@@ -49,9 +49,9 @@ with pathmagic.context():
         searchnotebook,
         searchnotes,
         updatenote_body,
-        updatenote_title,
+        # updatenote_title,
     )
-    from func.litetools import ifnotcreate, showtablesindb
+    from func.litetools import ifnotcreate
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
@@ -62,7 +62,7 @@ with pathmagic.context():
 # ## 功能函数集
 
 # %% [markdown]
-# ### items2df(fl)
+# ### items2df(fl: Path) -> pd.DataFrame
 
 
 # %%
@@ -72,7 +72,7 @@ def items2df(fl: Path) -> pd.DataFrame:
         content = open(fl, "r").read()
         # print(fl, content[:100])
     except Exception as e:
-        log.critical(f"文件{fl}读取时出现错误，返回空的pd.DataFrame")
+        log.critical(f"文件{fl}读取时出现错误，返回空的pd.DataFrame.\n{e}")
         return pd.DataFrame()
     ptn = re.compile(
         r"(^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\t(True|False)\t([^\t]+)\t(\w+)\t", re.M
@@ -98,14 +98,12 @@ def items2df(fl: Path) -> pd.DataFrame:
         lambda x: re.sub(ptn, "", x) if ptn.match(x) else x
     )
     dfout = df2.drop_duplicates().sort_values("time")
-    # print(dfout.dtypes)
-    # print(dfout)
 
     return dfout
 
 
 # %% [markdown]
-# ### getownerfromfilename(fn)
+# ### getownerfromfilename(fn: str) -> str
 
 
 # %%
@@ -127,7 +125,7 @@ def getownerfromfilename(fn: str) -> str:
 
 
 # %% [markdown]
-# ### txtfiles2dfdict(wcdatapath, newfileonly=False)
+# ### txtfiles2dfdict(dpath: Path, newfileonly: bool=False) -> dict
 
 
 # %%
@@ -182,11 +180,11 @@ def txtfiles2dfdict(dpath: Path, newfileonly: bool=False) -> dict:
 
 
 # %% [markdown]
-# ### getdaterange(start, end)
+# ### getdaterange(start: pd.Datetime, end: pd.Datetime) -> list
 
 
 # %%
-def getdaterange(start, end) -> list:
+def getdaterange(start: pd.Datetime, end: pd.Datetime) -> list:
     """根据输入的起止时间按照月尾分割生成时间点列表返回"""
     start = start + pd.Timedelta(-1, "sec")
     if start.strftime("%Y-%m") == end.strftime("%Y-%m"):
@@ -267,7 +265,7 @@ def txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=
         raise
 
 # %% [markdown]
-# ### df2db(name, df4name, wcpath)
+# ### df2db(name: str, df4name: pd.DataFrame, wcpath: Path) -> None
 
 
 # %%
@@ -481,7 +479,7 @@ def updatewcitemsxlsx2note(name: str, df4name: pd.DataFrame, wcpath: Path, noteb
 
 
 # %% [markdown]
-# ### getnotelist(name, wcpath, notebookguid)
+# ### getnotelist(name: str, wcpath: Path, notebookguid: str) -> list
 
 
 # %%
@@ -607,7 +605,7 @@ def getnotelist(name: str, wcpath: Path, notebookguid: str) -> list:
 
 
 # %% [markdown]
-# ### merge2note(dfdict, wcpath, notebookguid, newfileonly=False)
+# ### merge2note(dfdict: dict, wcpath: Path, notebookguid: str, newfileonly: bool=False) -> None
 
 
 # %%
@@ -665,7 +663,7 @@ def merge2note(dfdict: dict, wcpath: Path, notebookguid: str, newfileonly: bool=
 
 
 # %% [markdown]
-# ### refreshres(wcpath)
+# ### refreshres(wcpath: Path) -> None
 
 
 # %%
@@ -687,7 +685,7 @@ def refreshres(wcpath: Path) -> None:
 
 
 # %% [markdown]
-# ### alldfdesc2note(name)
+# ### alldfdesc2note(wcpath: Path) -> dict
 
 
 # %%
