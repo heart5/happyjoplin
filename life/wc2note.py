@@ -566,9 +566,7 @@ def getnotelist(name: str, wcpath: Path, notebookguid: str) -> list:
 
     #     print(nrlst)
     numinnotedesc = int(re.findall(r"\t(-?\d+)", nrlst[0])[0])
-    #     ptn = f"(wcitems_{name}_\d\d\d\d\.xlsx)\t(\S+)"
     ptn = f"(wcitems_{name}_" + r"\d{4}.xlsx)\t(\S+)"
-    #     print(ptn)
     finditems = re.findall(ptn, nrlst[1])
     finditems = sorted(finditems, key=lambda x: x[0], reverse=True)
     #     print(finditems)
@@ -576,7 +574,8 @@ def getnotelist(name: str, wcpath: Path, notebookguid: str) -> list:
     if numinnotedesc == numatlocal == len(finditems):
         log.info(f"《{notelisttitle}》中数量无更新，跳过。")
         return finditems
-    findnotelst = searchnotes(f"{name}_", parent_id=notebookguid)
+    # 没有严格限定笔记名称规范，导致笔内容结构不对而出错，修正之
+    findnotelst = searchnotes(f"wcitems_{name}_", parent_id=notebookguid)
     findnotelst = [
         [nt.title, nt.id, re.findall(r"记录数量\t(-?\d+)", nt.body)[0]]
         for nt in findnotelst
