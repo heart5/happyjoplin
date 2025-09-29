@@ -36,10 +36,9 @@ import xlsxwriter
 import pathmagic
 
 with pathmagic.context():
-    from filedatafunc import getfilemtime as getfltime
-
     from etc.getid import getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.filedatafunc import getfilemtime as getfltime
     from func.first import getdirmain, touchfilepath2depth
     from func.jpfuncs import (
         createnote,
@@ -67,10 +66,8 @@ with pathmagic.context():
 
 
 # %%
-def items2df(fl):
-    """
-    读取txt记录文件，格式化拆分并存储至DataFrame返回
-    """
+def items2df(fl: Path) -> pd.DataFrame:
+    """读取txt记录文件，格式化拆分并存储至DataFrame返回"""
     try:
         content = open(fl, "r").read()
         # print(fl, content[:100])
