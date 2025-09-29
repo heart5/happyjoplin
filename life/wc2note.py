@@ -180,11 +180,11 @@ def txtfiles2dfdict(dpath: Path, newfileonly: bool=False) -> dict:
 
 
 # %% [markdown]
-# ### getdaterange(start: pd.Datetime, end: pd.Datetime) -> list
+# ### getdaterange(start: datetime, end: datetime) -> list
 
 
 # %%
-def getdaterange(start: pd.Datetime, end: pd.Datetime) -> list:
+def getdaterange(start: datetime,end: datetime) -> list:
     """根据输入的起止时间按照月尾分割生成时间点列表返回"""
     start = start + pd.Timedelta(-1, "sec")
     if start.strftime("%Y-%m") == end.strftime("%Y-%m"):
