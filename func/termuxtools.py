@@ -232,7 +232,7 @@ def termux_infrared_transmit():
 
 
 # %%
-@set_timeout(90, after_timeout)
+@set_timeout(210, after_timeout)
 def termux_location() -> object:
     """获取当前位置信息，返回格式：{"latitude": xx, "longitude": xx, ...}"""
     try:
