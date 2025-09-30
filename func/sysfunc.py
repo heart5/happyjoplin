@@ -134,15 +134,12 @@ def convertframe2dic(frame):
 
 
 # %%
-def set_timeout(num, callback):
-    """
-    设定运行时间的装饰器
-    """
+def set_timeout(num: int, callback) -> any:
+    """设定运行时间的装饰器"""
 
     def wrap(func):
-        def handle(
-            signum, frame
-        ):  # 收到信号 SIGALRM 后的回调函数，第一个参数是信号的数字，第二个参数是the interrupted stack frame.
+        # 收到信号 SIGALRM 后的回调函数，第一个参数是信号的数字，第二个参数是the interrupted stack frame.
+        def handle(signum, frame):
             raise RuntimeError
 
         def to_do(*args, **kwargs):
@@ -151,11 +148,12 @@ def set_timeout(num, callback):
                     #                     print(sysstr)
                     signal.signal(signal.SIGALRM, handle)  # 设置信号和回调函数
                     signal.alarm(num)  # 设置 num 秒的闹钟
-                    #                     print('start alarm signal.')
+                    log.info(f'函数{func.__name__}设置{num}秒的运行时间限制。')
                     r = func(*args, **kwargs)
-                    #                     print('close alarm signal.')
                     signal.alarm(0)  # 关闭闹钟
+                    log.info(f"函数{func.__name__}运行完毕。")
                     return r
+
                 else:
                     r = func(*args, **kwargs)
                     logstr = f"{sysstr}\t非linux系统，啥也没做。"
@@ -172,15 +170,15 @@ def set_timeout(num, callback):
     return wrap
 
 
+# %%
+
 # %% [markdown]
 # ### after_timeout()
 
 
 # %%
-def after_timeout():
-    """
-    超时后的处理函数
-    """
+def after_timeout() -> None:
+    """超时后的处理函数"""
     log.critical(("运行超出预设时间，强制退出!", traceback.extract_stack()))
 
 
@@ -231,11 +229,9 @@ def is_tool_valid(name):
 
 
 # %%
-@set_timeout(29, after_timeout)
-def execcmd(cmd):
-    """
-    执行命令行命令并输出运行结果
-    """
+# @set_timeout(29, after_timeout)
+def execcmd(cmd: str) -> str:
+    """执行命令行命令并输出运行结果"""
     try:
         r = os.popen(cmd)
         text = r.read()
