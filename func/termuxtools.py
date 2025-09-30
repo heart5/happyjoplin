@@ -229,19 +229,13 @@ def termux_infrared_transmit():
 
 # %%
 @set_timeout(30, after_timeout)
-def termux_location():
-    """
-    分步获取位置信息：优先实时定位，失败时使用缓存定位
-    返回格式：{"latitude": xx, "longitude": xx, ...}
-    """
-    # 第一步：尝试实时定位（单次请求）
+def termux_location() -> object:
+    """获取当前位置信息，返回格式：{"latitude": xx, "longitude": xx, ...}"""
     try:
-        out_once = execcmd("termux-location -r once")
-        if out_once:
-            result_once = evaloutput(out_once)
-            # 验证定位数据有效性（必须包含经纬度）
-            if "latitude" in result_once and "longitude" in result_once:
-                return result_once
+        out = execcmd("termux-location")
+        result = evaloutput(out)
+        if "latitude" in result and "longitude" in result:
+            return result
     except Exception as e:
         log.warning(f"实时定位失败: {str(e)}")
 
@@ -250,18 +244,28 @@ def termux_location():
         out_last = execcmd("termux-location -r last")
         if out_last:
             result_last = evaloutput(out_last)
-            # 替换provider为缓存标记
-            result_last["provider"] = "cached"
-            return result_last
+            # 验证定位数据有效性（必须包含经纬度）
+            if "latitude" in result_last and "longitude" in result_last:
+                # 替换provider为缓存标记
+                result_last["provider"] = "cached"
+                return result_last
     except Exception as e:
         log.error(f"缓存定位失败: {str(e)}")
 
     # 终极回退：网络定位（需Termux API权限）
     try:
         out_network = execcmd("termux-location -p network")
-        return evaloutput(out_network) if out_network else False
-    except:
-        return False
+        if out_network:
+            result_network = evaloutput(out_network)
+            # 验证定位数据有效性（必须包含经纬度）
+            if "latitude" in result_network and "longitude" in result_network:
+                # 替换provider为网络标记
+                result_network["provider"] = "network"
+                return result_network
+    except Exception as e:
+        log.error(f"网络定位失败: {str(e)}")
+
+    return False
 
 
 # %% [markdown]
