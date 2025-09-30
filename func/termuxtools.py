@@ -19,7 +19,7 @@
 
 # %%
 import re
-import subprocess
+# import subprocess
 
 # %%
 import pathmagic
@@ -50,7 +50,7 @@ with pathmagic.context():
 
 
 # %%
-def evaloutput(output):
+def evaloutput(output: any) -> any:
     if (output is None) or (output == "null") or (len(output) == 0):
         # print(f"output\'s content:\n{output}")
         return False
@@ -61,6 +61,10 @@ def evaloutput(output):
     # print(out)
     return eval(out)
 
+
+# %%
+# dictstr = ("{'k':1, 'p':3}")
+# eval(dictstr)
 
 # %% [markdown]
 # ### info2dict(info)
@@ -228,7 +232,7 @@ def termux_infrared_transmit():
 
 
 # %%
-@set_timeout(30, after_timeout)
+@set_timeout(90, after_timeout)
 def termux_location() -> object:
     """获取当前位置信息，返回格式：{"latitude": xx, "longitude": xx, ...}"""
     try:
