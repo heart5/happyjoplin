@@ -25,7 +25,7 @@ import datetime
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdeviceid, gethostuser
+    from etc.getid import getdeviceid
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.datatools import readfromtxt, write2txt
     from func.first import dirmainpath
@@ -45,10 +45,8 @@ with pathmagic.context():
 # %%
 @set_timeout(240, after_timeout)
 @timethis
-def foot2record():
-    """
-    记录位置数据（经纬度等）
-    """
+def foot2record() -> None:
+    """获取当前位置并记录位置数据（经纬度等）"""
     namestr = "happyjp_life"
     section = "hjloc"
 
@@ -67,9 +65,9 @@ def foot2record():
     print(locinfo)
     nowstr = datetime.datetime.now().strftime("%F %T")
     itemnewr = [nowstr]
-    if locinfo == False:
+    if not locinfo:
         itemnewr.extend([f"{str(locinfo)}"])
-        log.critical(f"位置获取失败，不记录数据，直接退出")
+        log.critical("位置获取失败，不记录数据，直接退出")
         return
     else:
         log.info(f"定位方式: {locinfo.get('provider', 'unknown')}")
