@@ -1,0 +1,3 @@
+[submodule "func"]
+	path = func
+	url = https://github.com/heart5/func.git
