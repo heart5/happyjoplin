@@ -229,9 +229,15 @@ def is_tool_valid(name):
 
 
 # %%
-# @set_timeout(29, after_timeout)
 def execcmd(cmd: str) -> str:
-    """执行命令行命令并输出运行结果"""
+    """执行命令行命令并输出运行结果
+
+    Args:
+        cmd (str): 命令行命令
+
+    Returns:
+        str: 命令行命令的运行结果
+    """
     try:
         r = os.popen(cmd)
         text = r.read()
