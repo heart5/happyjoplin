@@ -18,8 +18,10 @@
 # ## 引入重要库
 
 # %%
+import json
 import re
-# import subprocess
+import subprocess
+from typing import Dict, Union
 
 # %%
 import pathmagic
@@ -39,39 +41,48 @@ with pathmagic.context():
 # %% [markdown]
 # ## 功能函数集合
 
-# %% [markdown]
-# """
-#     implementation of all the termux-api commands
-#     via subprocesses,
-# """
+# %%
+"""
+    implementation of all the termux-api commands
+    via subprocesses,
+"""
 
 # %% [markdown]
-# ### evaloutput(output)
+# ### evaloutput(output: Union[str, bool, None]) -> Union[Dict, bool, str]
 
 
 # %%
-def evaloutput(output: any) -> any:
-    if (output is None) or (output == "null") or (len(output) == 0):
-        # print(f"output\'s content:\n{output}")
+def evaloutput(output: Union[str, bool, None]) -> Union[Dict, bool, str]:
+    """对output进行解析，返回字典或布尔值或原字符串"""
+    if output is None or output == "null" or len(output) == 0:
         return False
     # 转换成字典输出
-    out = (
-        output.replace("false", "False").replace("true", "True").replace("null", "None")
-    )
-    # print(out)
-    return eval(out)
+    if isinstance(output, str) and output.startswith("{") and output.endswith("}"):
+        try:
+            return json.loads(output)
+        except json.JSONDecodeError:
+            return output
+    # 转换成布尔值输出
+    if isinstance(output, str) and output.lower() in ["true", "false"]:
+        return output.lower() == "true"
+    # 其他情况返回原值
+    return output
 
-
-# %%
-# dictstr = ("{'k':1, 'p':3}")
-# eval(dictstr)
 
 # %% [markdown]
-# ### info2dict(info)
+# ### info2dict(info: str) -> Dict
 
 
 # %%
-def info2dict(info):
+def info2dict(info: str) -> Dict:
+    """Convert the output of termux-info to a dictionary.
+
+    Args:
+        info (str): The output of termux-info.
+
+    Returns:
+        Dict: A dictionary containing the information.
+    """
     ptn = re.compile("\n?.+?:\n")
 
     vals = re.split(ptn, info)
@@ -84,26 +95,38 @@ def info2dict(info):
 
 
 # %% [markdown]
-# ### battery_status()
+# ### battery_status() -> Union[Dict, bool]
 
 
 # %%
 @set_timeout(60, after_timeout)
-def battery_status():
-    # out, rc, err = utils.execute('termux-battery-status')
-    out = execcmd("termux-battery-status")
-    return evaloutput(out)
+def battery_status() -> Union[Dict, bool]:
+    """获取电池状态，返回格式：{"status": xx, "health": xx, "plugged": xx, "voltage": xx, "temperature": xx}"""
+    out = subprocess.check_output("termux-battery-status", shell=True).decode("utf-8")
+    if "error" in out:
+        return False
+    else:
+        status = out.split("\n")[0].split(":")[1].strip()
+        health = out.split("\n")[1].split(":")[1].strip()
+        plugged = out.split("\n")[2].split(":")[1].strip()
+        voltage = out.split("\n")[3].split(":")[1].strip()
+        temperature = out.split("\n")[4].split(":")[1].strip()
+        return {"status": status, "health": health, "plugged": plugged, "voltage": voltage, "temperature": temperature}
 
 
 # %% [markdown]
-# ### camera_info()
+# ### camera_info() -> Union[Dict, bool]
 
 
 # %%
-def camera_info():
+def camera_info() -> Union[Dict, bool]:
+    """获取手机相机信息
+
+    :return: 字典，包含相机信息；False，获取失败
+    """
     out, rc, err = utils.execute("termux-camera-info")
     if rc:
-        raise Exception(err)
+        return False
     return evaloutput(out)
 
 
