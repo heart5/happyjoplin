@@ -73,7 +73,7 @@ def log2note(noteid, loglimit, levelstr="", notetitle="happyjp日志信息"):
         if not fname.startswith("happyjoplin.log"):
             log.warning(f"文件《{fname}》不是合法的日志文件，跳过。")
             continue
-        with open(pathlog / fname, "r", encoding="utf-8") as flog:
+        with open(pathlog / fname, "r", encoding="utf-8", errors="replace") as flog:
             charsnum2showinline = getinivaluefromcloud(namestr, "charsnum2showinline")
             # print(f"log行最大显示字符数量为：\t{charsnum2showinline}")
             loglines = loglines + [
