@@ -258,6 +258,8 @@ def txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=
                     if oldnum != len(dfp):
                         dftmp = pd.read_excel(fna)
                         dfpall = pd.concat([dfp, dftmp]).drop_duplicates().sort_values(["time"])
+                        # 去除时间范围外的记录
+                        dfpall = dfpall[dfpall.time < dr[i + 1]]
                         logstr = (
                             f"{fn}\t本地（文本文件）登记的记录数量为（{oldnum}），但新文本文件中"
                             f"记录数量（{len(dfp)}）条记录，"
