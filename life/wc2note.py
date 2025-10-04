@@ -234,12 +234,14 @@ def txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=
         dftimeend = df["time"].max()
         dr = getdaterange(dftimestart, dftimeend)
         if newfileonly:
-            dr = dr[-2:]
+            dr = dr[-3:]
         log.info(f"时间范围横跨{len(dr) - 1}个月")
 
         for i in range(len(dr) - 1):
-            print(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tBegin\t{'-' * 15}")
+            log.info(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tBegin\t{'-' * 15}")
+            log.info(f"宣称的处理时间范围：{dr[i]} - {dr[i + 1]}")
             dfp = df[(df.time >= dr[i]) & (df.time < dr[i + 1])]
+            log.info(f"数据实际时间跨度范围：{dfp.time.min()} - {dfp.time.max()}，共{len(dfp)}条记录")
             if not dfp.empty:
                 ny = dfp["time"].iloc[0].strftime("%y%m")
                 fn = f"wcitems_{name}_{ny}.xlsx"  # 纯文件名称
