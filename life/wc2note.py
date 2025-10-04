@@ -29,6 +29,7 @@ import sqlite3 as lite
 from datetime import datetime
 from pathlib import Path
 
+import arrow
 import pandas as pd
 # import xlsxwriter
 
@@ -186,23 +187,31 @@ def txtfiles2dfdict(dpath: Path, newfileonly: bool=False) -> dict:
 # %%
 def getdaterange(start: datetime,end: datetime) -> list:
     """根据输入的起止时间按照月尾分割生成时间点列表返回"""
-    start = start + pd.Timedelta(-1, "sec")
-    if start.strftime("%Y-%m") == end.strftime("%Y-%m"):
-        drlst = [start, end]
+    """
+    start = pd.to_datetime("2024-1-9")
+    end = pd.to_datetime("2024-11-18")
+    output:
+    [Timestamp('2024-01-31 23:59:59'), Timestamp('2024-02-29 23:59:59'), Timestamp('2024-03-31 23:59:59'), Timestamp('2024-04-30 23:59:59'), Timestamp('2024-05-31 23:59:59'), Timestamp('2024-06-30 23:59:59'), Timestamp('2024-07-31 23:59:59'), Timestamp('2024-08-31 23:59:59'), Timestamp('2024-09-30 23:59:59'), Timestamp('2024-10-31 23:59:59')]
+    """
+    if start > end:
+        log.critical("start time is later than end time")
+        return []
+
+    start_s = pd.to_datetime(start.strftime("%Y-%m-%d 00:00:00"))
+    end_s = pd.to_datetime(end.strftime("%Y-%m-%d 23:59:59"))
+
+    if start_s.strftime("%Y-%m") == end_s.strftime("%Y-%m"):
+        drlst = [start_s, end_s]
     else:
-        """
-        start = pd.to_datetime("2024-1-9")
-        end = pd.to_datetime("2024-11-18")
-        output:
-        [Timestamp('2024-01-31 23:59:59'), Timestamp('2024-02-29 23:59:59'), Timestamp('2024-03-31 23:59:59'), Timestamp('2024-04-30 23:59:59'), Timestamp('2024-05-31 23:59:59'), Timestamp('2024-06-30 23:59:59'), Timestamp('2024-07-31 23:59:59'), Timestamp('2024-08-31 23:59:59'), Timestamp('2024-09-30 23:59:59'), Timestamp('2024-10-31 23:59:59')]
-        """
-        dr = pd.date_range(pd.to_datetime(start.strftime("%F 23:59:59")), end, freq="M")
+        dr = pd.date_range(start_s, end_s, freq="MS")
         drlst = list(dr)
-        drlst.insert(0, start)
+        if start.strftime("%d") != "01":
+            drlst.insert(0, start)
+        else:
+            drlst[0] = start
         drlst.append(end)
 
     return drlst
-
 
 # %% [markdown]
 # ### txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=False) -> None
@@ -230,7 +239,7 @@ def txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=
 
         for i in range(len(dr) - 1):
             print(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tBegin\t{'-' * 15}")
-            dfp = df[(df.time >= dr[i]) & (df.time <= dr[i + 1])]
+            dfp = df[(df.time >= dr[i]) & (df.time < dr[i + 1])]
             if not dfp.empty:
                 ny = dfp["time"].iloc[0].strftime("%y%m")
                 fn = f"wcitems_{name}_{ny}.xlsx"  # 纯文件名称
@@ -243,7 +252,7 @@ def txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool=
                     dfp.to_excel(fna, engine="xlsxwriter", index=False)
                     setcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt", str(len(dfp)))
                 else:
-                    oldnum = getcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt") or 0
+                    oldnum = getcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt")
                     if oldnum != len(dfp):
                         dftmp = pd.read_excel(fna)
                         dfpall = pd.concat([dfp, dftmp]).drop_duplicates().sort_values(["time"])
