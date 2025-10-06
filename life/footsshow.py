@@ -32,10 +32,9 @@ import seaborn as sns
 
 
 # %%
+import pathmagic
 from geopy.distance import great_circle
 from sklearn.cluster import DBSCAN
-
-import pathmagic
 
 with pathmagic.context():
     from func.jpfuncs import (
@@ -55,15 +54,16 @@ with pathmagic.context():
 # %% [markdown]
 # ## 配置参数
 
+
 # %%
 @dataclass
 class Config:
     """参数配置类"""
 
     REPORT_LEVELS: Optional[dict] = None
-    PLOT_WIDTH: int = 12 # 图像宽度默认10英寸
-    PLOT_HEIGHT: int = 12 # 图像高度默认12英寸
-    DPI: int = 300 # 图像分辨率默认300
+    PLOT_WIDTH: int = 12  # 图像宽度默认10英寸
+    PLOT_HEIGHT: int = 12  # 图像高度默认12英寸
+    DPI: int = 300  # 图像分辨率默认300
     TIME_WINDOW: str = "2h"  # 判断设备活跃的时间窗口，默认2h，可以为30min等数值
     STAY_DIST_THRESH: int = 200  # 停留点距离阈值（米），默认200米
     TIME_JUMP_DAY_THRESH: int = 30  # 时间跳跃，白天阈值（分钟）
@@ -78,12 +78,22 @@ class Config:
         """从配置读取阈值，如果读取不到则使用默认值"""
         self.TIME_WINDOW = getinivaluefromcloud("foots", "time_window") or self.TIME_WINDOW
         self.STAY_DIST_THRESH = getinivaluefromcloud("foots", "stay_dist_thresh") or self.STAY_DIST_THRESH
-        self.SAMPLE_FOR_IMPORTANT_POINTS = getinivaluefromcloud("foots", "sample_for_important_points") or self.SAMPLE_FOR_IMPORTANT_POINTS
+        self.SAMPLE_FOR_IMPORTANT_POINTS = (
+            getinivaluefromcloud("foots", "sample_for_important_points") or self.SAMPLE_FOR_IMPORTANT_POINTS
+        )
         self.RADIUS_KM = getinivaluefromcloud("foots", "radius_km") or self.RADIUS_KM
-        self.IMPORTANT_POINT_MIN_INCLUDE = getinivaluefromcloud("foots", "important_point_min_include") or self.IMPORTANT_POINT_MIN_INCLUDE
-        self.IMPORTANT_POINT_SHOW_MAX = getinivaluefromcloud("foots", "important_point_show_max") or self.IMPORTANT_POINT_SHOW_MAX
-        self.TIME_JUMP_DAY_THRESH = int(getinivaluefromcloud("foots", "time_jump_day_thresh") or self.TIME_JUMP_DAY_THRESH)
-        self.TIME_JUMP_NIGHT_THRESH = int(getinivaluefromcloud("foots", "time_jump_night_thresh") or self.TIME_JUMP_NIGHT_THRESH)
+        self.IMPORTANT_POINT_MIN_INCLUDE = (
+            getinivaluefromcloud("foots", "important_point_min_include") or self.IMPORTANT_POINT_MIN_INCLUDE
+        )
+        self.IMPORTANT_POINT_SHOW_MAX = (
+            getinivaluefromcloud("foots", "important_point_show_max") or self.IMPORTANT_POINT_SHOW_MAX
+        )
+        self.TIME_JUMP_DAY_THRESH = int(
+            getinivaluefromcloud("foots", "time_jump_day_thresh") or self.TIME_JUMP_DAY_THRESH
+        )
+        self.TIME_JUMP_NIGHT_THRESH = int(
+            getinivaluefromcloud("foots", "time_jump_night_thresh") or self.TIME_JUMP_NIGHT_THRESH
+        )
         self.REPORT_COUNT = getinivaluefromcloud("foots", "report_count") or self.REPORT_COUNT
 
         if self.REPORT_LEVELS is None:
@@ -154,6 +164,7 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
         outdf = df[(df["time"] >= start_date) & (df["time"] <= end_date)]
 
     return outdf
+
 
 # %% [markdown]
 # ## 数据分析函数
@@ -242,9 +253,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     # 计算停留点统计
     stay_stats = {
         "total_stays": df["stay_group"].nunique(),  # 调整total_stays的计算逻辑
-        "avg_duration": df[df["is_stay"]]["duration"].mean() / 60
-        if "duration" in df
-        else 0,
+        "avg_duration": df[df["is_stay"]]["duration"].mean() / 60 if "duration" in df else 0,
         "top_locations": df[df["is_stay"]]
         .groupby("cluster")
         .size()
@@ -290,7 +299,7 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
         first_occurrence_index = df[df["stay_group"] == random_stay_group].index[0]
         print(f"随机选取的stay_group为: {random_stay_group}")
         print("该stay_group第一次出现的前五条记录和后五条记录如下：")
-        print(df.iloc[max(0, first_occurrence_index-5):first_occurrence_index+6])
+        print(df.iloc[max(0, first_occurrence_index - 5) : first_occurrence_index + 6])
 
     # 3. 生成所有可视化资源
     analysis_results = {
@@ -332,7 +341,6 @@ def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
     analysis_results["resource_ids"] = resource_ids
 
     return analysis_results
-
 
 
 # %% [markdown]
@@ -389,6 +397,7 @@ def fuse_device_data(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     result_df = pd.concat(selected_points)
     return result_df
 
+
 # %% [markdown]
 # ### calc_device_activity(df, device_id)
 
@@ -404,15 +413,11 @@ def calc_device_activity(df: pd.DataFrame, device_id: str) -> int:
     prev = None
     for _, row in device_data.iterrows():
         if prev is not None:
-            dist = great_circle(
-                (prev.latitude, prev.longitude), (row.latitude, row.longitude)
-            ).m
+            dist = great_circle((prev.latitude, prev.longitude), (row.latitude, row.longitude)).m
             total_dist += dist
         prev = row
 
-    time_span = (
-        device_data["time"].max() - device_data["time"].min()
-    ).total_seconds() / 3600
+    time_span = (device_data["time"].max() - device_data["time"].min()).total_seconds() / 3600
     lat_var = device_data["latitude"].var()
     lon_var = device_data["longitude"].var()
 
@@ -425,6 +430,7 @@ def calc_device_activity(df: pd.DataFrame, device_id: str) -> int:
 
 # %% [markdown]
 # ### calc_device_activity_optimized(df, device_id)
+
 
 # %%
 def calc_device_activity_optimized(df: pd.DataFrame, device_id: str) -> int:
@@ -466,8 +472,9 @@ def calc_device_activity_optimized(df: pd.DataFrame, device_id: str) -> int:
 # %% [markdown]
 # ### smooth_coordinates(df, window_size=5)
 
+
 # %%
-def smooth_coordinates(df: pd.DataFrame, window_size: int=5) -> pd.DataFrame:
+def smooth_coordinates(df: pd.DataFrame, window_size: int = 5) -> pd.DataFrame:
     """使用滑动窗口平均法平滑经纬度坐标
 
     参数:
@@ -477,19 +484,16 @@ def smooth_coordinates(df: pd.DataFrame, window_size: int=5) -> pd.DataFrame:
     df = df.sort_values("time")
 
     # 使用滚动窗口计算平均位置
-    df["smoothed_lat"] = (
-        df["latitude"].rolling(window=window_size, center=True, min_periods=1).mean()
-    )
+    df["smoothed_lat"] = df["latitude"].rolling(window=window_size, center=True, min_periods=1).mean()
 
-    df["smoothed_lon"] = (
-        df["longitude"].rolling(window=window_size, center=True, min_periods=1).mean()
-    )
+    df["smoothed_lon"] = df["longitude"].rolling(window=window_size, center=True, min_periods=1).mean()
 
     # 对于边缘点，使用原始值
     df["smoothed_lat"] = df["smoothed_lat"].fillna(df["latitude"])
     df["smoothed_lon"] = df["smoothed_lon"].fillna(df["longitude"])
 
     return df
+
 
 # %% [markdown]
 # ### handle_time_jumps(df, config: Config)
@@ -516,9 +520,7 @@ def handle_time_jumps(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     night_threshold = config.TIME_JUMP_NIGHT_THRESH  # 4小时
 
     # 动态阈值：白天工作时间阈值低，夜间阈值高
-    df["dynamic_threshold"] = np.where(
-        (hour >= 8) & (hour <= 20) & is_weekday, day_threshold, night_threshold
-    )
+    df["dynamic_threshold"] = np.where((hour >= 8) & (hour <= 20) & is_weekday, day_threshold, night_threshold)
 
     # 3. 智能跳跃检测（结合时间和位置变化）
     df["prev_lat"] = df["latitude"].shift(1)
@@ -526,18 +528,14 @@ def handle_time_jumps(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 
     # 计算位置变化（米）
     df["dist_change"] = df.apply(
-        lambda row: great_circle(
-            (row["prev_lat"], row["prev_lon"]), (row["latitude"], row["longitude"])
-        ).m
+        lambda row: great_circle((row["prev_lat"], row["prev_lon"]), (row["latitude"], row["longitude"])).m
         if not pd.isna(row["prev_lat"])
         else 0,
         axis=1,
     )
 
     # 4. 跳跃条件：时间差超过阈值且位置变化小（可能为设备切换或静止）
-    df["big_gap"] = (df["time_diff"] > df["dynamic_threshold"]) & (
-        df["dist_change"] < config.STAY_DIST_THRESH
-    )
+    df["big_gap"] = (df["time_diff"] > df["dynamic_threshold"]) & (df["dist_change"] < config.STAY_DIST_THRESH)
 
     # 5. 设备切换检测（额外标记）
     df["device_change"] = df["device_id"] != df["device_id"].shift(1)
@@ -566,9 +564,7 @@ def handle_time_jumps(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 def check_spatiotemporal_consistency(point1: pd.Series, point2: pd.Series) -> bool:
     """检查两点时空一致性"""
     time_diff = abs((point1["time"] - point2["time"]).total_seconds())
-    dist = great_circle(
-        (point1.latitude, point1.longitude), (point2.latitude, point2.longitude)
-    ).m
+    dist = great_circle((point1.latitude, point1.longitude), (point2.latitude, point2.longitude)).m
     max_allowed_dist = min(100, time_diff * 0.5)  # 0.5m/s移动速度
     return dist < max_allowed_dist and time_diff < 300
 
@@ -578,7 +574,7 @@ def check_spatiotemporal_consistency(point1: pd.Series, point2: pd.Series) -> bo
 
 
 # %%
-def detect_static_devices(df: pd.DataFrame, var_threshold: float=0.0002) -> pd.DataFrame:
+def detect_static_devices(df: pd.DataFrame, var_threshold: float = 0.0002) -> pd.DataFrame:
     """识别并过滤静态设备"""
     static_devices = []
     for device_id, device_data in df.groupby("device_id"):
@@ -594,6 +590,7 @@ def detect_static_devices(df: pd.DataFrame, var_threshold: float=0.0002) -> pd.D
 
 # %% [markdown]
 # ### identify_stay_points(df, config)
+
 
 # %%
 def identify_stay_points(df: pd.DataFrame, config: Config) -> pd.DataFrame:
@@ -630,7 +627,7 @@ def identify_stay_points(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     current_stay_group = None
 
     for i in range(1, len(df)):
-        if (df.loc[i, "dist_to_prev"] < config.STAY_DIST_THRESH):
+        if df.loc[i, "dist_to_prev"] < config.STAY_DIST_THRESH:
             if current_stay_group is None:
                 stay_group_counter += 1
                 current_stay_group = stay_group_counter
@@ -647,7 +644,6 @@ def identify_stay_points(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     df.drop(columns=["prev_lat", "prev_lon"], inplace=True)
 
     return df
-
 
 
 # %% [markdown]
@@ -688,7 +684,7 @@ def identify_important_places(df: pd.DataFrame, config: Config) -> pd.DataFrame:
     # 优化3：使用更高效的算法参数
     db = DBSCAN(
         eps=epsilon,
-        min_samples=config.IMPORTANT_POINT_MIN_INCLUDE, # 默认100个点
+        min_samples=config.IMPORTANT_POINT_MIN_INCLUDE,  # 默认100个点
         algorithm="ball_tree",
         metric="haversine",
         n_jobs=-1,  # 使用所有CPU核心并行计算
@@ -711,8 +707,9 @@ def identify_important_places(df: pd.DataFrame, config: Config) -> pd.DataFrame:
 # %% [markdown]
 # ### identify_important_places_before(df, radius_km=0.5, min_points=3)
 
+
 # %%
-def identify_important_places_before(df: pd.DataFrame, radius_km: float=0.5, min_points: int=3) -> pd.DataFrame:
+def identify_important_places_before(df: pd.DataFrame, radius_km: float = 0.5, min_points: int = 3) -> pd.DataFrame:
     """识别重要地点（停留点）
 
     减小聚类半径以处理位置扰动
@@ -728,9 +725,7 @@ def identify_important_places_before(df: pd.DataFrame, radius_km: float=0.5, min
     epsilon = radius_km / kms_per_radian
 
     # 使用DBSCAN聚类
-    db = DBSCAN(
-        eps=epsilon, min_samples=min_points, algorithm="ball_tree", metric="haversine"
-    ).fit(np.radians(coords))
+    db = DBSCAN(eps=epsilon, min_samples=min_points, algorithm="ball_tree", metric="haversine").fit(np.radians(coords))
 
     df["cluster"] = db.labels_
 
@@ -746,6 +741,7 @@ def identify_important_places_before(df: pd.DataFrame, radius_km: float=0.5, min
 # %% [markdown]
 # ### generate_geo_link(lat, lon)
 
+
 # %%
 def generate_geo_link(lat: float, lon: float) -> str:
     """生成地图链接"""
@@ -754,6 +750,7 @@ def generate_geo_link(lat: float, lon: float) -> str:
 
 # %% [markdown]
 # ### compute_figsizes(df: pd.DataFrame, config: Config) -> tuple
+
 
 # %%
 def compute_figsizes(df: pd.DataFrame, config: Config) -> tuple:
@@ -782,10 +779,10 @@ def compute_figsizes(df: pd.DataFrame, config: Config) -> tuple:
         margin_factor = 0.05  # 5%的边距
 
     # 兼顾处理lon_range和lat_range相除比例过大的问题
-    if (lon_range / lat_range > 4):
+    if lon_range / lat_range > 4:
         lon_margin = lon_range * margin_factor
         lat_margin = lat_range * 0.6  # 纬度方向的边距设置为60%
-    elif (lat_range / lon_range > 4):
+    elif lat_range / lon_range > 4:
         lon_margin = lon_range * 0.6  # 经度方向的边距设置为60%
         lat_margin = lat_range * margin_factor
     else:
@@ -812,6 +809,7 @@ def compute_figsizes(df: pd.DataFrame, config: Config) -> tuple:
 
 # %% [markdown]
 # ### generate_trajectory_map(df, scope, config)
+
 
 # %%
 def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str:
@@ -842,14 +840,10 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
             segment_start_time = {}
             for segment in segments:
                 seg_df = df[df["segment"] == segment]
-                segment_start_time[segment] = seg_df[
-                    "time"
-                ].min()  # 使用min()获取起始时间
+                segment_start_time[segment] = seg_df["time"].min()  # 使用min()获取起始时间
 
             # 按起始时间排序（最新的在前）
-            sorted_segments = sorted(
-                segments, key=lambda x: segment_start_time[x], reverse=True
-            )
+            sorted_segments = sorted(segments, key=lambda x: segment_start_time[x], reverse=True)
 
             # 只保留前6个最新分段
             segments_to_show = sorted_segments[:max_legend_items]
@@ -859,9 +853,7 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
                 seg_df = df[df["segment"] == segment]
                 if segment in segments_to_show:
                     # 格式化日期为"25年9月1日"的格式
-                    start_date_str = segment_start_time[segment].strftime(
-                        "%y年%-m月%-d日"
-                    )
+                    start_date_str = segment_start_time[segment].strftime("%y年%-m月%-d日")
 
                     ax.plot(
                         seg_df["longitude"],
@@ -958,17 +950,19 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         )
         plt.close()
 
-        return add_resource_from_bytes(
-            buf.getvalue(), title=f"轨迹图_{scope}_带地图.png"
-        )
+        return add_resource_from_bytes(buf.getvalue(), title=f"轨迹图_{scope}_带地图.png")
 
-    except ImportError:
-        log.warning("未安装contextily库，无法添加地图底图")
+    except ImportError as ie:
+        log.warning(f"未安装contextily库，无法添加地图底图。{ie}")
+        return generate_trajectory_map_fallback(df, scope, config)
+    except Exception as e:
+        log.critical(f"作图时出错如下：\t{e}。\t尝试生成不带底图的轨迹图。")
         return generate_trajectory_map_fallback(df, scope, config)
 
 
 # %% [markdown]
 # ### generate_trajectory_map_fallback(df, scope, config)
+
 
 # %%
 def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Config) -> str:
@@ -989,9 +983,7 @@ def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Confi
             segment_start_time[segment] = seg_df["time"].min()  # 使用min()获取起始时间
 
         # 按起始时间排序（最新的在前）
-        sorted_segments = sorted(
-            segments, key=lambda x: segment_start_time[x], reverse=True
-        )
+        sorted_segments = sorted(segments, key=lambda x: segment_start_time[x], reverse=True)
 
         # 只保留前6个最新分段
         segments_to_show = sorted_segments[:max_legend_items]
@@ -1043,6 +1035,7 @@ def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Confi
 # %% [markdown]
 # ### generate_stay_points_map(df, scope, config)
 
+
 # %%
 def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> str:
     """生成停留点分布图"""
@@ -1050,19 +1043,18 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
     fig, ax = plt.subplots(figsize=figsize)
 
     # 绘制所有轨迹点
-    plt.scatter(
-        df["longitude"], df["latitude"], c="gray", alpha=0.3, s=5, label="轨迹点"
-    )
+    plt.scatter(df["longitude"], df["latitude"], c="gray", alpha=0.3, s=5, label="轨迹点")
 
     # 突出显示停留点
     stay_df = df[df["is_stay"]]
     unique_stay_groups = stay_df["stay_group"].unique()
-    colors = plt.colormaps.get_cmap('tab20')  # 使用推荐的方法获取颜色映射
+    colors = plt.colormaps.get_cmap("tab20")  # 使用推荐的方法获取颜色映射
 
     for i, stay_group_id in enumerate(unique_stay_groups):
         group_df = stay_df[stay_df["stay_group"] == stay_group_id]
         plt.scatter(
-            group_df["longitude"], group_df["latitude"],
+            group_df["longitude"],
+            group_df["latitude"],
             c=[colors(i / len(unique_stay_groups)) for _ in range(len(group_df))],
             s=50,
             # label=f"停留组 {stay_group_id}"
@@ -1075,9 +1067,7 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
         center_lon = cluster_df["longitude"].mean()
         center_lat = cluster_df["latitude"].mean()
         # 先绘制标记，再添加文本
-        plt.plot(
-            center_lon, center_lat, "o", markersize=8, color="red"
-        )  # 绘制一个圆点标记
+        plt.plot(center_lon, center_lat, "o", markersize=8, color="red")  # 绘制一个圆点标记
         plt.text(
             center_lon,
             center_lat + 0.001,  # 稍微偏移以避免重叠
@@ -1107,9 +1097,9 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
     return add_resource_from_bytes(buf.getvalue(), f"停留点分布_{scope}.png")
 
 
-
 # %% [markdown]
 # ### generate_interactive_map(df, scope, config)
+
 
 # %%
 def generate_interactive_map(df: pd.DataFrame, scope: str, config: Config) -> str:
@@ -1147,6 +1137,7 @@ def generate_interactive_map(df: pd.DataFrame, scope: str, config: Config) -> st
 
 # %% [markdown]
 # ### generate_time_series_analysis(df, scope, config)
+
 
 # %%
 def generate_time_series_analysis(df: pd.DataFrame, scope: str, config: Config) -> str:
@@ -1204,6 +1195,7 @@ def generate_time_series_analysis(df: pd.DataFrame, scope: str, config: Config) 
 # %% [markdown]
 # ### enhanced_stay_points_analysis(df, scope, config)
 
+
 # %%
 def enhanced_stay_points_analysis(df: pd.DataFrame, scope: str, config: Config) -> str:
     """增强版停留点分析"""
@@ -1245,6 +1237,7 @@ def enhanced_stay_points_analysis(df: pd.DataFrame, scope: str, config: Config) 
 # %% [markdown]
 # ### data_quality_dashboard(df, scope, config)
 
+
 # %%
 def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
     """数据质量监控仪表板"""
@@ -1269,7 +1262,9 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
     # 设备数据贡献比例
     device_contrib = df["device_id"].value_counts()
     axes[1, 0].pie(
-        device_contrib.values, labels=[getinivaluefromcloud("device", str(d)) for d in device_contrib.index], autopct="%1.1f%%"
+        device_contrib.values,
+        labels=[getinivaluefromcloud("device", str(d)) for d in device_contrib.index],
+        autopct="%1.1f%%",
     )
     axes[1, 0].set_title("设备数据贡献比例")
 
@@ -1289,6 +1284,7 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
 
 # %% [markdown]
 # ### movement_pattern_analysis(df, scope)
+
 
 # %%
 def movement_pattern_analysis(df: pd.DataFrame, scope: str, config: Config) -> str:
@@ -1337,6 +1333,7 @@ def movement_pattern_analysis(df: pd.DataFrame, scope: str, config: Config) -> s
 
     return add_resource_from_bytes(buf.getvalue(), f"移动模式分析_{scope}.png")
 
+
 # %% [markdown]
 # ### `generate_visualizations(df, analysis_results)`
 # 生成位置数据的可视化图表
@@ -1358,7 +1355,7 @@ def generate_visualizations(analysis_results: str, scope: str) -> dict:
 
 
 # %%
-def build_report_content(analysis_results: dict, resource_ids:str, scope: str) -> str:
+def build_report_content(analysis_results: dict, resource_ids: str, scope: str) -> str:
     """构建Markdown报告内容"""
     # 使用 analysis_results 和 resource_ids 构建报告
     content = f"""
@@ -1464,7 +1461,7 @@ def generate_location_reports(config: Config) -> None:
     if month % 3 == 0 and day == specified_day:
         scopes = config.REPORT_LEVELS.keys()  # 执行所有层级的报告
     else:
-        scopes = list(config.REPORT_LEVELS.keys())[:config.REPORT_COUNT]  # 执行指定数量的报告
+        scopes = list(config.REPORT_LEVELS.keys())[: config.REPORT_COUNT]  # 执行指定数量的报告
 
     for scope in scopes:
         log.info(f"开始生成 {scope} 位置报告...")
@@ -1486,7 +1483,6 @@ def generate_location_reports(config: Config) -> None:
 
         # 5. 更新笔记
         update_joplin_report(report_content, scope)
-
 
 
 # %% [markdown]
