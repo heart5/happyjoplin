@@ -10,10 +10,7 @@
 # ---
 
 # %%
-import pathmagic
-
-with pathmagic.context():
-    from func.first import getdirmain
+from func.first import getdirmain
 
 # %%
 print(getdirmain())
