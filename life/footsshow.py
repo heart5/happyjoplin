@@ -32,9 +32,10 @@ import seaborn as sns
 
 
 # %%
-import pathmagic
 from geopy.distance import great_circle
 from sklearn.cluster import DBSCAN
+
+import pathmagic
 
 with pathmagic.context():
     from func.jpfuncs import (
