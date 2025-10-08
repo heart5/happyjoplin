@@ -954,10 +954,10 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         return add_resource_from_bytes(buf.getvalue(), title=f"轨迹图_{scope}_带地图.png")
 
     except ImportError as ie:
-        log.warning(f"未安装contextily库，无法添加地图底图。{ie}")
+        log.critical(f"未安装contextily库，无法添加《{scope}》位置地图底图。{ie}")
         return generate_trajectory_map_fallback(df, scope, config)
     except Exception as e:
-        log.critical(f"作图时出错如下：\t{e}。\t尝试生成不带底图的轨迹图。")
+        log.critical(f"《{scope}》位置地图底图生成失败：\t{e}。\t尝试生成不带底图的轨迹图。")
         return generate_trajectory_map_fallback(df, scope, config)
 
 
