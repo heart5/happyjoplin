@@ -32,14 +32,14 @@ import pathmagic
 with pathmagic.context():
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain
-    from func.jpfuncs import createnote, getapi, getnote, searchnotes, updatenote_body
+    from func.jpfuncs import createnote, getnote, searchnotes, updatenote_body
     from func.logme import log
 
     # from func.wrapfuncs import timethis
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
     # from etc.getid import getdevicename, gethostuser
-    from func.sysfunc import after_timeout, execcmd, not_IPython, set_timeout
+    from func.sysfunc import not_IPython
 
 
 # %% [markdown]
@@ -51,7 +51,10 @@ with pathmagic.context():
 
 # %%
 class NoteMonitor:
-    def __init__(self, state_file=getdirmain() / "data" / "monitor_state_notes.json"):
+    """笔记监控类"""
+
+    def __init__(self, state_file: Path=getdirmain() / "data" / "monitor_state_notes.json") -> None:
+        """初始化"""
         self.state_file = state_file
         self.monitored_notes = {}  # 存储笔记ID和监控信息的字典
         self.load_state()  # 从文件加载状态
@@ -78,7 +81,8 @@ class NoteMonitor:
             if "section" not in note_info:
                 note_info["section"] = ""
 
-    def add_note(self, note_id):
+    def add_note(self, note_id: str) -> None:
+        """添加笔记"""
         if note_id not in self.monitored_notes:
             self.monitored_notes[note_id] = {
                 "title": "",
@@ -93,7 +97,8 @@ class NoteMonitor:
                 "content_by_date": {},  # 初始化 content_by_date
             }
 
-    def update_monitor(self, note_id, current_time, word_count):
+    def update_monitor(self, note_id: str, current_time: datetime, word_count: int) -> None :
+        """更新笔记监控信息"""
         note_info = self.monitored_notes[note_id]
         if note_info["last_fetch_time"] is not None:
             note_info["fetch_count"] += 1
@@ -126,12 +131,14 @@ class NoteMonitor:
         # 更新 content_by_date
         self.update_content_by_date(note_id, current_time, word_count)
 
-    def update_section_for_note_id(self, note_id, section):
+    def update_section_for_note_id(self, note_id: str, section: str) -> None:
+        """更新笔记的section"""
         note_info = self.monitored_notes[note_id]
         if len(note_info["section"]) == 0:
             note_info["section"] = section
 
-    def update_content_by_date(self, note_id, current_time, word_count):
+    def update_content_by_date(self, note_id: str, current_time: datetime, word_count: int) -> None:
+        """更新笔记内容按日期统计"""
         note = getnote(note_id)
         note_content = getattr(note, "body")  # 假设我们可以从 getnote 中获取笔记内容
         # 按照三级标题加日期分割文本，datetime.strptime时处理日期字符串中的空格
@@ -198,11 +205,10 @@ class NoteMonitor:
         timelst = [
             x for sonlst in note_info["content_by_date"].values() for (x, y) in sonlst
         ]
-        str2time = (
-            lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S.%f")
-            if isinstance(x, str)
-            else x
-        )
+        def str2time(x: str) -> datetime:
+            return (datetime.strptime(x, "%Y-%m-%d %H:%M:%S.%f")
+                    if isinstance(x, str)
+                    else x)
         timelst = [str2time(x) for x in timelst]
         oldesttime = min(timelst)
         datezero_not_init = [
@@ -211,13 +217,14 @@ class NoteMonitor:
         log.info(
             f"笔记《{getattr(note, 'title')}》内容为空且还未初始化的日期列表为：{datezero_not_init}"
         )
-        for date in datezero_not_init:
+        for date1 in datezero_not_init:
             if note_info["fetch_count"] != 1:
-                note_info["content_by_date"][date] = [(oldesttime, 0)]
+                note_info["content_by_date"][date1] = [(oldesttime, 0)]
             else:
-                note_info["content_by_date"][date] = [(current_time, 0)]
+                note_info["content_by_date"][date1] = [(current_time, 0)]
 
-    def update_word_count_by_date(self, note_info, date, current_time, word_count):
+    def update_word_count_by_date(self, note_info: str, date: date, current_time: datetime, word_count: int) -> None:
+        """更新笔记内容按日期统计"""
         # print(date, (note_info['content_by_date']))
         if date not in note_info["content_by_date"]:
             # 如果该日期没有记录，直接添加
@@ -252,8 +259,8 @@ class NoteMonitor:
         # 对字典进行排序输出
         # note_info['content_by_date'] = dict(sorted(note_info['content_by_date'].items(), key=lambda x: x[0]), reverse=True)
 
-    def save_state(self):
-        # 创建一个新的字典以存储可序列化的状态
+    def save_state(self) -> None:
+        """保存状态到文件"""
         serializable_notes = {}
 
         for note_id, note_info in self.monitored_notes.items():
@@ -285,7 +292,8 @@ class NoteMonitor:
         with open(self.state_file, "w") as f:
             json.dump(serializable_notes, f, default=str)
 
-    def load_state(self):
+    def load_state(self) -> None:
+        """从文件加载状态"""
         if Path(self.state_file).exists():
             with open(self.state_file, "r") as f:
                 loaded_data = json.load(f)
@@ -306,7 +314,8 @@ class NoteMonitor:
                             note_info[key] = content_by_date
                 self.monitored_notes = loaded_data
 
-    def clear_state(self):
+    def clear_state(self) -> None:
+        """清除状态"""
         self.monitored_notes = {}
         self.save_state()
 
@@ -316,7 +325,7 @@ class NoteMonitor:
 
 
 # %%
-def monitor_notes(note_ids, note_monitor):
+def monitor_notes(note_ids: list, note_monitor: NoteMonitor) -> None:
     for note_id in note_ids:
         # 确保该id的笔记存在，否则跳过
         try:
@@ -353,8 +362,8 @@ def monitor_notes(note_ids, note_monitor):
 
 
 # %%
-def ensure_monitor_note_exists(title="监控笔记"):
-    # 查找监控笔记
+def ensure_monitor_note_exists(title: str="监控笔记") -> str:
+    """查找监控笔记"""
     if (
         monitor_note_id := getcfpoptionvalue("happyjpmonitor", "monitor", "monitor_id")
     ) is None:
@@ -373,10 +382,8 @@ def ensure_monitor_note_exists(title="监控笔记"):
 
 
 # %%
-def monitor_log_info(title, note_ids_to_monitor, note_monitor):
-    """
-    综合输出指定title和ids的监测情况
-    """
+def monitor_log_info(title: str, note_ids_to_monitor: list, note_monitor: NoteMonitor) -> str:
+    """综合输出指定title和ids的监测情况"""
     # 只处理输入的note_id列表，因为note_monitor包含了所有
     targetdict = {
         note_id: note_info
@@ -424,8 +431,8 @@ def monitor_log_info(title, note_ids_to_monitor, note_monitor):
 
 
 # %%
-def split_ref():
-    # 从指定待监控笔记列表笔记获取内容，分区块处理
+def split_ref() -> None:
+    """从指定待监控笔记列表笔记获取内容，分区块处理，并生成监控笔记的输出内容。"""
     title = "四件套笔记列表"
     results = searchnotes(f"{title}")
     if results:
