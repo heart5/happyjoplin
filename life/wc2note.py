@@ -29,7 +29,7 @@ import sqlite3 as lite
 from datetime import datetime
 from pathlib import Path
 
-import arrow
+# import arrow
 import pandas as pd
 # import xlsxwriter
 
@@ -92,15 +92,6 @@ def items2df(fl: Path) -> pd.DataFrame:
     dfout = df2.drop_duplicates().sort_values("time")
 
     return dfout
-
-
-# %%
-testtxt = getdirmain() / "data" / "webchat" / "chatitems(白晔峰).txt.250716_250927"
-
-# %%
-tdf = items2df(testtxt)
-
-# %%
 
 # %% [markdown]
 # ### getownerfromfilename(fn: str) -> str
