@@ -2,7 +2,6 @@
 # jupyter:
 #   jupytext:
 #     cell_metadata_filter: -all
-#     formats: ipynb,py:percent
 #     notebook_metadata_filter: jupytext,-kernelspec,-jupytext.text_representation.jupytext_version
 #     text_representation:
 #       extension: .py
@@ -262,11 +261,15 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     # 14. 添加颜色条
     cbar = plt.colorbar(heatmap)
     cbar.set_label("更新字数")
+    # 修正：设置颜色条刻度为整数格式
+    from matplotlib.ticker import MaxNLocator
+    cbar.locator = MaxNLocator(integer=True)  # 强制使用整数刻度
+    cbar.update_ticks()  # 更新刻度显示
 
     # 15. 设置标题
     plt.title(title)
 
-    # --- 添加起始日期和当前日期标记 ---
+    # 16. 添加起始日期和当前日期标记
     # 找到最小日期和当前日期在热图中的位置
     min_date_week = df[df["date"] == min_date]["week_number"].iloc[0]
     # print(df[df['date'] == min_date])
@@ -275,7 +278,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     current_date_week = df[df["date"] == current_date]["week_number"].iloc[0]
     current_date_weekday = df[df["date"] == current_date]["day_of_week"].iloc[0]
 
-    # 在最小日期的格子中添加日期文本
+    # 17. 在最小日期的格子中添加日期文本
     ax.text(
         min_date_weekday + 0.5,
         min_date_week - min(pivot_table.index) + 0.5,
@@ -286,7 +289,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
         fontsize=8,
     )
 
-    # 为当前日期的格子添加红色虚线边框
+    # 18. 为当前日期的格子添加红色虚线边框
     ax.add_patch(
         plt.Rectangle(
             (current_date_weekday, current_date_week - min(pivot_table.index)),
@@ -298,7 +301,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
             linewidth=2,
         )
     )
-    # 在需要标记的日期上添加灰色虚线外框
+    # 19. 在补填内容的日期格子上添加红色虚线边框
     for marked_date in df[df.addedlater]["date"]:
         week = dfcount[dfcount["date"] == marked_date]["week_number"].values[0]
         day_of_week = dfcount[dfcount["date"] == marked_date]["day_of_week"].values[0]
@@ -313,17 +316,11 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
                 linewidth=2,
             )
         )
-    # --- 标记添加完成 ---
 
-    # 16. 将图像保存到 BytesIO 对象并返回
+    # 20. 将图像保存到 BytesIO 对象并返回
     plt.savefig(img_heat_file_path_str)
     plt.close()
-    # buffer = io.BytesIO()
-    # plt.savefig(buffer, format='png')
-    # buffer.seek(0)
-    # plt.close(fig)
-
-    return img_heat_file_path_str
+    return img_heat_file_path_str  # 返回提示图而非空白
 
 
 # %% [markdown]
