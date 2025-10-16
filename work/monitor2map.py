@@ -145,6 +145,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     if not valid_dates:
         fig, ax = plt.subplots(figsize=(10, 6))  # 统一尺寸
         ax.text(0.5, 0.5, "暂时没有有效数据", ha="center", va="center", fontsize=20)
+        plt.title(title)
         plt.savefig(img_heat_file_path_str)
         plt.close()
         return img_heat_file_path_str  # 返回提示图而非空白
@@ -219,6 +220,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     if pivot_table.values.max() <= 0:
         fig, ax = plt.subplots(figsize=(10, 6))  # 统一尺寸
         ax.text(0.5, 0.5, "最近三个月无有效更新", ha="center", va="center", fontsize=20)
+        plt.title(title)
         plt.savefig(img_heat_file_path_str)
         plt.close()
         return img_heat_file_path_str  # 返回提示图而非空白
