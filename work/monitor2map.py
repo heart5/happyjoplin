@@ -303,7 +303,9 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     )
     # 19. 在补填内容的日期格子上添加红色虚线边框
     log.info(df['addedlater'].unique())
-    for marked_date in df[df.addedlater == True]["date"]:
+    # 测试发现值有三种：True、False、nan，需要处理
+    df['addedlater'] = df['addedlater'].fillna(False)
+    for marked_date in df[df['addedlater']]["date"]:
         week = dfcount[dfcount["date"] == marked_date]["week_number"].values[0]
         day_of_week = dfcount[dfcount["date"] == marked_date]["day_of_week"].values[0]
         ax.add_patch(
