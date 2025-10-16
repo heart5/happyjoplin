@@ -17,22 +17,16 @@
 # ## 引入库
 
 # %%
-import base64
-import io
-import json
 import re
-from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import arrow
 import matplotlib.colors as mcolors
-import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-# from memory_profiler import profile
 from tzlocal import get_localzone
+
 
 # %%
 import pathmagic
@@ -40,11 +34,10 @@ import pathmagic
 with pathmagic.context():
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.datetimetools import normalize_timestamp
-    from func.first import dirmainpath, getdirmain, touchfilepath2depth
+    from func.first import getdirmain
     from func.jpfuncs import (
         content_hash,
         createnote,
-        createresourcefromobj,
         getapi,
         getinivaluefromcloud,
         getnote,
@@ -52,11 +45,7 @@ with pathmagic.context():
         updatenote_body,
     )
     from func.logme import log
-
-    # from func.termuxtools import termux_location, termux_telephony_deviceinfo
-    # from func.nettools import ifttt_notify
-    # from etc.getid import getdevicename, gethostuser
-    from func.sysfunc import after_timeout, execcmd, not_IPython, set_timeout
+    from func.sysfunc import not_IPython
     from work.monitor4 import NoteMonitor
 
 
@@ -64,18 +53,18 @@ with pathmagic.context():
 # ## 核心函数
 
 # %% [markdown]
-# ### stat2df()
+# ### stat2df(person: str) -> dict
 
 
 # %%
-def stat2df(person):
-    """
-    统计指定人员的相关笔记更新记录
-    """
+def stat2df(person: str) -> dict:
+    """统计指定人员的相关笔记更新记录"""
     note_monitor = NoteMonitor()
-    # 筛选出指定person的数据字典
+    # 获取最新的被监控笔记id列表
+    note_id_list_refresh = get_refresh_id_list()
+    # 筛选出指定person的数据字典，并且仅限定包含在最新笔记列表中的笔记
     targetdict = {
-        k: v for k, v in note_monitor.monitored_notes.items() if person == v["person"]
+        k: v for k, v in note_monitor.monitored_notes.items() if (person == v["person"]) and (k in note_id_list_refresh)
     }
     # print(targetdict)
     # 过滤日期超过当天一天之内的日期数据对
@@ -86,20 +75,20 @@ def stat2df(person):
         daily_counts = {}  # 采用字典数据类型，确保日期唯一
         # 过滤掉可能的超纲日期
         for date_key, updates in [
-            (date, updates)
-            for date, updates in note_info["content_by_date"].items()
-            if date < one_days_later
+            (date1, updates)
+            for date1, updates in note_info["content_by_date"].items()
+            if date1 < one_days_later
         ]:
             # 获取最后一次更新的字数
             last_update_time, word_count = updates[-1]
             # 检查 updates 的长度
             if len(updates) > 1:
-                addedLater = True  # 标记该日期
+                addedlater = True  # 标记该日期
             else:
-                addedLater = False
+                addedlater = False
             daily_counts[date_key] = (
                 word_count,
-                addedLater,
+                addedlater,
             )  # 使用日期作为键，字数和后补布林值作为值
 
         outlst = sorted(daily_counts.items(), key=lambda kv: kv[0])
@@ -108,13 +97,12 @@ def stat2df(person):
 
 
 # %% [markdown]
-# ### plot_word_counts(daily_counts, title)
+# ### plot_word_counts(daily_counts: dict, title: str) -> str
 
 
 # %%
-def plot_word_counts(daily_counts, title):
-    """
-    图形化输出函数，使用热图展示每天的字数统计。
+def plot_word_counts(daily_counts: dict, title: str) -> str:
+    """图形化输出函数，使用热图展示每天的字数统计。
 
     Args:
       daily_counts: 包含日期和对应字数的字典，例如：
@@ -311,7 +299,7 @@ def plot_word_counts(daily_counts, title):
         )
     )
     # 在需要标记的日期上添加灰色虚线外框
-    for marked_date in df[df.addedlater == True]["date"]:
+    for marked_date in df[df.addedlater]["date"]:
         week = dfcount[dfcount["date"] == marked_date]["week_number"].values[0]
         day_of_week = dfcount[dfcount["date"] == marked_date]["day_of_week"].values[0]
         ax.add_patch(
@@ -339,12 +327,12 @@ def plot_word_counts(daily_counts, title):
 
 
 # %% [markdown]
-# ### get_heatmap_note_id(person)
+# ### get_heatmap_note_id(person: str) -> str
 
 
 # %%
-def get_heatmap_note_id(person):
-    # 查找指定人员热图笔记的id并返回
+def get_heatmap_note_id(person: str) -> str:
+    """查找指定人员热图笔记的id并返回"""
     if (
         person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "person_ids", person)
     ) is None:
@@ -361,12 +349,13 @@ def get_heatmap_note_id(person):
 
 
 # %% [markdown]
-# ### get_refresh_id_list
+# ### get_refresh_id_list() -> list
 
 
 # %%
-def get_refresh_id_list():
-    # 获取最新额《四件套笔记列表》中有效的笔记id列表
+def get_refresh_id_list() -> list:
+    """获取最新《四件套笔记列表》中有效的笔记id列表"""
+    log.info("获取最新《四件套笔记列表》中有效的笔记id列表")
     title = "四件套笔记列表"
     results = searchnotes(f"{title}")
     if results:
@@ -385,13 +374,13 @@ def get_refresh_id_list():
 
 
 # %% [markdown]
-# ### heatmap2note()
+# ### heatmap2note() -> None
 
 
 # %%
 # @profile
-def heatmap2note():
-    # 监控笔记
+def heatmap2note() -> None:
+    """热图更新至相应笔记"""
     note_monitor = NoteMonitor()
     ptn = re.compile(r"[(（](\w+)[)）]")
     # 获取person列表
