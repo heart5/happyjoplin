@@ -129,7 +129,13 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     dfall["date"] = pd.to_datetime(dfall["date"])
 
     # 新2. 确定日期范围（最近三个月）
-    current_date = pd.to_datetime(arrow.now(get_localzone()).date())
+    # 按照次日八点后算作当日，否则算作前一日的规则进行处理
+    current_day_identity = arrow.now(get_localzone()).replace(
+        hour=8, minute=0, second=0, microsecond=0
+    )
+    if arrow.now().hour < 8:
+        current_day_identity = current_day_identity.shift(days=-1)
+    current_date = pd.to_datetime(current_day_identity.date())
     three_months_ago = current_date - pd.DateOffset(months=monthrange)
 
     # 过滤有效数据（允许补填但限制范围）
