@@ -344,10 +344,27 @@ def monitor_notes(note_ids: list, note_monitor: NoteMonitor) -> None:
             get_localzone()
         )
 
-        # 更新监控信息，用笔记更新时间做判断依据
+        # 计算当天的标识
+        current_day_identity = arrow.now(get_localzone()).replace(
+            hour=8, minute=0, second=0, microsecond=0
+        )
+        if arrow.now().hour < 8:
+            current_day_identity = current_day_identity.shift(days=-1)
+
+        # 计算上次更新时间的标识
+        last_update_day_identity = last_update_time_note.replace(
+            hour=8, minute=0, second=0, microsecond=0
+        )
+        if last_update_time_note.hour < 8:
+            last_update_day_identity = last_update_day_identity.shift(days=-1)
+
+        # 更新监控信息，用笔记更新时间和日志标识做判断依据
         if (
             last_update_time_note
-            != note_monitor.monitored_notes[note_id]["note_update_time"]
+           != note_monitor.monitored_notes[note_id]["note_update_time"]
+        ) or (
+            current_day_identity.date()
+           != last_update_day_identity.date()
         ):
             note_monitor.update_monitor(note_id, current_time, current_word_count)
             note_monitor.monitored_notes[note_id]["previous_word_count"] = (
