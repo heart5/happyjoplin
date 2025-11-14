@@ -249,7 +249,7 @@ class NoteMonitor:
                         current_time.time()
                         >= datetime.strptime("00:00", "%H:%M").time()
                         and current_time.time()
-                        <= datetime.strptime("08:00", "%H:%M").time()
+                        < datetime.strptime("08:00", "%H:%M").time()
                     ):
                         # 在零时到次日八点之间，更新最新的时间和字数
                         update_list[-1] = (current_time, word_count)
