@@ -293,11 +293,22 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
         min_date.strftime("%m-%d"),
         ha="center",
         va="center",
-        color="black",
-        fontsize=8,
+        color="red",
+        fontsize=12,
     )
 
-    # 18. 为当前日期的格子添加红色虚线边框
+    # 18. 在当前日期的格子中添加日期文本
+    ax.text(
+        current_date_weekday + 0.5,
+        current_date_week - min(pivot_table.index) + 0.5,
+        current_date.strftime("%m-%d"),
+        ha="center",
+        va="center",
+        color="red",
+        fontsize=12,
+    )
+
+    # 19. 为当前日期的格子添加红色虚线边框
     ax.add_patch(
         plt.Rectangle(
             (current_date_weekday, current_date_week - min(pivot_table.index)),
@@ -309,7 +320,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
             linewidth=2,
         )
     )
-    # 19. 在补填内容的日期格子上添加红色虚线边框
+    # 20. 在补填内容的日期格子上添加红色虚线边框
     log.info(df['addedlater'].unique())
     # 测试发现值有三种：True、False、nan，需要处理
     df['addedlater'] = df['addedlater'].fillna(False).astype(bool)
@@ -328,7 +339,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
             )
         )
 
-    # 20. 将图像保存到 BytesIO 对象并返回
+    # 21. 将图像保存到文件
     plt.savefig(img_heat_file_path_str)
     plt.close()
     return img_heat_file_path_str  # 返回提示图而非空白
