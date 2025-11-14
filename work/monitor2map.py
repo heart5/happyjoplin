@@ -476,11 +476,28 @@ def heatmap2note() -> None:
                 or (note_ini_time != note_json_time)
                 or (note_ini_time != note_cloud_time)
             ):
-                if (current_hash != stored_hash) or (not is_same_day(note_cloud_time, current_day_identity)):
+                if current_hash != stored_hash:
                     should_plot = True
                     log.debug(
                         f"[笔记ID:{note_id}]，本地存储时间: {note_ini_time}，监测爬取记录时间: {note_json_time}，云端新鲜时间: {note_cloud_time}，笔记内容哈希比对: {current_hash} vs {stored_hash}，触发条件: {should_plot}"
                     )
+            if monitor_current_date := getinivaluefromcloud("happyjpmonitor", "monitor_current_date", note_id):
+                if monitor_current_date != current_day_identity.strftime("%Y-%m-%d"):
+                    should_plot = True
+                    log.debug(
+                        f"[笔记ID:{note_id}]，日志天标识日期为{current_day_identity.strftime('%Y-%m-%d')}，ini中记录值为{monitor_current_date}，更新之；触发条件: {should_plot}"
+                    )
+                    setcfpoptionvalue(
+                        "happyjpmonitor", "monitor_current_date", note_id, current_day_identity.strftime("%Y-%m-%d")
+                    )
+            else:
+                should_plot = True
+                log.debug(
+                    f"[笔记ID:{note_id}]，日志天标识日期为{current_day_identity.strftime('%Y-%m-%d')}，ini中记录值为空，更新之；触发条件: {should_plot}"
+                )
+                setcfpoptionvalue(
+                    "happyjpmonitor", "monitor_current_date", note_id, current_day_identity.strftime("%Y-%m-%d")
+                )
         if getinivaluefromcloud("monitor", "debug"):
             if person == "白晔峰":
                 should_plot = True
