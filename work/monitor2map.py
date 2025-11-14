@@ -17,6 +17,7 @@
 
 # %%
 import re
+from datetime import datetime
 from pathlib import Path
 
 import arrow
@@ -25,7 +26,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from tzlocal import get_localzone
-
 
 # %%
 import pathmagic
@@ -380,9 +380,43 @@ def get_refresh_id_list() -> list:
 
 
 # %%
-# @profile
 def heatmap2note() -> None:
     """热图更新至相应笔记"""
+
+    # 定义时间判断函数 - 在函数内部定义以便使用局部变量
+    def is_same_day(timestamp: datetime, compare_to: datetime=None) -> bool:
+        """判断两个时间是否在日志记录的"同一天"（次日8点前均视为当天）
+
+        参数:
+            timestamp (datetime): 要判断的时间
+            compare_to (datetime): 比较对象，默认为当前时间
+
+        返回:
+            bool: 是否在同一天
+        """
+        if compare_to is None:
+            compare_to = arrow.now(get_localzone())
+        else:
+            compare_to = arrow.get(compare_to)
+
+        # 获取日志记录的"天标识"（当前时间减去8小时）
+        day_identity = compare_to.replace(
+            hour=8, minute=0, second=0, microsecond=0
+        )
+
+        # 如果当前时间在8点之前，则属于前一天的范围
+        if compare_to.hour < 8:
+            day_identity = day_identity.shift(days=-1)
+
+        # 获取被比较时间的"天标识"
+        check_day_identity = arrow.get(timestamp).replace(
+            hour=8, minute=0, second=0, microsecond=0
+        )
+        if arrow.get(timestamp).hour < 8:
+            check_day_identity = check_day_identity.shift(days=-1)
+
+        return day_identity == check_day_identity
+
     note_monitor = NoteMonitor()
     ptn = re.compile(r"[(（](\w+)[)）]")
     # 获取person列表
@@ -411,6 +445,8 @@ def heatmap2note() -> None:
         should_plot = False
         refreshdict = {k: v for k, v in targetdict.items() if k in note_id_list_refresh}
         print(f">》{person}")
+        # 获取当前的"日志天标识"用于比较
+        current_day_identity = None
         for note_id, note_info in refreshdict.items():
             print(f"{note_id}\t{note_info['title']}")
             if len(note_info["content_by_date"]) == 0:
@@ -423,15 +459,24 @@ def heatmap2note() -> None:
             note_cloud_time = normalize_timestamp(
                 getattr(getnote(note_id), "updated_time")
             )
+            # 如果是第一次循环，计算当前的"日志天标识"
+            if current_day_identity is None:
+                current_day_identity = arrow.now(get_localzone()).replace(
+                    hour=8, minute=0, second=0, microsecond=0
+                )
+                if arrow.now().hour < 8:
+                    current_day_identity = current_day_identity.shift(days=-1)
+
+            # 内容哈希比对
             current_hash = content_hash(note_id)
             stored_hash = getcfpoptionvalue("happyjpmonitor", "content_hash", note_id)
-            # 时间对不上内容也对不上然后才打开开关画图
+            # 时间对不上，内容也对不上，日志天标识也对不上，则触发画图动作更新
             if (
                 not note_ini_time
                 or (note_ini_time != note_json_time)
                 or (note_ini_time != note_cloud_time)
             ):
-                if current_hash != stored_hash:
+                if (current_hash != stored_hash) or (not is_same_day(note_cloud_time, current_day_identity)):
                     should_plot = True
                     log.debug(
                         f"[笔记ID:{note_id}]，本地存储时间: {note_ini_time}，监测爬取记录时间: {note_json_time}，云端新鲜时间: {note_cloud_time}，笔记内容哈希比对: {current_hash} vs {stored_hash}，触发条件: {should_plot}"
