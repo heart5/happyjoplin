@@ -481,7 +481,7 @@ def heatmap2note() -> None:
                     log.debug(
                         f"[笔记ID:{note_id}]，本地存储时间: {note_ini_time}，监测爬取记录时间: {note_json_time}，云端新鲜时间: {note_cloud_time}，笔记内容哈希比对: {current_hash} vs {stored_hash}，触发条件: {should_plot}"
                     )
-            if monitor_current_date := getinivaluefromcloud("happyjpmonitor", "monitor_current_date", note_id):
+            if monitor_current_date := getcfpoptionvalue("happyjpmonitor", "monitor_current_date", note_id):
                 if monitor_current_date != current_day_identity.strftime("%Y-%m-%d"):
                     should_plot = True
                     log.debug(
