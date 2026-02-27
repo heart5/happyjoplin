@@ -18,9 +18,10 @@
 
 # %%
 import io
+import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -48,8 +49,6 @@ with pathmagic.context():
     # from func.termuxtools import termux_telephony_deviceinfo
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
-
-
 
 # %% [markdown]
 # ## 功能函数
@@ -81,16 +80,35 @@ def getmemdf() -> (int, pd.DataFrame):
     totalmem = int(lineslst[0].split("=")[-1])
     memlst = [x.split("\t") for x in lineslst[1:]]
     # 时间精确到分，方便后面去重
-    memlstdone = [
-        [
-            datetime.fromtimestamp(int(x[0])).strftime("%F %H:%M"),
-            int(x[1]),
-            int(x[2]),
-            int(x[3]),
-        ]
-        for x in memlst
-        if len(x[0]) > 0
-    ]
+    memlstdone = []
+    for x in memlst:
+        if len(x) < 4 or len(x[0]) == 0:
+            log.critical(f"存在错误行：{x}")
+            continue
+
+        try:
+            # 验证时间戳是否在合理范围内（1970-2100年）
+            timestamp = int(x[0])
+            if timestamp < 0 or timestamp > 4102444800:  # 2100-01-01的时间戳
+                log.critical(f"存在错误行：{x}")
+                continue
+
+            time_str = datetime.fromtimestamp(timestamp).strftime("%F %H:%M")
+            memlstdone.append(
+                [
+                    time_str,
+                    int(x[1]),
+                    int(x[2]),
+                    int(x[3]),
+                ]
+            )
+        except (ValueError, IndexError):
+            # 跳过无效数据
+            continue
+
+    if not memlstdone:
+        return totalmem, pd.DataFrame()
+
     memdf = pd.DataFrame(
         memlstdone, columns=["time", "freepercent", "swaptotal", "swapfree"]
     )
@@ -116,7 +134,7 @@ def getmemdf() -> (int, pd.DataFrame):
 
 # %%
 @timethis
-def gap2img(gap: int=30) -> str:
+def gap2img(gap: int = 30) -> str:
     """把内存记录按照间隔（30分钟）拆离，并生成最近的动图和所有数据集的总图."""
     totalmem, memdfdone = getmemdf()
     tmemg = totalmem / (1024 * 1024)
@@ -177,6 +195,264 @@ def gap2img(gap: int=30) -> str:
 
 
 # %% [markdown]
+# ### create_disk_config_file(script_dir=None)
+
+# %%
+def create_disk_config_file(script_dir=None):
+    """创建配置文件"""
+    if script_dir is None:
+        script_dir = os.path.join(os.path.expanduser("~"), "sbase", "zshscripts")
+
+    config_file = os.path.join(script_dir, "data", "monitor_config.json")
+
+    config = {
+        "monitors": [
+            {
+                "mountpoint": "/",
+                "name": "root",
+                "description": "根分区",
+                "enabled": True,
+            },
+            {
+                "mountpoint": "/data",
+                "name": "data",
+                "description": "数据分区",
+                "enabled": True,
+            },
+        ],
+        "retention_days": 30,
+        "log_rotation_lines": 500,
+        "alert_threshold": 90,
+        "warning_threshold": 80,
+    }
+
+    os.makedirs(os.path.dirname(config_file), exist_ok=True)
+
+    with open(config_file, "w") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    print(f"配置文件已创建: {config_file}")
+    return config_file
+
+
+# %% [markdown]
+# ### load_disk_monitor_config(script_dir=None)
+
+# %%
+def load_disk_monitor_config(script_dir=None):
+    """加载监控配置"""
+    if script_dir is None:
+        script_dir = os.path.join(os.path.expanduser("~"), "sbase", "zshscripts")
+
+    config_file = os.path.join(script_dir, "data", "monitor_config.json")
+
+    # 默认配置
+    default_config = {
+        "monitors": [
+            {"mountpoint": "/", "name": "root", "description": "根分区"},
+            {"mountpoint": "/data", "name": "data", "description": "数据分区"},
+        ],
+        "retention_days": 30,
+        "log_rotation_lines": 500,
+    }
+
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, "r") as f:
+                config = json.load(f)
+                # 合并默认配置
+                for key, value in default_config.items():
+                    if key not in config:
+                        config[key] = value
+                return config
+        except json.JSONDecodeError:
+            print(f"配置文件格式错误，使用默认配置")
+
+    return default_config
+
+
+# %% [markdown]
+# ### parse_disk_logs_with_config(script_dir=None)
+
+# %%
+def parse_disk_logs_with_config(script_dir=None):
+    """根据配置解析磁盘日志"""
+    config = load_disk_monitor_config(script_dir)
+
+    if script_dir is None:
+        script_dir = os.path.join(os.path.expanduser("~"), "sbase", "zshscripts")
+
+    data_dir = os.path.join(script_dir, "data")
+    disk_data = []
+
+    # 遍历配置中的监控项
+    for monitor in config.get("monitors", []):
+        mountpoint = monitor.get("mountpoint")
+        name = monitor.get("name")
+        description = monitor.get("description", mountpoint)
+
+        if not mountpoint or not name:
+            continue
+
+        log_file = os.path.join(data_dir, f"disk_{name}.log")
+
+        if not os.path.exists(log_file):
+            continue
+
+        # 解析日志文件
+        with open(log_file, "r") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+
+                parts = line.split()
+                if len(parts) >= 7:
+                    try:
+                        # 格式: 时间戳 挂载点 使用率% 已用 总量 可用 文件系统
+                        timestamp = " ".join(parts[0:2])
+                        log_mountpoint = parts[2]
+                        usage_percent = float(parts[3])
+                        used = parts[4]
+                        total = parts[5]
+                        available = parts[6]
+                        filesystem = parts[7] if len(parts) > 7 else "unknown"
+
+                        entry = {
+                            "timestamp": timestamp,
+                            "mountpoint": log_mountpoint,
+                            "config_name": name,
+                            "description": description,
+                            "usage_percent": usage_percent,
+                            "used": used,
+                            "total": total,
+                            "available": available,
+                            "filesystem": filesystem,
+                            "log_file": log_file,
+                            "line_number": line_num,
+                        }
+                        disk_data.append(entry)
+                    except (ValueError, IndexError) as e:
+                        continue
+
+    return disk_data, config
+
+
+# %% [markdown]
+# ### analyze_disk_usage_by_config(script_dir=None)
+
+# %%
+def analyze_disk_usage_by_config(script_dir=None):
+    """根据配置分析磁盘使用情况，生成Markdown表格报告"""
+    data, config = parse_disk_logs_with_config(script_dir)
+
+    if not data:
+        return "暂无磁盘监控数据", config
+
+    df = pd.DataFrame(data)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    report_lines = [
+        "# 磁盘空间监控报告\n",
+        f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n",
+        f"**监控配置**: {len(config['monitors'])} 个监控项  \n",
+        "---\n",
+    ]
+
+    # 1. 详细监控表格
+    detailed_rows = []
+    for monitor in config["monitors"]:
+        name = monitor["name"]
+        monitor_data = df[df["config_name"] == name]
+
+        if monitor_data.empty:
+            row = {
+                "监控项": monitor["description"],
+                "挂载点": monitor["mountpoint"],
+                "使用率": "无数据",
+                "已用/总计": "无数据",
+                "可用空间": "无数据",
+                "文件系统": "无数据",
+                "24小时趋势": "无数据",
+                "状态": "⚪",
+            }
+        else:
+            latest = monitor_data.iloc[-1]
+
+            # 趋势计算（同原始逻辑）
+            trend = ""
+            if len(monitor_data) > 1:
+                # ... 趋势计算代码 ...
+                pass
+
+            # 状态判定
+            usage = latest["usage_percent"]
+            if usage >= 90:
+                status = "🔴 紧急"
+            elif usage >= 80:
+                status = "🟡 警告"
+            elif usage >= 70:
+                status = "🔵 注意"
+            else:
+                status = "✅ 正常"
+
+            row = {
+                "监控项": monitor["description"],
+                "挂载点": monitor["mountpoint"],
+                "使用率": f"{usage:.1f}%",
+                "已用/总计": f"{latest['used']}/{latest['total']}",
+                "可用空间": latest["available"],
+                "文件系统": latest["filesystem"],
+                "24小时趋势": trend,
+                "状态": status,
+            }
+
+        detailed_rows.append(row)
+
+    if detailed_rows:
+        detailed_df = pd.DataFrame(detailed_rows)
+        # 按使用率排序
+        detailed_df["排序键"] = detailed_df["使用率"].apply(
+            lambda x: float(x.replace("%", "")) if "%" in str(x) else 0
+        )
+        detailed_df = detailed_df.sort_values("排序键", ascending=False).drop(
+            "排序键", axis=1
+        )
+
+        report_lines.append("## 📊 详细监控情况\n")
+        report_lines.append(detailed_df.to_markdown(index=False, tablefmt="github"))
+        report_lines.append("\n---\n")
+
+    # 2. 摘要表格（Top 5使用率最高）
+    summary_data = []
+    for monitor in config["monitors"]:
+        name = monitor["name"]
+        monitor_data = df[df["config_name"] == name]
+
+        if not monitor_data.empty:
+            latest = monitor_data.iloc[-1]
+            summary_data.append(
+                {
+                    "监控项": monitor["description"],
+                    "挂载点": monitor["mountpoint"],
+                    "使用率": latest["usage_percent"],
+                    "可用空间": latest["available"],
+                }
+            )
+
+    if summary_data:
+        summary_df = pd.DataFrame(summary_data)
+        summary_df = summary_df.sort_values("使用率", ascending=False).head(
+            5
+        )  # 仅显示前5个
+
+        report_lines.append("## 🚨 重点关注（使用率TOP5）\n")
+        report_lines.append(summary_df.to_markdown(index=False, tablefmt="simple"))
+        report_lines.append("\n> 注：建议对使用率>80%的磁盘进行清理或扩容。\n")
+
+    return "\n".join(report_lines)
+
+# %% [markdown]
 # ### freemem2note()
 
 
@@ -193,7 +469,22 @@ def freemem2note() -> None:
         gapinmin = 60
         setcfpoptionvalue(namestr, section, "gapinmin", "60")
     res_id = gap2img(gap=gapinmin)
-    content = f"![内存动态图【{gethostuser()}】](:/{res_id})"
+    content_mem = f"![内存动态图【{gethostuser()}】](:/{res_id})"
+
+    # 如果没有磁盘监控配置文件，创建一个
+    if not os.path.exists(
+        os.path.join(
+            os.path.expanduser("~"),
+            "sbase",
+            "zshscripts",
+            "data",
+            "monitor_config.json",
+        )
+    ):
+        create_disk_config_file()
+    content_disk = f"{analyze_disk_usage_by_config()}"
+    print(content_disk)
+    content = "\n".join([content_disk, content_mem])
     nbid = searchnotebook("ewmobile")
     if not (
         freestat_cloud_id := getcfpoptionvalue(namestr, section, "freestat_cloud_id")
@@ -215,9 +506,7 @@ def freemem2note() -> None:
         setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
     else:
         deleteresourcesfromnote(freestat_cloud_id)
-        updatenote_body(
-            noteid=freestat_cloud_id, bodystr=content, parent_id=nbid
-        )
+        updatenote_body(noteid=freestat_cloud_id, bodystr=content, parent_id=nbid)
         log.info(f"内存动态图笔记“{freestat_cloud_id}”更新成功！")
 
 
