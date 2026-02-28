@@ -286,9 +286,8 @@ def parse_disk_logs_with_config(script_dir=None):
         mountpoint = monitor.get("mountpoint")
         name = monitor.get("name")
         description = monitor.get("description", mountpoint)
-        enabled = monitor.get("enabled")
 
-        if not mountpoint or not name or not enabled:
+        if not mountpoint or not name:
             continue
 
         log_file = data_dir / f"disk_{name}.log"
@@ -347,22 +346,21 @@ def analyze_disk_usage_by_config(script_dir=None):
     if not data:
         return "暂无磁盘监控数据", config
 
+    enabledconfigmonitors = [monitor for monitor in config["monitors"] if monitor.get("enabled")]
     df = pd.DataFrame(data)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
     report_lines = [
         "# 磁盘空间监控报告\n",
         f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n",
-        f"**监控配置**: {len(config['monitors'])} 个监控项  \n",
+        f"**监控配置**: {len(enabledconfigmonitors)} 个监控项  \n",
         "---\n",
     ]
 
     # 1. 详细监控表格
     detailed_rows = []
-    for monitor in config["monitors"]:
+    for monitor in enabledconfigmonitors:
         name = monitor["name"]
-        if not monitor.get("enabled"):
-            continue
         monitor_data = df[df["config_name"] == name]
 
         if monitor_data.empty:
@@ -440,7 +438,7 @@ def analyze_disk_usage_by_config(script_dir=None):
         summary_df = pd.DataFrame(summary_data)
         summary_df = summary_df.sort_values("使用率", ascending=False).head(5)  # 仅显示前5个
 
-        report_lines.append("## 🚨 重点关注（使用率TOP5）\n")
+        report_lines.append("## 🚨 重点关注（使用率TOP）\n")
         report_lines.append(summary_df.to_markdown(index=False, tablefmt="simple"))
         report_lines.append("\n> 注：建议对使用率>80%的磁盘进行清理或扩容。\n")
 
