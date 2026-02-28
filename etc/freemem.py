@@ -110,19 +110,13 @@ def getmemdf() -> (int, pd.DataFrame):
     if not memlstdone:
         return totalmem, pd.DataFrame()
 
-    memdf = pd.DataFrame(
-        memlstdone, columns=["time", "freepercent", "swaptotal", "swapfree"]
-    )
+    memdf = pd.DataFrame(memlstdone, columns=["time", "freepercent", "swaptotal", "swapfree"])
     memdf["time"] = pd.to_datetime(memdf["time"])
     print(memdf.dtypes)
     num_all = memdf.shape[0]
     memdf.drop_duplicates(["time"], inplace=True)
-    log.info(
-        f"{gethostuser()}内存占用记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条"
-    )
-    log.info(
-        f"{gethostuser()}内存占用记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}"
-    )
+    log.info(f"{gethostuser()}内存占用记录共有{num_all}条，去重后有效记录有{memdf.shape[0]}条")
+    log.info(f"{gethostuser()}内存占用记录最新日期为{memdf['time'].max()}，最早日期为{memdf['time'].min()}")
     # 重置索引，使其为连续的整数，方便后面精准切片
     memdfdone = memdf.reset_index()
 
@@ -147,17 +141,13 @@ def gap2img(gap: int = 30) -> str:
     gaplst = list()
     for ix in tm_gap.index:
         gaplst.append(f"{ix}\t{memdfdone['time'].loc[ix]}\t{tm_gap[ix]}")
-    log.info(
-        f"{gethostuser()}的内存({tmemg})记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}"
-    )
+    log.info(f"{gethostuser()}的内存({tmemg})记录数据不连续(共有{tm_gap.shape[0]}个断点)：{'|'.join(gaplst)}")
 
     # 处理无断点的情况
     if len(gaplst) == 0:
         last_gap = memdfdone.set_index(["time"])["freepercent"]
     else:
-        last_gap = memdfdone.loc[list(tm_gap.index)[-1] :].set_index(["time"])[
-            "freepercent"
-        ]
+        last_gap = memdfdone.loc[list(tm_gap.index)[-1] :].set_index(["time"])["freepercent"]
 
     plt.figure(figsize=(16, 40), dpi=300)
 
@@ -177,9 +167,7 @@ def gap2img(gap: int = 30) -> str:
         gaplst.append(memdfdone.index.max() + 1)
         print(gaplst)
         for i in range(len(gaplst) - 1):
-            tmpdf = memdfdone.loc[gaplst[i] : gaplst[i + 1] - 1].set_index(["time"])[
-                "freepercent"
-            ]
+            tmpdf = memdfdone.loc[gaplst[i] : gaplst[i + 1] - 1].set_index(["time"])["freepercent"]
             log.info(
                 f"切片数据集最新日期为{tmpdf.index.max()}，最早日期为{tmpdf.index.min()}，数据项目数量为{tmpdf.shape[0]}"
             )
@@ -298,8 +286,9 @@ def parse_disk_logs_with_config(script_dir=None):
         mountpoint = monitor.get("mountpoint")
         name = monitor.get("name")
         description = monitor.get("description", mountpoint)
+        enabled = monitor.get("enabled")
 
-        if not mountpoint or not name:
+        if not mountpoint or not name or not enabled:
             continue
 
         log_file = data_dir / f"disk_{name}.log"
@@ -308,6 +297,7 @@ def parse_disk_logs_with_config(script_dir=None):
             continue
 
         # 解析日志文件
+        print(log_file)
         with open(log_file, "r") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
@@ -420,12 +410,8 @@ def analyze_disk_usage_by_config(script_dir=None):
     if detailed_rows:
         detailed_df = pd.DataFrame(detailed_rows)
         # 按使用率排序
-        detailed_df["排序键"] = detailed_df["使用率"].apply(
-            lambda x: float(x.replace("%", "")) if "%" in str(x) else 0
-        )
-        detailed_df = detailed_df.sort_values("排序键", ascending=False).drop(
-            "排序键", axis=1
-        )
+        detailed_df["排序键"] = detailed_df["使用率"].apply(lambda x: float(x.replace("%", "")) if "%" in str(x) else 0)
+        detailed_df = detailed_df.sort_values("排序键", ascending=False).drop("排序键", axis=1)
 
         report_lines.append("## 📊 详细监控情况\n")
         report_lines.append(detailed_df.to_markdown(index=False, tablefmt="github"))
@@ -450,9 +436,7 @@ def analyze_disk_usage_by_config(script_dir=None):
 
     if summary_data:
         summary_df = pd.DataFrame(summary_data)
-        summary_df = summary_df.sort_values("使用率", ascending=False).head(
-            5
-        )  # 仅显示前5个
+        summary_df = summary_df.sort_values("使用率", ascending=False).head(5)  # 仅显示前5个
 
         report_lines.append("## 🚨 重点关注（使用率TOP5）\n")
         report_lines.append(summary_df.to_markdown(index=False, tablefmt="simple"))
@@ -471,7 +455,7 @@ def freemem2note() -> None:
     login_user = execcmd("whoami")
     namestr = "happyjp_life"
     section = f"health_{getdevicename()}_{login_user}"
-    notestat_title = f"内存动态图【{gethostuser()}】"
+    notestat_title = f"内存硬盘动态监测图【{gethostuser()}】"
 
     if not (gapinmin := getcfpoptionvalue(namestr, section, "gapinmin")):
         gapinmin = 60
@@ -494,23 +478,17 @@ def freemem2note() -> None:
     print(content_disk)
     content = "\n".join([content_disk, content_mem])
     nbid = searchnotebook("ewmobile")
-    if not (
-        freestat_cloud_id := getcfpoptionvalue(namestr, section, "freestat_cloud_id")
-    ):
+    if not (freestat_cloud_id := getcfpoptionvalue(namestr, section, "freestat_cloud_id")):
         freenotefindlist = searchnotes(f"{notestat_title}")
         if len(freenotefindlist) == 0:
-            freestat_cloud_id = createnote(
-                title=notestat_title, parent_id=nbid, body=content
-            )
-            log.info(f"新的内存动态图笔记“{freestat_cloud_id}”新建成功！")
+            freestat_cloud_id = createnote(title=notestat_title, parent_id=nbid, body=content)
+            log.info(f"新的内存硬盘动态监测图笔记“{freestat_cloud_id}”新建成功！")
         else:
             freestat_cloud_id = freenotefindlist[-1].id
         setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
 
     if not noteid_used(freestat_cloud_id):
-        freestat_cloud_id = createnote(
-            title=notestat_title, parent_id=nbid, body=content
-        )
+        freestat_cloud_id = createnote(title=notestat_title, parent_id=nbid, body=content)
         setcfpoptionvalue(namestr, section, "freestat_cloud_id", f"{freestat_cloud_id}")
     else:
         deleteresourcesfromnote(freestat_cloud_id)
