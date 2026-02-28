@@ -480,7 +480,7 @@ def analyze_disk_usage_by_config(script_dir=None):
 
     # 2. 摘要表格（Top 5使用率最高）
     summary_data = []
-    for monitor in config["monitors"]:
+    for monitor in enabledconfigmonitors:
         name = monitor["name"]
         monitor_data = df[df["config_name"] == name]
 
