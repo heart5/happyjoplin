@@ -336,6 +336,68 @@ def parse_disk_logs_with_config(script_dir=None):
 
 
 # %% [markdown]
+# ### calculate_usage_trend(monitor_data, hours=24)
+
+# %%
+def calculate_usage_trend(monitor_data, hours=24):
+    """计算磁盘使用率趋势
+
+    参数:
+        monitor_data: 单个监控项的DataFrame数据
+        hours: 分析的时间窗口（小时）
+
+    返回:
+        趋势描述字符串
+    """
+    if len(monitor_data) < 2:
+        return "📊 等待更多数据"
+
+    # 按时间排序
+    monitor_data = monitor_data.sort_values("timestamp")
+
+    # 筛选指定时间窗口内的数据
+    time_threshold = datetime.now() - timedelta(hours=hours)
+    recent_data = monitor_data[monitor_data["timestamp"] >= time_threshold]
+
+    if len(recent_data) < 2:
+        return f"⏳ 过去{hours}小时内数据不足"
+
+    # 计算变化 - 修正索引方式
+    oldest = recent_data.iloc[0]["usage_percent"]  # 使用整数位置索引获取行，再通过列名访问
+    latest = recent_data.iloc[-1]["usage_percent"]
+    change = latest - oldest
+
+    # 计算变化率（百分比）
+    if oldest > 0:
+        change_rate = (change / oldest) * 100
+    else:
+        change_rate = 0
+
+    # 生成趋势描述
+    if change > 2.0 or change_rate > 5:
+        icon = "🚀"
+        level = "显著增长"
+    elif change > 0.5 or change_rate > 1:
+        icon = "📈"
+        level = "温和增长"
+    elif change < -2.0 or change_rate < -5:
+        icon = "⚠️"
+        level = "显著下降"
+    elif change < -0.5 or change_rate < -1:
+        icon = "📉"
+        level = "温和下降"
+    else:
+        icon = "➡️"
+        level = "基本稳定"
+
+    # 添加统计信息
+    time_range = recent_data.iloc[-1]["timestamp"] - recent_data.iloc[0]["timestamp"]
+    hours_range = time_range.total_seconds() / 3600
+
+    return f"{icon} {level} ({change:+.1f}%, {hours_range:.1f}小时)"
+
+
+# %% [markdown]
 # ### analyze_disk_usage_by_config(script_dir=None)
 
 # %%
@@ -377,11 +439,10 @@ def analyze_disk_usage_by_config(script_dir=None):
         else:
             latest = monitor_data.iloc[-1]
 
-            # 趋势计算（同原始逻辑）
+            # 趋势计算
             trend = ""
             if len(monitor_data) > 1:
-                # ... 趋势计算代码 ...
-                pass
+                trend = calculate_usage_trend(monitor_data, hours=24)
 
             # 状态判定
             usage = latest["usage_percent"]
