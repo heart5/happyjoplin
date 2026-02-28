@@ -361,6 +361,8 @@ def analyze_disk_usage_by_config(script_dir=None):
     detailed_rows = []
     for monitor in config["monitors"]:
         name = monitor["name"]
+        if not monitor.get("enabled"):
+            continue
         monitor_data = df[df["config_name"] == name]
 
         if monitor_data.empty:
