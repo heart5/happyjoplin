@@ -280,9 +280,17 @@ def parse_disk_logs_with_config(script_dir=None):
     config = load_disk_monitor_config(script_dir)
 
     if script_dir is None:
-        script_dir = os.path.join(os.path.expanduser("~"), "sbase", "zshscripts")
+        sysinfo = execcmd("uname -a")
+        if re.search("Android", sysinfo) is None:
+            homepath = execcmd("echo ~")
+            log.info(f"It's Linux[{gethostuser()}]. Home is {homepath}")
+        else:
+            homepath = execcmd("echo $HOME")
+            log.info(f"It's Android[{gethostuser()}]. Home is {homepath}")
+        script_dir = Path(homepath) / "sbase" / "zshscripts"
 
-    data_dir = os.path.join(script_dir, "data")
+    data_dir = script_dir / "data"
+    print(data_dir)
     disk_data = []
 
     # 遍历配置中的监控项
@@ -294,7 +302,8 @@ def parse_disk_logs_with_config(script_dir=None):
         if not mountpoint or not name:
             continue
 
-        log_file = os.path.join(data_dir, f"disk_{name}.log")
+        log_file = data_dir / f"disk_{name}.log"
+        print(log_file)
 
         if not os.path.exists(log_file):
             continue
