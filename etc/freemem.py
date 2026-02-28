@@ -291,7 +291,6 @@ def parse_disk_logs_with_config(script_dir=None):
         script_dir = Path(homepath) / "sbase" / "zshscripts"
 
     data_dir = script_dir / "data"
-    print(data_dir)
     disk_data = []
 
     # 遍历配置中的监控项
@@ -304,17 +303,14 @@ def parse_disk_logs_with_config(script_dir=None):
             continue
 
         log_file = data_dir / f"disk_{name}.log"
-        print(log_file)
 
         if not os.path.exists(log_file):
-            print(f"记录文件{log_file}不存在")
             continue
 
         # 解析日志文件
         with open(log_file, "r") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
-                print(line)
                 if not line:
                     continue
 
