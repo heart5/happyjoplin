@@ -70,6 +70,7 @@ def getmemdf() -> (int, pd.DataFrame):
         homepath = execcmd("echo $HOME")
         log.info(f"It's Android[{gethostuser()}]. Home is {homepath}")
     dpath = Path(homepath) / "sbase/zshscripts/data/freeinfo.txt"
+    print(dpath)
     if not os.path.exists(dpath):
         log.critical(f"内存数据文件（{dpath}）不存在，退出运行！！！")
         exit(1)
@@ -306,12 +307,14 @@ def parse_disk_logs_with_config(script_dir=None):
         print(log_file)
 
         if not os.path.exists(log_file):
+            print(f"记录文件{log_file}不存在")
             continue
 
         # 解析日志文件
         with open(log_file, "r") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
+                print(line)
                 if not line:
                     continue
 
