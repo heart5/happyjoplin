@@ -203,28 +203,53 @@ def gethealthdatafromnote(noteid):
 # %%
 def calds2ds(sds):
     """根据输入的ds，按月合计并估算数据未满月的月份的整月值
-    返回：月度合计ds、头尾估算合计ds
+    返回：月度合计ds、估算月度合计ds
     """
-    sdsm_actual = sds.resample("m").sum()
+    # 使用'ME'代替'M'，避免FutureWarning
+    sdsm_actual = sds.resample("ME").sum()
 
-    dmin = sds.index.min()
-    year = dmin.year
-    month = dmin.month
-    __, monthend = calendar.monthrange(year, month)
-    estimatemin = int(sdsm_actual.iloc[0] / (monthend + 1 - dmin.day) * monthend)
-    print(year, month, monthend, dmin.day, sdsm_actual.iloc[0], estimatemin)
+    # 创建估算的Series
+    estimated_values = []
+    estimated_dates = []
 
-    dmax = sds.index.max()
-    year = dmax.year
-    month = dmax.month
-    __, monthend = calendar.monthrange(year, month)
-    estimatemax = int(sdsm_actual.iloc[-1] / (dmax.day) * monthend)
-    print(year, month, monthend, dmax.day, sdsm_actual.iloc[-1], estimatemax)
+    # 对每个月份进行估算
+    for month_start in sdsm_actual.index:
+        # 获取该月的实际数据
+        actual_value = sdsm_actual.loc[month_start]
 
-    estds = pd.Series([estimatemin, estimatemax], index=[dmin, dmax])
+        # 获取该月的所有数据点
+        month_data = sds[sds.index.to_period("M") == month_start.to_period("M")]
 
-    estds_resample_full = estds.resample("m").sum()
-    return sdsm_actual, estds_resample_full
+        if len(month_data) == 0:
+            # 如果该月没有数据，跳过
+            continue
+
+        # 获取该月的第一天和最后一天
+        year = month_start.year
+        month = month_start.month
+        __, days_in_month = calendar.monthrange(year, month)
+
+        # 获取该月数据覆盖的天数范围
+        min_day_in_month = month_data.index.min().day
+        max_day_in_month = month_data.index.max().day
+
+        # 计算数据覆盖的天数
+        days_covered = max_day_in_month - min_day_in_month + 1
+
+        # 如果数据覆盖了整个月，则不需要估算
+        if days_covered == days_in_month:
+            estimated_value = actual_value
+        else:
+            # 估算整月值：实际值 ÷ 覆盖天数 × 当月总天数
+            estimated_value = int(actual_value / days_covered * days_in_month)
+
+        estimated_values.append(estimated_value)
+        estimated_dates.append(month_start)
+
+    # 创建估算的Series
+    estimated_series = pd.Series(estimated_values, index=estimated_dates)
+
+    return sdsm_actual, estimated_series
 
 
 # %% [markdown]
@@ -236,8 +261,13 @@ def hdf2imgbase64(hdf):
     """根据传入包含运动数据的DataFrame作图，处理缺失值，输出图形的bytes"""
     if hdf.empty or hdf["步数"].count() == 0:
         log.error("无有效数据可绘制图表")
-        # 返回一个提示图片
         return create_error_image("无有效健康数据")
+
+    # 从云端配置获取每日步数目标，获取不到则默认设置为8000步
+    if not (target := getinivaluefromcloud("health", "step_day_target")):
+        target = 8000
+    else:
+        target = int(target)
 
     # 确保索引是DatetimeIndex
     if not isinstance(hdf.index, pd.DatetimeIndex):
@@ -250,14 +280,27 @@ def hdf2imgbase64(hdf):
     # 确保数据按日期排序
     hdf = hdf.sort_index()
 
+    # 提取有效数据
+    valid_steps = hdf["步数"].dropna()
+    valid_sleep = hdf["睡眠时长"].dropna()
+
+    # 使用calds2ds进行月度估算
+    monthly_steps_actual = pd.Series()
+    monthly_steps_estimated = pd.Series()
+    monthly_sleep_actual = pd.Series()
+    monthly_sleep_estimated = pd.Series()
+
+    if not valid_steps.empty:
+        monthly_steps_actual, monthly_steps_estimated = calds2ds(valid_steps)
+
+    if not valid_sleep.empty:
+        monthly_sleep_actual, monthly_sleep_estimated = calds2ds(valid_sleep)
+
     # 创建图表
     fig = plt.figure(figsize=(15, 30), dpi=100)
 
     # 1. 步数动态图
     ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=1)
-
-    # 提取有效步数数据
-    valid_steps = hdf["步数"].dropna()
 
     if not valid_steps.empty:
         # 绘制步数折线图
@@ -271,8 +314,8 @@ def hdf2imgbase64(hdf):
             moving_avg = valid_steps.rolling(window=7, min_periods=1).mean()
             ax1.plot(moving_avg.index, moving_avg.values, "r-", lw=2, label="7天移动平均")
 
-        # 添加目标线（7000步）
-        ax1.axhline(y=7000, color="orange", linestyle="--", alpha=0.5, label="目标线(7000步)")
+        # 添加目标线（从云端配置获取）
+        ax1.axhline(y=target, color="orange", linestyle="--", alpha=0.5, label=f"目标线({target}步)")
 
         # 标注最高和最低步数
         if len(valid_steps) > 1:
@@ -303,42 +346,76 @@ def hdf2imgbase64(hdf):
     ax1.grid(True, alpha=0.3)
     ax1.tick_params(axis="x", rotation=45)
 
-    # 2. 月度步数统计图
+    # 2. 月度步数统计图（单柱体显示实际值和预估值）
     ax2 = plt.subplot2grid((4, 2), (1, 0), colspan=2, rowspan=1)
 
-    if not valid_steps.empty:
-        # 按月份汇总
-        monthly_steps = valid_steps.resample("ME").sum()
+    if not valid_steps.empty and not monthly_steps_actual.empty:
+        # 创建柱状图
+        months = [date.strftime("%Y-%m") for date in monthly_steps_actual.index]
+        x_positions = range(len(months))
 
-        if not monthly_steps.empty:
-            # 创建柱状图
-            bars = ax2.bar(
-                range(len(monthly_steps)), monthly_steps.values, color="skyblue", alpha=0.7, edgecolor="black"
+        # 绘制实际月度数据（实心柱体）
+        bars_actual = ax2.bar(
+            x_positions,
+            monthly_steps_actual.values,
+            width=0.6,
+            color="skyblue",
+            alpha=0.8,
+            edgecolor="black",
+            label="实际月度合计",
+        )
+
+        # 绘制估算月度数据（虚线边框，显示在同一个柱体上）
+        if not monthly_steps_estimated.empty:
+            for i, (actual_val, month_date) in enumerate(zip(monthly_steps_actual.values, monthly_steps_actual.index)):
+                if month_date in monthly_steps_estimated.index:
+                    est_val = monthly_steps_estimated.loc[month_date]
+
+                    # 如果估算值大于实际值，显示虚线边框
+                    if est_val > actual_val:
+                        # 绘制虚线边框表示估算值
+                        ax2.plot(
+                            [i - 0.3, i + 0.3, i + 0.3, i - 0.3, i - 0.3],
+                            [actual_val, actual_val, est_val, est_val, actual_val],
+                            "r--",  # 红色虚线
+                            linewidth=2,
+                            alpha=0.8,
+                            label="估算整月值" if i == 0 else "",  # 只在第一个柱体显示图例
+                        )
+
+                        # 在柱体顶部添加估算值标签
+                        ax2.text(
+                            i,
+                            est_val + (est_val * 0.01),
+                            f"估算:{int(est_val):,}",
+                            ha="center",
+                            va="bottom",
+                            fontsize=8,
+                            color="red",
+                        )
+
+        # 添加实际值标签
+        for i, actual_val in enumerate(monthly_steps_actual.values):
+            ax2.text(i, actual_val + (actual_val * 0.01), f"{int(actual_val):,}", ha="center", va="bottom", fontsize=9)
+
+        # 设置x轴标签
+        ax2.set_xticks(x_positions)
+        ax2.set_xticklabels(months, rotation=45, fontsize=10)
+
+        # 添加趋势线（基于实际数据）
+        if len(monthly_steps_actual) > 1:
+            ax2.plot(
+                x_positions,
+                monthly_steps_actual.values,
+                "r-",
+                marker="o",
+                markersize=6,
+                linewidth=2,
+                alpha=0.7,
+                label="月度趋势",
             )
 
-            # 添加数值标签
-            for i, (date, value) in enumerate(monthly_steps.items()):
-                ax2.text(i, value + (value * 0.01), f"{int(value):,}", ha="center", va="bottom", fontsize=9)
-
-            # 设置x轴标签
-            ax2.set_xticks(range(len(monthly_steps)))
-            ax2.set_xticklabels([date.strftime("%Y-%m") for date in monthly_steps.index], rotation=45, fontsize=10)
-
-            # 添加趋势线
-            if len(monthly_steps) > 1:
-                x_positions = range(len(monthly_steps))
-                ax2.plot(
-                    x_positions,
-                    monthly_steps.values,
-                    "r-",
-                    marker="o",
-                    markersize=6,
-                    linewidth=2,
-                    alpha=0.7,
-                    label="月度趋势",
-                )
-
-    ax2.set_title("月度步数统计", fontsize=14, fontweight="bold")
+    ax2.set_title("月度步数统计（实心：实际值，虚线：估算值）", fontsize=14, fontweight="bold")
     ax2.set_xlabel("月份")
     ax2.set_ylabel("总步数")
     ax2.legend(loc="upper left")
@@ -346,8 +423,6 @@ def hdf2imgbase64(hdf):
 
     # 3. 睡眠时长动态图
     ax3 = plt.subplot2grid((4, 2), (2, 0), colspan=2, rowspan=1)
-
-    valid_sleep = hdf["睡眠时长"].dropna()
 
     if not valid_sleep.empty:
         # 转换为小时
@@ -394,42 +469,81 @@ def hdf2imgbase64(hdf):
     ax3.grid(True, alpha=0.3)
     ax3.tick_params(axis="x", rotation=45)
 
-    # 4. 月度睡眠统计
+    # 4. 月度睡眠统计（单柱体显示实际值和预估值）
     ax4 = plt.subplot2grid((4, 2), (3, 0), colspan=2, rowspan=1)
 
-    if not valid_sleep.empty:
-        # 按月份汇总（转换为小时）
-        monthly_sleep = valid_sleep.resample("ME").sum() / 60  # 转换为小时
+    if not valid_sleep.empty and not monthly_sleep_actual.empty:
+        # 转换为小时
+        monthly_sleep_hours_actual = monthly_sleep_actual / 60
+        monthly_sleep_hours_estimated = monthly_sleep_estimated / 60
 
-        if not monthly_sleep.empty:
-            # 创建柱状图
-            bars = ax4.bar(
-                range(len(monthly_sleep)), monthly_sleep.values, color="lightgreen", alpha=0.7, edgecolor="black"
+        months = [date.strftime("%Y-%m") for date in monthly_sleep_hours_actual.index]
+        x_positions = range(len(months))
+
+        # 创建柱状图
+        bars_actual_sleep = ax4.bar(
+            x_positions,
+            monthly_sleep_hours_actual.values,
+            width=0.6,
+            color="lightgreen",
+            alpha=0.8,
+            edgecolor="black",
+            label="实际月度合计",
+        )
+
+        # 绘制估算月度数据（虚线边框）
+        if not monthly_sleep_hours_estimated.empty:
+            for i, (actual_val, month_date) in enumerate(
+                zip(monthly_sleep_hours_actual.values, monthly_sleep_hours_actual.index)
+            ):
+                if month_date in monthly_sleep_hours_estimated.index:
+                    est_val = monthly_sleep_hours_estimated.loc[month_date]
+
+                    # 如果估算值大于实际值，显示虚线边框
+                    if est_val > actual_val:
+                        # 绘制虚线边框表示估算值
+                        ax4.plot(
+                            [i - 0.3, i + 0.3, i + 0.3, i - 0.3, i - 0.3],
+                            [actual_val, actual_val, est_val, est_val, actual_val],
+                            "r--",  # 红色虚线
+                            linewidth=2,
+                            alpha=0.8,
+                            label="估算整月值" if i == 0 else "",  # 只在第一个柱体显示图例
+                        )
+
+                        # 在柱体顶部添加估算值标签
+                        ax4.text(
+                            i,
+                            est_val + (est_val * 0.01),
+                            f"估算:{est_val:.1f}h",
+                            ha="center",
+                            va="bottom",
+                            fontsize=8,
+                            color="red",
+                        )
+
+        # 添加实际值标签
+        for i, actual_val in enumerate(monthly_sleep_hours_actual.values):
+            ax4.text(i, actual_val + (actual_val * 0.01), f"{actual_val:.1f}h", ha="center", va="bottom", fontsize=9)
+
+        # 设置x轴标签
+        ax4.set_xticks(x_positions)
+        ax4.set_xticklabels(months, rotation=45, fontsize=10)
+
+        # 添加趋势线
+        if len(monthly_sleep_hours_actual) > 1:
+            ax4.plot(
+                x_positions,
+                monthly_sleep_hours_actual.values,
+                "b-",
+                marker="s",
+                markersize=6,
+                linewidth=2,
+                alpha=0.7,
+                label="月度趋势",
             )
 
-            # 添加数值标签
-            for i, (date, value) in enumerate(monthly_sleep.items()):
-                ax4.text(i, value + (value * 0.01), f"{value:.1f}h", ha="center", va="bottom", fontsize=9)
-
-            # 设置x轴标签
-            ax4.set_xticks(range(len(monthly_sleep)))
-            ax4.set_xticklabels([date.strftime("%Y-%m") for date in monthly_sleep.index], rotation=45, fontsize=10)
-
-            # 添加趋势线
-            if len(monthly_sleep) > 1:
-                x_positions = range(len(monthly_sleep))
-                ax4.plot(
-                    x_positions,
-                    monthly_sleep.values,
-                    "b-",
-                    marker="s",
-                    markersize=6,
-                    linewidth=2,
-                    alpha=0.7,
-                    label="月度趋势",
-                )
-
-    ax4.set_title("月度睡眠时长统计（小时）", fontsize=14, fontweight="bold")
+    ax4.set_title("月度睡眠时长统计（实心：实际值，虚线：估算值）", fontsize=14, fontweight="bold")
     ax4.set_xlabel("月份")
     ax4.set_ylabel("总睡眠时长（小时）")
     ax4.legend(loc="upper left")
@@ -438,19 +552,26 @@ def hdf2imgbase64(hdf):
     # 添加总体统计信息
     stats_text = ""
     if not valid_steps.empty:
-        stats_text += f"步数统计:\n"
+        stats_text += f"步数统计（目标: {target}步）:\n"
         stats_text += f"• 平均: {valid_steps.mean():.0f}步/天\n"
         stats_text += f"• 总计: {valid_steps.sum():,}步\n"
-        stats_text += f"• 达标率: {(valid_steps >= 7000).sum() / len(valid_steps) * 100:.1f}%\n"
+        stats_text += f"• 达标率: {(valid_steps >= target).sum() / len(valid_steps) * 100:.1f}%\n"
 
     if not valid_sleep.empty:
-        stats_text += f"\n睡眠统计:\n"
+        stats_text += f"\n睡眠统计（目标: 7小时）:\n"
         stats_text += f"• 平均: {valid_sleep.mean() / 60:.1f}小时/天\n"
         stats_text += f"• 总计: {valid_sleep.sum() / 60:.1f}小时\n"
         stats_text += f"• 达标率: {(valid_sleep >= 420).sum() / len(valid_sleep) * 100:.1f}%\n"
 
     stats_text += f"\n数据范围:\n"
     stats_text += f"{hdf.index.min().strftime('%Y-%m-%d')} 至 {hdf.index.max().strftime('%Y-%m-%d')}"
+
+    # 添加月度估算说明
+    if not monthly_steps_estimated.empty or not monthly_sleep_estimated.empty:
+        stats_text += f"\n\n📊 月度估算说明:\n"
+        stats_text += f"• 实心柱体：实际月度合计\n"
+        stats_text += f"• 红色虚线：估算整月值（数据不完整月份）\n"
+        stats_text += f"• 估算值用于数据不完整月份的趋势参考"
 
     plt.figtext(
         0.02, 0.02, stats_text, fontsize=10, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8)
@@ -488,6 +609,9 @@ def generate_health_report(hdf):
     # 从云端配置获取每日步数目标，获取不到则默认设置为8000步
     if not (target := getinivaluefromcloud("health", "step_day_target")):
         target = 8000
+    else:
+        target = int(target)
+
     valid_steps = hdf["步数"].dropna()
     valid_sleep = hdf["睡眠时长"].dropna()
 
@@ -510,7 +634,7 @@ def generate_health_report(hdf):
 
     report += "\n"
 
-    # 2. 步数分析
+    # 2. 步数分析（使用云端配置的目标值）
     report += "### 2. 步数分析\n"
     if not valid_steps.empty:
         report += f"- **平均每日步数**: {valid_steps.mean():.0f} 步\n"
@@ -582,7 +706,7 @@ def generate_health_report(hdf):
 
     report += "\n"
 
-    # 5. 健康建议
+    # 5. 健康建议（使用云端配置的目标值）
     report += "### 5. 健康建议\n"
 
     if not valid_steps.empty:
@@ -690,9 +814,10 @@ def health2note():
             log.warning("提取的数据为空，使用错误图片")
             image_base64 = create_error_image("健康数据为空")
         else:
+            # 使用修改后的hdf2imgbase64函数（包含月度估算）
             image_base64 = hdf2imgbase64(hdf)
 
-        # 4. 生成分析报告
+        # 4. 生成分析报告（使用修改后的generate_health_report函数）
         report_content = generate_health_report(hdf)
 
     except Exception as e:
