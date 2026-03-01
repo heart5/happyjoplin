@@ -28,6 +28,7 @@ import re
 from datetime import datetime, timedelta
 
 import arrow
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -144,7 +145,6 @@ def gethealthdatafromnote(noteid):
         r"(\d+)\s*[,，]\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*\n"
         r"([^#]*)"  # 备注部分（非#开头的内容）
     )
-
     items = []
     for match in ptn.finditer(content):
         year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
@@ -192,6 +192,25 @@ def gethealthdatafromnote(noteid):
         )
     else:
         log.warning("提取的数据为空")
+
+    # 在返回前添加连续日期识别
+    if not df.empty and "步数" in df.columns:
+        # 找出最近的连续日期区间
+        df["连续标记"] = df["步数"].notna().astype(int)
+
+        # 识别连续段
+        df["连续段"] = (df["连续标记"].diff() != 0).cumsum()
+
+        # 找出最近的连续段
+        recent_continuous = None
+        for segment in sorted(df["连续段"].unique(), reverse=True):
+            segment_data = df[df["连续段"] == segment]
+            if segment_data["连续标记"].all():  # 全连续
+                recent_continuous = segment_data
+                break
+
+        # 将连续段信息存储为DataFrame属性
+        df.attrs["recent_continuous"] = recent_continuous
 
     return df
 
@@ -253,6 +272,51 @@ def calds2ds(sds):
 
 
 # %% [markdown]
+# ### analyze_recent_continuous_data(hdf)
+
+# %%
+def analyze_recent_continuous_data(hdf):
+    """分析最近的连续日期数据"""
+    if "recent_continuous" not in hdf.attrs or hdf.attrs["recent_continuous"] is None:
+        return None
+
+    cont_df = hdf.attrs["recent_continuous"]
+
+    if cont_df.empty:
+        return None
+
+    # 基本统计
+    analysis = {
+        "日期范围": f"{cont_df.index.min().strftime('%Y-%m-%d')} 至 {cont_df.index.max().strftime('%Y-%m-%d')}",
+        "连续天数": len(cont_df),
+        "步数统计": {
+            "平均": cont_df["步数"].mean(),
+            "总计": cont_df["步数"].sum(),
+            "最高": cont_df["步数"].max(),
+            "最低": cont_df["步数"].min(),
+            "达标率": (cont_df["步数"] >= target).mean() * 100 if "target" in locals() else None,
+        },
+        "睡眠统计": {
+            "平均小时": cont_df["睡眠时长"].mean() / 60 if "睡眠时长" in cont_df.columns else None,
+            "总计小时": cont_df["睡眠时长"].sum() / 60 if "睡眠时长" in cont_df.columns else None,
+        },
+    }
+
+    # 趋势分析（如果连续天数足够）
+    if len(cont_df) >= 7:
+        # 周对比
+        if len(cont_df) >= 14:
+            first_week = cont_df.iloc[:7]["步数"].mean()
+            second_week = cont_df.iloc[7:14]["步数"].mean() if len(cont_df) >= 14 else None
+            analysis["周对比"] = {
+                "第一周平均": first_week,
+                "第二周平均": second_week,
+                "变化率": ((second_week - first_week) / first_week * 100) if second_week else None,
+            }
+
+    return analysis
+
+# %% [markdown]
 # ### hdf2imgbase64(hdf)
 
 
@@ -296,32 +360,179 @@ def hdf2imgbase64(hdf):
     if not valid_sleep.empty:
         monthly_sleep_actual, monthly_sleep_estimated = calds2ds(valid_sleep)
 
-    # 创建图表
-    fig = plt.figure(figsize=(15, 30), dpi=100)
+    # 创建图表 - 5行布局
+    fig = plt.figure(figsize=(15, 35), dpi=100)
 
-    # 1. 步数动态图
-    ax1 = plt.subplot2grid((4, 2), (0, 0), colspan=2, rowspan=1)
+    # ========== 1. 最近连续数据双轴趋势图（原第五个图，现在第一个）==========
+    ax1 = plt.subplot2grid((5, 2), (0, 0), colspan=2, rowspan=1)
+
+    if "recent_continuous" in hdf.attrs and hdf.attrs["recent_continuous"] is not None:
+        cont_df = hdf.attrs["recent_continuous"]
+
+        # 提取步数和睡眠数据
+        cont_steps = cont_df["步数"].dropna()
+        cont_sleep = cont_df["睡眠时长"].dropna() if "睡眠时长" in cont_df.columns else pd.Series()
+
+        if not cont_steps.empty:
+            # 创建双Y轴
+            ax1_steps = ax1  # 左侧Y轴（步数）
+            ax1_sleep = ax1.twinx()  # 右侧Y轴（睡眠时长）
+
+            # 获取目标值
+            step_target = getinivaluefromcloud("health", "step_day_target") or 8000
+            sleep_target = 7 * 60  # 7小时转换为分钟
+
+            # --- 绘制步数数据（左侧Y轴）---
+            # 步数折线
+            (line_steps,) = ax1_steps.plot(cont_steps.index, cont_steps.values, "b-", lw=2, alpha=0.8, label="每日步数")
+
+            # 步数填充区域
+            ax1_steps.fill_between(cont_steps.index, cont_steps.values, alpha=0.2, color="blue")
+
+            # 步数移动平均（3日）
+            if len(cont_steps) >= 3:
+                steps_ma = cont_steps.rolling(window=3, min_periods=1).mean()
+                (line_steps_ma,) = ax1_steps.plot(
+                    steps_ma.index, steps_ma.values, "b--", lw=1.5, alpha=0.6, label="步数3日平均"
+                )
+
+            # 步数目标线
+            line_target_steps = ax1_steps.axhline(
+                y=step_target, color="orange", linestyle=":", alpha=0.7, label=f"步数目标({step_target}步)"
+            )
+
+            # 设置步数Y轴
+            steps_min = max(0, cont_steps.min() * 0.8)
+            steps_max = cont_steps.max() * 1.2
+            ax1_steps.set_ylim(steps_min, steps_max)
+            ax1_steps.set_ylabel("步数", color="blue", fontweight="bold")
+            ax1_steps.tick_params(axis="y", labelcolor="blue")
+
+            # --- 绘制睡眠数据（右侧Y轴）---
+            if not cont_sleep.empty:
+                # 转换为小时显示
+                sleep_hours = cont_sleep / 60
+
+                # 睡眠折线
+                (line_sleep,) = ax1_sleep.plot(
+                    sleep_hours.index, sleep_hours.values, "g-", lw=2, alpha=0.8, label="睡眠时长"
+                )
+
+                # 睡眠填充区域
+                ax1_sleep.fill_between(sleep_hours.index, sleep_hours.values, alpha=0.2, color="green")
+
+                # 睡眠移动平均（3日）
+                if len(sleep_hours) >= 3:
+                    sleep_ma = sleep_hours.rolling(window=3, min_periods=1).mean()
+                    (line_sleep_ma,) = ax1_sleep.plot(
+                        sleep_ma.index, sleep_ma.values, "g--", lw=1.5, alpha=0.6, label="睡眠3日平均"
+                    )
+
+                # 睡眠目标线（7小时）
+                line_target_sleep = ax1_sleep.axhline(
+                    y=7, color="red", linestyle=":", alpha=0.7, label="睡眠目标(7小时)"
+                )
+
+                # 设置睡眠Y轴
+                sleep_min = max(0, sleep_hours.min() * 0.8)
+                sleep_max = sleep_hours.max() * 1.2
+                ax1_sleep.set_ylim(sleep_min, sleep_max)
+                ax1_sleep.set_ylabel("睡眠时长 (小时)", color="green", fontweight="bold")
+                ax1_sleep.tick_params(axis="y", labelcolor="green")
+
+            # --- 共享X轴设置 ---
+            # 格式化日期显示
+            if len(cont_steps) <= 14:  # 两周内显示具体日期
+                date_format = "%m-%d"
+                rotation = 45
+            else:  # 更多天数时简化显示
+                date_format = "%m-%d"
+                rotation = 45
+
+            ax1_steps.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
+
+            # 设置标题
+            ax1_steps.set_title(
+                f"📊 最近连续{len(cont_steps)}天步数与睡眠趋势（最新数据）", fontsize=14, fontweight="bold", pad=20
+            )
+
+            ax1_steps.set_xlabel("日期")
+            ax1_steps.grid(True, alpha=0.3, axis="x")
+            ax1_steps.tick_params(axis="x", rotation=rotation)
+
+            # --- 合并图例 ---
+            # 收集所有图例句柄和标签
+            lines = [line_steps]
+            labels = ["每日步数"]
+
+            if "line_steps_ma" in locals():
+                lines.append(line_steps_ma)
+                labels.append("步数3日平均")
+
+            lines.append(line_target_steps)
+            labels.append(f"步数目标({step_target}步)")
+
+            if not cont_sleep.empty:
+                lines.append(line_sleep)
+                labels.append("睡眠时长")
+
+                if "line_sleep_ma" in locals():
+                    lines.append(line_sleep_ma)
+                    labels.append("睡眠3日平均")
+
+                lines.append(line_target_sleep)
+                labels.append("睡眠目标(7小时)")
+
+            # 添加图例（放在图表外部底部）
+            ax1_steps.legend(lines, labels, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3, fontsize=9)
+
+            # 添加数据统计标注
+            stats_text = f"📈 步数平均: {cont_steps.mean():.0f}步/天"
+            if not cont_sleep.empty:
+                stats_text += f"\n😴 睡眠平均: {sleep_hours.mean():.1f}小时/天"
+
+            ax1_steps.text(
+                0.02,
+                0.98,
+                stats_text,
+                transform=ax1_steps.transAxes,
+                fontsize=10,
+                verticalalignment="top",
+                bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.7),
+            )
+
+        else:
+            # 无连续步数数据的情况
+            ax1.text(0.5, 0.5, "无连续步数数据", ha="center", va="center", transform=ax1.transAxes, fontsize=12)
+            ax1.set_title("最近连续记录趋势", fontsize=14, fontweight="bold")
+    else:
+        # 未识别到连续记录区间
+        ax1.text(0.5, 0.5, "未识别到连续记录区间", ha="center", va="center", transform=ax1.transAxes, fontsize=12)
+        ax1.set_title("最近连续记录趋势", fontsize=14, fontweight="bold")
+
+    # ========== 2. 步数动态图（原第一个图，现在第二个）==========
+    ax2 = plt.subplot2grid((5, 2), (1, 0), colspan=2, rowspan=1)
 
     if not valid_steps.empty:
         # 绘制步数折线图
-        ax1.plot(valid_steps.index, valid_steps.values, "b-", lw=1.5, label="每日步数", alpha=0.7)
+        ax2.plot(valid_steps.index, valid_steps.values, "b-", lw=1.5, label="每日步数", alpha=0.7)
 
         # 绘制步数散点图
-        ax1.scatter(valid_steps.index, valid_steps.values, s=30, c="blue", alpha=0.5)
+        ax2.scatter(valid_steps.index, valid_steps.values, s=30, c="blue", alpha=0.5)
 
         # 添加7天移动平均线
         if len(valid_steps) >= 7:
             moving_avg = valid_steps.rolling(window=7, min_periods=1).mean()
-            ax1.plot(moving_avg.index, moving_avg.values, "r-", lw=2, label="7天移动平均")
+            ax2.plot(moving_avg.index, moving_avg.values, "r-", lw=2, label="7天移动平均")
 
         # 添加目标线（从云端配置获取）
-        ax1.axhline(y=target, color="orange", linestyle="--", alpha=0.5, label=f"目标线({target}步)")
+        ax2.axhline(y=target, color="orange", linestyle="--", alpha=0.5, label=f"目标线({target}步)")
 
         # 标注最高和最低步数
         if len(valid_steps) > 1:
             max_step_idx = valid_steps.idxmax()
             min_step_idx = valid_steps.idxmin()
-            ax1.annotate(
+            ax2.annotate(
                 f"最高: {valid_steps.max()}",
                 xy=(max_step_idx, valid_steps.max()),
                 xytext=(max_step_idx, valid_steps.max() + 500),
@@ -330,7 +541,7 @@ def hdf2imgbase64(hdf):
                 color="red",
             )
 
-            ax1.annotate(
+            ax2.annotate(
                 f"最低: {valid_steps.min()}",
                 xy=(min_step_idx, valid_steps.min()),
                 xytext=(min_step_idx, valid_steps.min() - 500),
@@ -339,15 +550,15 @@ def hdf2imgbase64(hdf):
                 color="green",
             )
 
-    ax1.set_title("步数动态图", fontsize=14, fontweight="bold")
-    ax1.set_xlabel("日期")
-    ax1.set_ylabel("步数")
-    ax1.legend(loc="upper left")
-    ax1.grid(True, alpha=0.3)
-    ax1.tick_params(axis="x", rotation=45)
+    ax2.set_title("步数动态图（完整历史）", fontsize=14, fontweight="bold")
+    ax2.set_xlabel("日期")
+    ax2.set_ylabel("步数")
+    ax2.legend(loc="upper left")
+    ax2.grid(True, alpha=0.3)
+    ax2.tick_params(axis="x", rotation=45)
 
-    # 2. 月度步数统计图（单柱体显示实际值和预估值）
-    ax2 = plt.subplot2grid((4, 2), (1, 0), colspan=2, rowspan=1)
+    # ========== 3. 月度步数统计图（原第二个图，现在第三个）==========
+    ax3 = plt.subplot2grid((5, 2), (2, 0), colspan=2, rowspan=1)
 
     if not valid_steps.empty and not monthly_steps_actual.empty:
         # 创建柱状图
@@ -355,7 +566,7 @@ def hdf2imgbase64(hdf):
         x_positions = range(len(months))
 
         # 绘制实际月度数据（实心柱体）
-        bars_actual = ax2.bar(
+        bars_actual = ax3.bar(
             x_positions,
             monthly_steps_actual.values,
             width=0.6,
@@ -374,7 +585,7 @@ def hdf2imgbase64(hdf):
                     # 如果估算值大于实际值，显示虚线边框
                     if est_val > actual_val:
                         # 绘制虚线边框表示估算值
-                        ax2.plot(
+                        ax3.plot(
                             [i - 0.3, i + 0.3, i + 0.3, i - 0.3, i - 0.3],
                             [actual_val, actual_val, est_val, est_val, actual_val],
                             "r--",  # 红色虚线
@@ -384,7 +595,7 @@ def hdf2imgbase64(hdf):
                         )
 
                         # 在柱体顶部添加估算值标签
-                        ax2.text(
+                        ax3.text(
                             i,
                             est_val + (est_val * 0.01),
                             f"估算:{int(est_val):,}",
@@ -396,15 +607,15 @@ def hdf2imgbase64(hdf):
 
         # 添加实际值标签
         for i, actual_val in enumerate(monthly_steps_actual.values):
-            ax2.text(i, actual_val + (actual_val * 0.01), f"{int(actual_val):,}", ha="center", va="bottom", fontsize=9)
+            ax3.text(i, actual_val + (actual_val * 0.01), f"{int(actual_val):,}", ha="center", va="bottom", fontsize=9)
 
         # 设置x轴标签
-        ax2.set_xticks(x_positions)
-        ax2.set_xticklabels(months, rotation=45, fontsize=10)
+        ax3.set_xticks(x_positions)
+        ax3.set_xticklabels(months, rotation=45, fontsize=10)
 
         # 添加趋势线（基于实际数据）
         if len(monthly_steps_actual) > 1:
-            ax2.plot(
+            ax3.plot(
                 x_positions,
                 monthly_steps_actual.values,
                 "r-",
@@ -415,36 +626,36 @@ def hdf2imgbase64(hdf):
                 label="月度趋势",
             )
 
-    ax2.set_title("月度步数统计（实心：实际值，虚线：估算值）", fontsize=14, fontweight="bold")
-    ax2.set_xlabel("月份")
-    ax2.set_ylabel("总步数")
-    ax2.legend(loc="upper left")
-    ax2.grid(True, alpha=0.3, axis="y")
+    ax3.set_title("月度步数统计（实心：实际值，虚线：估算值）", fontsize=14, fontweight="bold")
+    ax3.set_xlabel("月份")
+    ax3.set_ylabel("总步数")
+    ax3.legend(loc="upper left")
+    ax3.grid(True, alpha=0.3, axis="y")
 
-    # 3. 睡眠时长动态图
-    ax3 = plt.subplot2grid((4, 2), (2, 0), colspan=2, rowspan=1)
+    # ========== 4. 睡眠时长动态图（原第三个图，现在第四个）==========
+    ax4 = plt.subplot2grid((5, 2), (3, 0), colspan=2, rowspan=1)
 
     if not valid_sleep.empty:
         # 转换为小时
         sleep_hours = valid_sleep / 60
 
         # 绘制睡眠时长
-        ax3.plot(sleep_hours.index, sleep_hours.values, "g-", lw=1.5, label="每日睡眠时长", alpha=0.7)
-        ax3.scatter(sleep_hours.index, sleep_hours.values, s=30, c="green", alpha=0.5)
+        ax4.plot(sleep_hours.index, sleep_hours.values, "g-", lw=1.5, label="每日睡眠时长", alpha=0.7)
+        ax4.scatter(sleep_hours.index, sleep_hours.values, s=30, c="green", alpha=0.5)
 
         # 添加7天移动平均
         if len(sleep_hours) >= 7:
             sleep_avg = sleep_hours.rolling(window=7, min_periods=1).mean()
-            ax3.plot(sleep_avg.index, sleep_avg.values, "purple", lw=2, label="7天移动平均")
+            ax4.plot(sleep_avg.index, sleep_avg.values, "purple", lw=2, label="7天移动平均")
 
         # 添加目标线（7小时）
-        ax3.axhline(y=7, color="orange", linestyle="--", alpha=0.5, label="目标线(7小时)")
+        ax4.axhline(y=7, color="orange", linestyle="--", alpha=0.5, label="目标线(7小时)")
 
         # 标注最高和最低睡眠时长
         if len(sleep_hours) > 1:
             max_sleep_idx = sleep_hours.idxmax()
             min_sleep_idx = sleep_hours.idxmin()
-            ax3.annotate(
+            ax4.annotate(
                 f"{sleep_hours.max():.1f}h",
                 xy=(max_sleep_idx, sleep_hours.max()),
                 xytext=(max_sleep_idx, sleep_hours.max() + 0.5),
@@ -453,7 +664,7 @@ def hdf2imgbase64(hdf):
                 color="red",
             )
 
-            ax3.annotate(
+            ax4.annotate(
                 f"{sleep_hours.min():.1f}h",
                 xy=(min_sleep_idx, sleep_hours.min()),
                 xytext=(min_sleep_idx, sleep_hours.min() - 0.5),
@@ -462,15 +673,15 @@ def hdf2imgbase64(hdf):
                 color="green",
             )
 
-    ax3.set_title("睡眠时长动态图（小时）", fontsize=14, fontweight="bold")
-    ax3.set_xlabel("日期")
-    ax3.set_ylabel("睡眠时长（小时）")
-    ax3.legend(loc="upper left")
-    ax3.grid(True, alpha=0.3)
-    ax3.tick_params(axis="x", rotation=45)
+    ax4.set_title("睡眠时长动态图（小时）", fontsize=14, fontweight="bold")
+    ax4.set_xlabel("日期")
+    ax4.set_ylabel("睡眠时长（小时）")
+    ax4.legend(loc="upper left")
+    ax4.grid(True, alpha=0.3)
+    ax4.tick_params(axis="x", rotation=45)
 
-    # 4. 月度睡眠统计（单柱体显示实际值和预估值）
-    ax4 = plt.subplot2grid((4, 2), (3, 0), colspan=2, rowspan=1)
+    # ========== 5. 月度睡眠统计（原第四个图，现在第五个）==========
+    ax5 = plt.subplot2grid((5, 2), (4, 0), colspan=2, rowspan=1)
 
     if not valid_sleep.empty and not monthly_sleep_actual.empty:
         # 转换为小时
@@ -481,7 +692,7 @@ def hdf2imgbase64(hdf):
         x_positions = range(len(months))
 
         # 创建柱状图
-        bars_actual_sleep = ax4.bar(
+        bars_actual_sleep = ax5.bar(
             x_positions,
             monthly_sleep_hours_actual.values,
             width=0.6,
@@ -502,7 +713,7 @@ def hdf2imgbase64(hdf):
                     # 如果估算值大于实际值，显示虚线边框
                     if est_val > actual_val:
                         # 绘制虚线边框表示估算值
-                        ax4.plot(
+                        ax5.plot(
                             [i - 0.3, i + 0.3, i + 0.3, i - 0.3, i - 0.3],
                             [actual_val, actual_val, est_val, est_val, actual_val],
                             "r--",  # 红色虚线
@@ -512,7 +723,7 @@ def hdf2imgbase64(hdf):
                         )
 
                         # 在柱体顶部添加估算值标签
-                        ax4.text(
+                        ax5.text(
                             i,
                             est_val + (est_val * 0.01),
                             f"估算:{est_val:.1f}h",
@@ -524,15 +735,15 @@ def hdf2imgbase64(hdf):
 
         # 添加实际值标签
         for i, actual_val in enumerate(monthly_sleep_hours_actual.values):
-            ax4.text(i, actual_val + (actual_val * 0.01), f"{actual_val:.1f}h", ha="center", va="bottom", fontsize=9)
+            ax5.text(i, actual_val + (actual_val * 0.01), f"{actual_val:.1f}h", ha="center", va="bottom", fontsize=9)
 
         # 设置x轴标签
-        ax4.set_xticks(x_positions)
-        ax4.set_xticklabels(months, rotation=45, fontsize=10)
+        ax5.set_xticks(x_positions)
+        ax5.set_xticklabels(months, rotation=45, fontsize=10)
 
         # 添加趋势线
         if len(monthly_sleep_hours_actual) > 1:
-            ax4.plot(
+            ax5.plot(
                 x_positions,
                 monthly_sleep_hours_actual.values,
                 "b-",
@@ -543,11 +754,11 @@ def hdf2imgbase64(hdf):
                 label="月度趋势",
             )
 
-    ax4.set_title("月度睡眠时长统计（实心：实际值，虚线：估算值）", fontsize=14, fontweight="bold")
-    ax4.set_xlabel("月份")
-    ax4.set_ylabel("总睡眠时长（小时）")
-    ax4.legend(loc="upper left")
-    ax4.grid(True, alpha=0.3, axis="y")
+    ax5.set_title("月度睡眠时长统计（实心：实际值，虚线：估算值）", fontsize=14, fontweight="bold")
+    ax5.set_xlabel("月份")
+    ax5.set_ylabel("总睡眠时长（小时）")
+    ax5.legend(loc="upper left")
+    ax5.grid(True, alpha=0.3, axis="y")
 
     # 添加总体统计信息
     stats_text = ""
@@ -577,7 +788,8 @@ def hdf2imgbase64(hdf):
         0.02, 0.02, stats_text, fontsize=10, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8)
     )
 
-    plt.tight_layout(rect=[0, 0.05, 1, 0.98])
+    # 调整布局（为第一个图的图例留空间）
+    plt.tight_layout(rect=[0, 0.10, 1, 0.95])
 
     # 转换为base64
     buffer = io.BytesIO()
@@ -616,6 +828,38 @@ def generate_health_report(hdf):
     valid_sleep = hdf["睡眠时长"].dropna()
 
     report = "## 📊 健康数据分析报告\n\n"
+
+    # 在报告头部添加连续数据分析
+    report += "\n### 0. 近期连续记录分析\n"
+
+    recent_analysis = analyze_recent_continuous_data(hdf)
+
+    if recent_analysis:
+        report += f"- **连续记录区间**: {recent_analysis['日期范围']} ({recent_analysis['连续天数']}天)\n"
+
+        if recent_analysis["步数统计"]["平均"]:
+            report += f"- **连续期间平均步数**: {recent_analysis['步数统计']['平均']:.0f}步/天\n"
+            report += f"- **连续期间总计步数**: {recent_analysis['步数统计']['总计']:,}步\n"
+
+            if recent_analysis["步数统计"]["达标率"]:
+                report += f"- **连续期间达标率**: {recent_analysis['步数统计']['达标率']:.1f}%\n"
+
+        if recent_analysis.get("周对比"):
+            report += f"- **周对比趋势**: "
+            if recent_analysis["周对比"]["变化率"]:
+                trend = "上升" if recent_analysis["周对比"]["变化率"] > 0 else "下降"
+                report += f"{trend} {abs(recent_analysis['周对比']['变化率']):.1f}%\n"
+
+        # 添加建议
+        report += "\n**📋 连续记录洞察**:\n"
+        if recent_analysis["连续天数"] >= 30:
+            report += "✅ 连续记录超过30天，习惯非常稳定！\n"
+        elif recent_analysis["连续天数"] >= 14:
+            report += "👍 连续记录超过2周，习惯正在养成中\n"
+        else:
+            report += "📝 连续记录较短，建议保持每日记录习惯\n"
+    else:
+        report += "- 暂无连续的近期记录数据\n"
 
     # 1. 基本统计
     report += "### 1. 基本统计\n"
