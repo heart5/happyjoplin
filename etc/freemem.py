@@ -77,21 +77,21 @@ def getmemdf() -> (int, pd.DataFrame):
     with open(dpath, "r") as f:
         content = f.read()
     # 分行获取总内存(文件首行)和时间点空闲内存记录列表
-    lineslst = content.split("\n")
+    lineslst = [x for x in content.split("\n") if len(x) != 0]
     totalmem = int(lineslst[0].split("=")[-1])
     memlst = [x.split("\t") for x in lineslst[1:]]
     # 时间精确到分，方便后面去重
     memlstdone = []
-    for x in memlst:
+    for x_ix, x in enumerate(memlst):
         if len(x) < 4 or len(x[0]) == 0:
-            log.critical(f"存在错误行：{x}")
+            log.critical(f"第{x_ix + 2}存在错误：{x}")
             continue
 
         try:
             # 验证时间戳是否在合理范围内（1970-2100年）
             timestamp = int(x[0])
             if timestamp < 0 or timestamp > 4102444800:  # 2100-01-01的时间戳
-                log.critical(f"存在错误行：{x}")
+                log.critical(f"第{x_ix + 2}存在错误：{x}")
                 continue
 
             time_str = datetime.fromtimestamp(timestamp).strftime("%F %H:%M")
@@ -104,6 +104,7 @@ def getmemdf() -> (int, pd.DataFrame):
                 ]
             )
         except (ValueError, IndexError):
+            log.critical(f"第{x_ix + 2}存在错误：{x}")
             # 跳过无效数据
             continue
 
