@@ -138,25 +138,36 @@ def gethealthdatafromnote(noteid):
     healthnote = getnote(noteid)
     content = healthnote.body
 
-    # 更健壮的正则，匹配三级标题日期、步数、睡眠时长、可选备注
-    # 允许中英文逗号和冒号，睡眠时长格式为"小时:分钟"或"小时：分钟"
+    # 扩展的正则表达式，支持可选的啤酒瓶数字段
+    # 格式1: 步数, 睡眠时长, 啤酒瓶数 (兼容旧格式)
+    # 格式2: 步数, 睡眠时长, 啤酒:X (更易读)
     ptn = re.compile(
         r"###\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*\n"
-        r"(\d+)\s*[,，]\s*(\d{1,2})\s*[:：]\s*(\d{1,2})\s*\n"
-        r"([^#]*)"  # 备注部分（非#开头的内容）
+        r"(\d+)\s*[,，]\s*(\d{1,2})\s*[:：]\s*(\d{1,2})"
+        r"(?:\s*[,，]\s*(?:啤酒[:：]?\s*)?(\d+))?"  # 可选的啤酒瓶数字段
+        r"\s*\n"
+        r"([^#]*)"  # 备注部分
     )
+
     items = []
     for match in ptn.finditer(content):
         year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
         steps = int(match.group(4))
         sleep_hour = int(match.group(5))
         sleep_minute = int(match.group(6))
-        memo = match.group(7).strip()
+
+        # 啤酒瓶数（可选字段）
+        beer_count = match.group(7)
+        beer_count = int(beer_count) if beer_count else 0
+
+        memo = match.group(8).strip()
 
         date_obj = datetime(year, month, day).date()
         sleep_total_minutes = sleep_hour * 60 + sleep_minute
 
-        items.append({"日期": date_obj, "步数": steps, "睡眠时长": sleep_total_minutes, "随记": memo})
+        items.append(
+            {"日期": date_obj, "步数": steps, "睡眠时长": sleep_total_minutes, "啤酒瓶数": beer_count, "随记": memo}
+        )
 
     if not items:
         log.warning("未从笔记中提取到任何有效数据")
@@ -333,6 +344,12 @@ def hdf2imgbase64(hdf):
     else:
         target = int(target)
 
+    # 从云端配置获取每日啤酒目标，获取不到则默认设置为2瓶
+    if not (beer_target := getinivaluefromcloud("health", "beer_day_target")):
+        beer_target = 2
+    else:
+        beer_target = int(beer_target)
+
     # 确保索引是DatetimeIndex
     if not isinstance(hdf.index, pd.DatetimeIndex):
         try:
@@ -348,11 +365,18 @@ def hdf2imgbase64(hdf):
     valid_steps = hdf["步数"].dropna()
     valid_sleep = hdf["睡眠时长"].dropna()
 
+    # 提取啤酒数据（如果存在）
+    valid_beer = None
+    if "啤酒瓶数" in hdf.columns:
+        valid_beer = hdf["啤酒瓶数"].dropna()
+
     # 使用calds2ds进行月度估算
     monthly_steps_actual = pd.Series()
     monthly_steps_estimated = pd.Series()
     monthly_sleep_actual = pd.Series()
     monthly_sleep_estimated = pd.Series()
+    monthly_beer_actual = pd.Series()
+    monthly_beer_estimated = pd.Series()
 
     if not valid_steps.empty:
         monthly_steps_actual, monthly_steps_estimated = calds2ds(valid_steps)
@@ -360,11 +384,14 @@ def hdf2imgbase64(hdf):
     if not valid_sleep.empty:
         monthly_sleep_actual, monthly_sleep_estimated = calds2ds(valid_sleep)
 
-    # 创建图表 - 5行布局
-    fig = plt.figure(figsize=(15, 35), dpi=100)
+    if valid_beer is not None and not valid_beer.empty:
+        monthly_beer_actual, monthly_beer_estimated = calds2ds(valid_beer)
 
-    # ========== 1. 最近连续数据双轴趋势图（原第五个图，现在第一个）==========
-    ax1 = plt.subplot2grid((5, 2), (0, 0), colspan=2, rowspan=1)
+    # 创建图表 - 6行布局（增加啤酒统计）
+    fig = plt.figure(figsize=(15, 42), dpi=100)
+
+    # ========== 1. 最近连续数据趋势图（支持三轴）==========
+    ax1 = plt.subplot2grid((6, 2), (0, 0), colspan=2, rowspan=1)
 
     if "recent_continuous" in hdf.attrs and hdf.attrs["recent_continuous"] is not None:
         cont_df = hdf.attrs["recent_continuous"]
@@ -373,145 +400,260 @@ def hdf2imgbase64(hdf):
         cont_steps = cont_df["步数"].dropna()
         cont_sleep = cont_df["睡眠时长"].dropna() if "睡眠时长" in cont_df.columns else pd.Series()
 
+        # 检查是否有啤酒数据
+        has_beer_data = "啤酒瓶数" in cont_df.columns and cont_df["啤酒瓶数"].notna().any()
+
         if not cont_steps.empty:
-            # 创建双Y轴
-            ax1_steps = ax1  # 左侧Y轴（步数）
-            ax1_sleep = ax1.twinx()  # 右侧Y轴（睡眠时长）
+            if has_beer_data:
+                # 三轴图表：步数（左）、睡眠（右1）、啤酒（右2）
+                ax1_steps = ax1  # 左侧Y轴（步数）
+                ax1_sleep = ax1.twinx()  # 右侧Y轴1（睡眠时长）
+                ax1_beer = ax1.twinx()  # 右侧Y轴2（啤酒瓶数）
 
-            # 获取目标值
-            step_target = getinivaluefromcloud("health", "step_day_target") or 8000
-            sleep_target = 7 * 60  # 7小时转换为分钟
+                # 调整啤酒Y轴位置，避免重叠
+                ax1_beer.spines["right"].set_position(("outward", 60))
 
-            # --- 绘制步数数据（左侧Y轴）---
-            # 步数折线
-            (line_steps,) = ax1_steps.plot(cont_steps.index, cont_steps.values, "b-", lw=2, alpha=0.8, label="每日步数")
-
-            # 步数填充区域
-            ax1_steps.fill_between(cont_steps.index, cont_steps.values, alpha=0.2, color="blue")
-
-            # 步数移动平均（3日）
-            if len(cont_steps) >= 3:
-                steps_ma = cont_steps.rolling(window=3, min_periods=1).mean()
-                (line_steps_ma,) = ax1_steps.plot(
-                    steps_ma.index, steps_ma.values, "b--", lw=1.5, alpha=0.6, label="步数3日平均"
+                # --- 绘制步数数据（左侧Y轴）---
+                # 步数折线
+                (line_steps,) = ax1_steps.plot(
+                    cont_steps.index, cont_steps.values, "b-", lw=2, alpha=0.8, label="每日步数"
                 )
 
-            # 步数目标线
-            line_target_steps = ax1_steps.axhline(
-                y=step_target, color="orange", linestyle=":", alpha=0.7, label=f"步数目标({step_target}步)"
-            )
+                # 步数填充区域
+                ax1_steps.fill_between(cont_steps.index, cont_steps.values, alpha=0.2, color="blue")
 
-            # 设置步数Y轴
-            steps_min = max(0, cont_steps.min() * 0.8)
-            steps_max = cont_steps.max() * 1.2
-            ax1_steps.set_ylim(steps_min, steps_max)
-            ax1_steps.set_ylabel("步数", color="blue", fontweight="bold")
-            ax1_steps.tick_params(axis="y", labelcolor="blue")
-
-            # --- 绘制睡眠数据（右侧Y轴）---
-            if not cont_sleep.empty:
-                # 转换为小时显示
-                sleep_hours = cont_sleep / 60
-
-                # 睡眠折线
-                (line_sleep,) = ax1_sleep.plot(
-                    sleep_hours.index, sleep_hours.values, "g-", lw=2, alpha=0.8, label="睡眠时长"
-                )
-
-                # 睡眠填充区域
-                ax1_sleep.fill_between(sleep_hours.index, sleep_hours.values, alpha=0.2, color="green")
-
-                # 睡眠移动平均（3日）
-                if len(sleep_hours) >= 3:
-                    sleep_ma = sleep_hours.rolling(window=3, min_periods=1).mean()
-                    (line_sleep_ma,) = ax1_sleep.plot(
-                        sleep_ma.index, sleep_ma.values, "g--", lw=1.5, alpha=0.6, label="睡眠3日平均"
+                # 步数移动平均（3日）
+                if len(cont_steps) >= 3:
+                    steps_ma = cont_steps.rolling(window=3, min_periods=1).mean()
+                    (line_steps_ma,) = ax1_steps.plot(
+                        steps_ma.index, steps_ma.values, "b--", lw=1.5, alpha=0.6, label="步数3日平均"
                     )
 
-                # 睡眠目标线（7小时）
-                line_target_sleep = ax1_sleep.axhline(
-                    y=7, color="red", linestyle=":", alpha=0.7, label="睡眠目标(7小时)"
+                # 步数目标线
+                line_target_steps = ax1_steps.axhline(
+                    y=target, color="orange", linestyle=":", alpha=0.7, label=f"步数目标({target}步)"
                 )
 
-                # 设置睡眠Y轴
-                sleep_min = max(0, sleep_hours.min() * 0.8)
-                sleep_max = sleep_hours.max() * 1.2
-                ax1_sleep.set_ylim(sleep_min, sleep_max)
-                ax1_sleep.set_ylabel("睡眠时长 (小时)", color="green", fontweight="bold")
-                ax1_sleep.tick_params(axis="y", labelcolor="green")
+                # 设置步数Y轴
+                steps_min = max(0, cont_steps.min() * 0.8)
+                steps_max = cont_steps.max() * 1.2
+                ax1_steps.set_ylim(steps_min, steps_max)
+                ax1_steps.set_ylabel("步数", color="blue", fontweight="bold")
+                ax1_steps.tick_params(axis="y", labelcolor="blue")
 
-            # --- 共享X轴设置 ---
-            # 格式化日期显示
-            if len(cont_steps) <= 14:  # 两周内显示具体日期
-                date_format = "%m-%d"
-                rotation = 45
-            else:  # 更多天数时简化显示
-                date_format = "%m-%d"
-                rotation = 45
+                # --- 绘制睡眠数据（右侧Y轴1）---
+                if not cont_sleep.empty:
+                    # 转换为小时显示
+                    sleep_hours = cont_sleep / 60
 
-            ax1_steps.xaxis.set_major_formatter(mdates.DateFormatter(date_format))
+                    # 睡眠折线
+                    (line_sleep,) = ax1_sleep.plot(
+                        sleep_hours.index, sleep_hours.values, "g-", lw=2, alpha=0.8, label="睡眠时长"
+                    )
 
-            # 设置标题
-            ax1_steps.set_title(
-                f"📊 最近连续{len(cont_steps)}天步数与睡眠趋势（最新数据）", fontsize=14, fontweight="bold", pad=20
-            )
+                    # 睡眠填充区域
+                    ax1_sleep.fill_between(sleep_hours.index, sleep_hours.values, alpha=0.2, color="green")
 
-            ax1_steps.set_xlabel("日期")
-            ax1_steps.grid(True, alpha=0.3, axis="x")
-            ax1_steps.tick_params(axis="x", rotation=rotation)
+                    # 睡眠移动平均（3日）
+                    if len(sleep_hours) >= 3:
+                        sleep_ma = sleep_hours.rolling(window=3, min_periods=1).mean()
+                        (line_sleep_ma,) = ax1_sleep.plot(
+                            sleep_ma.index, sleep_ma.values, "g--", lw=1.5, alpha=0.6, label="睡眠3日平均"
+                        )
 
-            # --- 合并图例 ---
-            # 收集所有图例句柄和标签
-            lines = [line_steps]
-            labels = ["每日步数"]
+                    # 睡眠目标线（7小时）
+                    line_target_sleep = ax1_sleep.axhline(
+                        y=7, color="orange", linestyle=":", alpha=0.7, label="睡眠目标(7小时)"
+                    )
 
-            if "line_steps_ma" in locals():
-                lines.append(line_steps_ma)
-                labels.append("步数3日平均")
+                    # 设置睡眠Y轴
+                    sleep_min = max(0, sleep_hours.min() * 0.8)
+                    sleep_max = sleep_hours.max() * 1.2
+                    ax1_sleep.set_ylim(sleep_min, sleep_max)
+                    ax1_sleep.set_ylabel("睡眠（小时）", color="green", fontweight="bold")
+                    ax1_sleep.tick_params(axis="y", labelcolor="green")
 
-            lines.append(line_target_steps)
-            labels.append(f"步数目标({step_target}步)")
+                # --- 绘制啤酒数据（右侧Y轴2）---
+                cont_beer = cont_df["啤酒瓶数"].dropna()
+                if not cont_beer.empty:
+                    # 啤酒柱状图
+                    bars_beer = ax1_beer.bar(
+                        cont_beer.index, cont_beer.values, width=0.6, alpha=0.5, color="gold", label="啤酒瓶数"
+                    )
 
-            if not cont_sleep.empty:
-                lines.append(line_sleep)
-                labels.append("睡眠时长")
+                    # 啤酒目标线
+                    line_target_beer = ax1_beer.axhline(
+                        y=beer_target, color="brown", linestyle="--", alpha=0.7, label=f"啤酒目标({beer_target}瓶)"
+                    )
 
-                if "line_sleep_ma" in locals():
-                    lines.append(line_sleep_ma)
-                    labels.append("睡眠3日平均")
+                    # 设置啤酒Y轴
+                    beer_max = max(cont_beer.max() * 1.2, beer_target * 1.5)
+                    ax1_beer.set_ylim(0, beer_max)
+                    ax1_beer.set_ylabel("啤酒（瓶）", color="goldenrod", fontweight="bold")
+                    ax1_beer.tick_params(axis="y", labelcolor="goldenrod")
 
-                lines.append(line_target_sleep)
-                labels.append("睡眠目标(7小时)")
+                # 合并图例
+                lines = [line_steps]
+                labels = ["每日步数"]
 
-            # 添加图例（放在图表外部底部）
-            ax1_steps.legend(lines, labels, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3, fontsize=9)
+                if "line_steps_ma" in locals():
+                    lines.append(line_steps_ma)
+                    labels.append("步数3日平均")
 
-            # 添加数据统计标注
-            stats_text = f"📈 步数平均: {cont_steps.mean():.0f}步/天"
-            if not cont_sleep.empty:
-                stats_text += f"\n😴 睡眠平均: {sleep_hours.mean():.1f}小时/天"
+                lines.append(line_target_steps)
+                labels.append(f"步数目标({target}步)")
 
-            ax1_steps.text(
-                0.02,
-                0.98,
-                stats_text,
-                transform=ax1_steps.transAxes,
-                fontsize=10,
-                verticalalignment="top",
-                bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.7),
-            )
+                if not cont_sleep.empty:
+                    lines.append(line_sleep)
+                    labels.append("睡眠时长")
+
+                    if "line_sleep_ma" in locals():
+                        lines.append(line_sleep_ma)
+                        labels.append("睡眠3日平均")
+
+                    lines.append(line_target_sleep)
+                    labels.append("睡眠目标(7小时)")
+
+                if not cont_beer.empty:
+                    lines.append(bars_beer)
+                    labels.append("啤酒瓶数")
+                    lines.append(line_target_beer)
+                    labels.append(f"啤酒目标({beer_target}瓶)")
+
+                # 添加图例（放在图表外部底部）
+                ax1_steps.legend(lines, labels, loc="upper center", bbox_to_anchor=(0.5, -0.20), ncol=4, fontsize=8)
+
+                # 添加数据统计标注
+                stats_text = f"步数平均: {cont_steps.mean():.0f}步/天"
+                if not cont_sleep.empty:
+                    stats_text += f"\n睡眠平均: {sleep_hours.mean():.1f}小时/天"
+                if not cont_beer.empty:
+                    stats_text += f"\n啤酒平均: {cont_beer.mean():.1f}瓶/天"
+
+                ax1_steps.text(
+                    0.02,
+                    0.98,
+                    stats_text,
+                    transform=ax1_steps.transAxes,
+                    fontsize=9,
+                    verticalalignment="top",
+                    bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.7),
+                )
+
+            else:
+                # 没有啤酒数据，使用原来的双轴图表
+                # 创建双Y轴
+                ax1_steps = ax1  # 左侧Y轴（步数）
+                ax1_sleep = ax1.twinx()  # 右侧Y轴（睡眠时长）
+
+                # --- 绘制步数数据（左侧Y轴）---
+                (line_steps,) = ax1_steps.plot(
+                    cont_steps.index, cont_steps.values, "b-", lw=2, alpha=0.8, label="每日步数"
+                )
+
+                # 步数填充区域
+                ax1_steps.fill_between(cont_steps.index, cont_steps.values, alpha=0.2, color="blue")
+
+                # 步数移动平均（3日）
+                if len(cont_steps) >= 3:
+                    steps_ma = cont_steps.rolling(window=3, min_periods=1).mean()
+                    (line_steps_ma,) = ax1_steps.plot(
+                        steps_ma.index, steps_ma.values, "b--", lw=1.5, alpha=0.6, label="步数3日平均"
+                    )
+
+                # 步数目标线
+                line_target_steps = ax1_steps.axhline(
+                    y=target, color="orange", linestyle=":", alpha=0.7, label=f"步数目标({target}步)"
+                )
+
+                # 设置步数Y轴
+                steps_min = max(0, cont_steps.min() * 0.8)
+                steps_max = cont_steps.max() * 1.2
+                ax1_steps.set_ylim(steps_min, steps_max)
+                ax1_steps.set_ylabel("步数", color="blue", fontweight="bold")
+                ax1_steps.tick_params(axis="y", labelcolor="blue")
+
+                # --- 绘制睡眠数据（右侧Y轴）---
+                if not cont_sleep.empty:
+                    # 转换为小时显示
+                    sleep_hours = cont_sleep / 60
+
+                    # 睡眠折线
+                    (line_sleep,) = ax1_sleep.plot(
+                        sleep_hours.index, sleep_hours.values, "g-", lw=2, alpha=0.8, label="睡眠时长"
+                    )
+
+                    # 睡眠填充区域
+                    ax1_sleep.fill_between(sleep_hours.index, sleep_hours.values, alpha=0.2, color="green")
+
+                    # 睡眠移动平均（3日）
+                    if len(sleep_hours) >= 3:
+                        sleep_ma = sleep_hours.rolling(window=3, min_periods=1).mean()
+                        (line_sleep_ma,) = ax1_sleep.plot(
+                            sleep_ma.index, sleep_ma.values, "g--", lw=1.5, alpha=0.6, label="睡眠3日平均"
+                        )
+
+                    # 睡眠目标线（7小时）
+                    line_target_sleep = ax1_sleep.axhline(
+                        y=7, color="orange", linestyle=":", alpha=0.7, label="睡眠目标(7小时)"
+                    )
+
+                    # 设置睡眠Y轴
+                    sleep_min = max(0, sleep_hours.min() * 0.8)
+                    sleep_max = sleep_hours.max() * 1.2
+                    ax1_sleep.set_ylim(sleep_min, sleep_max)
+                    ax1_sleep.set_ylabel("睡眠（小时）", color="green", fontweight="bold")
+                    ax1_sleep.tick_params(axis="y", labelcolor="green")
+
+                # 合并图例
+                lines = [line_steps]
+                labels = ["每日步数"]
+
+                if "line_steps_ma" in locals():
+                    lines.append(line_steps_ma)
+                    labels.append("步数3日平均")
+
+                lines.append(line_target_steps)
+                labels.append(f"步数目标({target}步)")
+
+                if not cont_sleep.empty:
+                    lines.append(line_sleep)
+                    labels.append("睡眠时长")
+
+                    if "line_sleep_ma" in locals():
+                        lines.append(line_sleep_ma)
+                        labels.append("睡眠3日平均")
+
+                    lines.append(line_target_sleep)
+                    labels.append("睡眠目标(7小时)")
+
+                # 添加图例（放在图表外部底部）
+                ax1_steps.legend(lines, labels, loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3, fontsize=9)
+
+                # 添加数据统计标注
+                stats_text = f"步数平均: {cont_steps.mean():.0f}步/天"
+                if not cont_sleep.empty:
+                    stats_text += f"\n睡眠平均: {sleep_hours.mean():.1f}小时/天"
+
+                ax1_steps.text(
+                    0.02,
+                    0.98,
+                    stats_text,
+                    transform=ax1_steps.transAxes,
+                    fontsize=10,
+                    verticalalignment="top",
+                    bbox=dict(boxstyle="round", facecolor="lightblue", alpha=0.7),
+                )
 
         else:
             # 无连续步数数据的情况
             ax1.text(0.5, 0.5, "无连续步数数据", ha="center", va="center", transform=ax1.transAxes, fontsize=12)
-            ax1.set_title("最近连续记录趋势", fontsize=14, fontweight="bold")
-    else:
-        # 未识别到连续记录区间
-        ax1.text(0.5, 0.5, "未识别到连续记录区间", ha="center", va="center", transform=ax1.transAxes, fontsize=12)
-        ax1.set_title("最近连续记录趋势", fontsize=14, fontweight="bold")
 
-    # ========== 2. 步数动态图（原第一个图，现在第二个）==========
-    ax2 = plt.subplot2grid((5, 2), (1, 0), colspan=2, rowspan=1)
+    ax1.set_title("最近连续记录趋势", fontsize=14, fontweight="bold")
+    ax1.tick_params(axis="x", rotation=45)
+
+    # ========== 2. 步数动态图 ==========
+    ax2 = plt.subplot2grid((6, 2), (1, 0), colspan=2, rowspan=1)
 
     if not valid_steps.empty:
         # 绘制步数折线图
@@ -525,7 +667,7 @@ def hdf2imgbase64(hdf):
             moving_avg = valid_steps.rolling(window=7, min_periods=1).mean()
             ax2.plot(moving_avg.index, moving_avg.values, "r-", lw=2, label="7天移动平均")
 
-        # 添加目标线（从云端配置获取）
+        # 添加目标线
         ax2.axhline(y=target, color="orange", linestyle="--", alpha=0.5, label=f"目标线({target}步)")
 
         # 标注最高和最低步数
@@ -557,8 +699,8 @@ def hdf2imgbase64(hdf):
     ax2.grid(True, alpha=0.3)
     ax2.tick_params(axis="x", rotation=45)
 
-    # ========== 3. 月度步数统计图（原第二个图，现在第三个）==========
-    ax3 = plt.subplot2grid((5, 2), (2, 0), colspan=2, rowspan=1)
+    # ========== 3. 月度步数统计图 ==========
+    ax3 = plt.subplot2grid((6, 2), (2, 0), colspan=2, rowspan=1)
 
     if not valid_steps.empty and not monthly_steps_actual.empty:
         # 创建柱状图
@@ -576,7 +718,7 @@ def hdf2imgbase64(hdf):
             label="实际月度合计",
         )
 
-        # 绘制估算月度数据（虚线边框，显示在同一个柱体上）
+        # 绘制估算月度数据（虚线边框）
         if not monthly_steps_estimated.empty:
             for i, (actual_val, month_date) in enumerate(zip(monthly_steps_actual.values, monthly_steps_actual.index)):
                 if month_date in monthly_steps_estimated.index:
@@ -632,8 +774,8 @@ def hdf2imgbase64(hdf):
     ax3.legend(loc="upper left")
     ax3.grid(True, alpha=0.3, axis="y")
 
-    # ========== 4. 睡眠时长动态图（原第三个图，现在第四个）==========
-    ax4 = plt.subplot2grid((5, 2), (3, 0), colspan=2, rowspan=1)
+    # ========== 4. 睡眠时长动态图 ==========
+    ax4 = plt.subplot2grid((6, 2), (3, 0), colspan=2, rowspan=1)
 
     if not valid_sleep.empty:
         # 转换为小时
@@ -680,8 +822,8 @@ def hdf2imgbase64(hdf):
     ax4.grid(True, alpha=0.3)
     ax4.tick_params(axis="x", rotation=45)
 
-    # ========== 5. 月度睡眠统计（原第四个图，现在第五个）==========
-    ax5 = plt.subplot2grid((5, 2), (4, 0), colspan=2, rowspan=1)
+    # ========== 5. 月度睡眠统计 ==========
+    ax5 = plt.subplot2grid((6, 2), (4, 0), colspan=2, rowspan=1)
 
     if not valid_sleep.empty and not monthly_sleep_actual.empty:
         # 转换为小时
@@ -760,6 +902,105 @@ def hdf2imgbase64(hdf):
     ax5.legend(loc="upper left")
     ax5.grid(True, alpha=0.3, axis="y")
 
+    # ========== 6. 啤酒消费统计图（新增）==========
+    ax6 = plt.subplot2grid((6, 2), (5, 0), colspan=2, rowspan=1)
+
+    # 检查是否有啤酒数据
+    if valid_beer is not None and not valid_beer.empty and not monthly_beer_actual.empty:
+        # 创建柱状图
+        months = [date.strftime("%Y-%m") for date in monthly_beer_actual.index]
+        x_positions = range(len(months))
+
+        # 绘制实际月度数据
+        bars_beer = ax6.bar(
+            x_positions,
+            monthly_beer_actual.values,
+            width=0.6,
+            color="gold",
+            alpha=0.8,
+            edgecolor="darkgoldenrod",
+            label="月度啤酒消费",
+        )
+
+        # 绘制估算月度数据（虚线边框）
+        if not monthly_beer_estimated.empty:
+            for i, (actual_val, month_date) in enumerate(zip(monthly_beer_actual.values, monthly_beer_actual.index)):
+                if month_date in monthly_beer_estimated.index:
+                    est_val = monthly_beer_estimated.loc[month_date]
+
+                    # 如果估算值大于实际值，显示虚线边框
+                    if est_val > actual_val:
+                        # 绘制虚线边框表示估算值
+                        ax6.plot(
+                            [i - 0.3, i + 0.3, i + 0.3, i - 0.3, i - 0.3],
+                            [actual_val, actual_val, est_val, est_val, actual_val],
+                            "r--",  # 红色虚线
+                            linewidth=2,
+                            alpha=0.8,
+                            label="估算整月值" if i == 0 else "",
+                        )
+
+                        # 在柱体顶部添加估算值标签
+                        ax6.text(
+                            i,
+                            est_val + (est_val * 0.01),
+                            f"估算:{int(est_val)}",
+                            ha="center",
+                            va="bottom",
+                            fontsize=8,
+                            color="red",
+                        )
+
+        # 添加实际值标签
+        for i, actual_val in enumerate(monthly_beer_actual.values):
+            if actual_val > 0:
+                ax6.text(i, actual_val + 0.1, f"{int(actual_val)}", ha="center", va="bottom", fontsize=9)
+
+        # 设置x轴标签
+        ax6.set_xticks(x_positions)
+        ax6.set_xticklabels(months, rotation=45, fontsize=10)
+
+        # 添加趋势线
+        if len(monthly_beer_actual) > 1:
+            ax6.plot(
+                x_positions,
+                monthly_beer_actual.values,
+                "brown",
+                marker="o",
+                markersize=6,
+                linewidth=2,
+                alpha=0.7,
+                label="消费趋势",
+            )
+
+        # 添加月度目标线
+        days_in_month = 30  # 近似值
+        monthly_target = beer_target * days_in_month
+        ax6.axhline(
+            y=monthly_target,
+            color="red",
+            linestyle=":",
+            alpha=0.5,
+            label=f"月度目标({monthly_target}瓶)",
+        )
+
+        ax6.set_title("月度啤酒消费统计", fontsize=14, fontweight="bold")
+        ax6.set_xlabel("月份")
+        ax6.set_ylabel("啤酒瓶数")
+        ax6.legend(loc="upper left")
+        ax6.grid(True, alpha=0.3, axis="y")
+    else:
+        # 没有啤酒数据的情况
+        if valid_beer is None:
+            ax6.text(0.5, 0.5, "未记录啤酒消费数据", ha="center", va="center", transform=ax6.transAxes, fontsize=12)
+        elif valid_beer.empty:
+            ax6.text(0.5, 0.5, "暂无啤酒消费记录", ha="center", va="center", transform=ax6.transAxes, fontsize=12)
+        else:
+            ax6.text(
+                0.5, 0.5, "啤酒数据不足，无法生成统计", ha="center", va="center", transform=ax6.transAxes, fontsize=12
+            )
+        ax6.set_title("啤酒消费统计", fontsize=14, fontweight="bold")
+
     # 添加总体统计信息
     stats_text = ""
     if not valid_steps.empty:
@@ -774,22 +1015,33 @@ def hdf2imgbase64(hdf):
         stats_text += f"• 总计: {valid_sleep.sum() / 60:.1f}小时\n"
         stats_text += f"• 达标率: {(valid_sleep >= 420).sum() / len(valid_sleep) * 100:.1f}%\n"
 
+    if valid_beer is not None and not valid_beer.empty:
+        stats_text += f"\n啤酒统计（目标: {beer_target}瓶）:\n"
+        stats_text += f"• 平均: {valid_beer.mean():.1f}瓶/天\n"
+        stats_text += f"• 总计: {valid_beer.sum():.0f}瓶\n"
+        stats_text += f"• 超标率: {(valid_beer > beer_target).sum() / len(valid_beer) * 100:.1f}%\n"
+        stats_text += f"• 饮酒天数: {(valid_beer > 0).sum()}天\n"
+
     stats_text += f"\n数据范围:\n"
     stats_text += f"{hdf.index.min().strftime('%Y-%m-%d')} 至 {hdf.index.max().strftime('%Y-%m-%d')}"
 
     # 添加月度估算说明
-    if not monthly_steps_estimated.empty or not monthly_sleep_estimated.empty:
-        stats_text += f"\n\n📊 月度估算说明:\n"
+    if (
+        not monthly_steps_estimated.empty
+        or not monthly_sleep_estimated.empty
+        or (valid_beer is not None and not monthly_beer_estimated.empty)
+    ):
+        stats_text += f"\n\n月度估算说明:\n"
         stats_text += f"• 实心柱体：实际月度合计\n"
         stats_text += f"• 红色虚线：估算整月值（数据不完整月份）\n"
         stats_text += f"• 估算值用于数据不完整月份的趋势参考"
 
     plt.figtext(
-        0.02, 0.02, stats_text, fontsize=10, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8)
+        0.02, 0.02, stats_text, fontsize=9, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8)
     )
 
     # 调整布局（为第一个图的图例留空间）
-    plt.tight_layout(rect=[0, 0.10, 1, 0.95])
+    plt.tight_layout(rect=[0, 0.12, 1, 0.95])
 
     # 转换为base64
     buffer = io.BytesIO()
@@ -818,16 +1070,29 @@ def generate_health_report(hdf):
         except:
             return "## 错误报告\n\n日期格式错误，无法生成分析报告。"
 
-    # 从云端配置获取每日步数目标，获取不到则默认设置为8000步
+    # 从云端配置获取每日步数目标
     if not (target := getinivaluefromcloud("health", "step_day_target")):
         target = 8000
     else:
         target = int(target)
 
+    # 从云端配置获取每日啤酒目标
+    if not (beer_target := getinivaluefromcloud("health", "beer_day_target")):
+        beer_target = 2
+    else:
+        beer_target = int(beer_target)
+
     valid_steps = hdf["步数"].dropna()
     valid_sleep = hdf["睡眠时长"].dropna()
 
-    report = "## 📊 健康数据分析报告\n\n"
+    # 检查是否有啤酒数据
+    has_beer_data = "啤酒瓶数" in hdf.columns
+    if has_beer_data:
+        valid_beer = hdf["啤酒瓶数"].dropna()
+    else:
+        valid_beer = pd.Series()
+
+    report = "## 健康数据分析报告\n\n"
 
     # 在报告头部添加连续数据分析
     report += "\n### 0. 近期连续记录分析\n"
@@ -850,8 +1115,14 @@ def generate_health_report(hdf):
                 trend = "上升" if recent_analysis["周对比"]["变化率"] > 0 else "下降"
                 report += f"{trend} {abs(recent_analysis['周对比']['变化率']):.1f}%\n"
 
+        # 添加啤酒连续分析（如果存在）
+        if has_beer_data and "啤酒瓶数" in recent_analysis:
+            if recent_analysis["啤酒瓶数"]["平均"]:
+                report += f"- **连续期间平均啤酒**: {recent_analysis['啤酒瓶数']['平均']:.1f}瓶/天\n"
+                report += f"- **连续期间总计啤酒**: {recent_analysis['啤酒瓶数']['总计']:.0f}瓶\n"
+
         # 添加建议
-        report += "\n**📋 连续记录洞察**:\n"
+        report += "\n**连续记录洞察**:\n"
         if recent_analysis["连续天数"] >= 30:
             report += "✅ 连续记录超过30天，习惯非常稳定！\n"
         elif recent_analysis["连续天数"] >= 14:
@@ -861,69 +1132,8 @@ def generate_health_report(hdf):
     else:
         report += "- 暂无连续的近期记录数据\n"
 
-    # 1. 基本统计
-    report += "### 1. 基本统计\n"
-    report += f"- **数据日期范围**: {hdf.index.min().strftime('%Y-%m-%d')} 至 {hdf.index.max().strftime('%Y-%m-%d')}\n"
-    report += f"- **总天数**: {len(hdf)} 天\n"
-
-    if not valid_steps.empty:
-        report += f"- **有效步数记录**: {valid_steps.count()} 天 ({valid_steps.count() / len(hdf) * 100:.1f}%)\n"
-    else:
-        report += f"- **有效步数记录**: 0 天 (0.0%)\n"
-
-    if not valid_sleep.empty:
-        report += f"- **有效睡眠记录**: {valid_sleep.count()} 天 ({valid_sleep.count() / len(hdf) * 100:.1f}%)\n"
-    else:
-        report += f"- **有效睡眠记录**: 0 天 (0.0%)\n"
-
-    report += "\n"
-
-    # 2. 步数分析（使用云端配置的目标值）
-    report += "### 2. 步数分析\n"
-    if not valid_steps.empty:
-        report += f"- **平均每日步数**: {valid_steps.mean():.0f} 步\n"
-        report += f"- **最高步数**: {valid_steps.max():.0f} 步 ({valid_steps.idxmax().strftime('%Y-%m-%d')})\n"
-        report += f"- **最低步数**: {valid_steps.min():.0f} 步 ({valid_steps.idxmin().strftime('%Y-%m-%d')})\n"
-
-        # 达标分析（目标为从云端配置获取的步数）
-        达标天数 = (valid_steps >= target).sum()
-        report += f"- **达标天数** (≥{target}步): {达标天数} 天 ({达标天数 / valid_steps.count() * 100:.1f}%)\n"
-
-        # 步数分布
-        if len(valid_steps) >= 5:
-            quartiles = valid_steps.quantile([0.25, 0.5, 0.75])
-            report += (
-                f"- **步数分布**: Q1={quartiles[0.25]:.0f}, 中位数={quartiles[0.5]:.0f}, Q3={quartiles[0.75]:.0f}\n"
-            )
-    else:
-        report += "- 暂无有效步数数据\n"
-
-    report += "\n"
-
-    # 3. 睡眠分析
-    report += "### 3. 睡眠分析\n"
-    if not valid_sleep.empty:
-        avg_sleep_hours = valid_sleep.mean() / 60
-        report += f"- **平均每日睡眠**: {avg_sleep_hours:.1f} 小时 ({valid_sleep.mean():.0f} 分钟)\n"
-        report += f"- **最长睡眠**: {valid_sleep.max() / 60:.1f} 小时 ({valid_sleep.idxmax().strftime('%Y-%m-%d')})\n"
-        report += f"- **最短睡眠**: {valid_sleep.min() / 60:.1f} 小时 ({valid_sleep.idxmin().strftime('%Y-%m-%d')})\n"
-
-        # 达标分析（目标为7小时=420分钟）
-        target_sleep = 420
-        达标睡眠天数 = (valid_sleep >= target_sleep).sum()
-        report += f"- **充足睡眠天数** (≥7小时): {达标睡眠天数} 天 ({达标睡眠天数 / valid_sleep.count() * 100:.1f}%)\n"
-
-        # 睡眠分布
-        if len(valid_sleep) >= 5:
-            quartiles = valid_sleep.quantile([0.25, 0.5, 0.75])
-            report += f"- **睡眠分布**: Q1={quartiles[0.25] / 60:.1f}h, 中位数={quartiles[0.5] / 60:.1f}h, Q3={quartiles[0.75] / 60:.1f}h\n"
-    else:
-        report += "- 暂无有效睡眠数据\n"
-
-    report += "\n"
-
-    # 4. 近期趋势
-    report += "### 4. 近期趋势\n"
+    # 1. 近期趋势
+    report += "### 1. 近期趋势\n"
 
     if not valid_steps.empty and len(valid_steps) >= 7:
         last_week = valid_steps.tail(7)
@@ -948,37 +1158,160 @@ def generate_health_report(hdf):
     else:
         report += "- 数据不足，无法计算睡眠趋势\n"
 
+    if has_beer_data and not valid_beer.empty and len(valid_beer) >= 7:
+        last_week_beer = valid_beer.tail(7)
+        report += f"- **最近7天平均啤酒**: {last_week_beer.mean():.1f} 瓶\n"
+
+        if len(valid_beer) >= 14:
+            prev_week_beer = valid_beer.iloc[-14:-7]
+            if prev_week_beer.mean() > 0:
+                change = (last_week_beer.mean() - prev_week_beer.mean()) / prev_week_beer.mean() * 100
+                trend = "上升" if change > 0 else "下降"
+                report += f"- **与前7天对比**: {trend} {abs(change):.1f}%\n"
+    elif has_beer_data:
+        report += "- 数据不足，无法计算啤酒趋势\n"
+
     report += "\n"
 
-    # 5. 健康建议（使用云端配置的目标值）
-    report += "### 5. 健康建议\n"
+    # 2. 健康建议
+    report += "### 2. 健康建议\n"
 
     if not valid_steps.empty:
         avg_steps = valid_steps.mean()
         if avg_steps < 5000:
-            report += "- 🚶 **急需增加运动量**: 当前平均步数低于5000步，建议每天增加30分钟步行\n"
+            report += "- **急需增加运动量**: 当前平均步数低于5000步，建议每天增加30分钟步行\n"
         elif avg_steps < target:
-            report += f"- 🚶 **适度增加运动**: 当前平均步数接近但未达到{target}步目标，建议每天增加15分钟步行\n"
+            report += f"- **适度增加运动**: 当前平均步数接近但未达到{target}步目标，建议每天增加15分钟步行\n"
         else:
-            report += f"- ✅ **运动量良好**: 继续保持每日{target}步以上的运动习惯\n"
+            report += f"- **运动量良好**: 继续保持每日{target}步以上的运动习惯\n"
 
     if not valid_sleep.empty:
         avg_sleep = valid_sleep.mean() / 60
         if avg_sleep < 6:
-            report += "- 😴 **急需改善睡眠**: 平均睡眠不足6小时，建议调整作息，保证睡眠质量\n"
+            report += "- **急需改善睡眠**: 平均睡眠不足6小时，建议调整作息，保证睡眠质量\n"
         elif avg_sleep < 7:
-            report += "- 😴 **适度增加睡眠**: 平均睡眠接近但未达到7小时，建议每天早睡30分钟\n"
+            report += "- **适度增加睡眠**: 平均睡眠接近但未达到7小时，建议每天早睡30分钟\n"
         else:
-            report += "- ✅ **睡眠充足**: 继续保持良好的睡眠习惯\n"
+            report += "- **睡眠充足**: 继续保持良好的睡眠习惯\n"
+
+    if has_beer_data and not valid_beer.empty:
+        avg_beer = valid_beer.mean()
+        if avg_beer > 3:
+            report += "- **饮酒过量**: 平均每日超过3瓶，建议减少饮酒频率\n"
+        elif avg_beer > beer_target:
+            report += f"- **适度控制**: 平均每日{avg_beer:.1f}瓶，略高于目标{beer_target}瓶\n"
+        elif avg_beer > 0:
+            report += f"- **饮酒适度**: 平均每日{avg_beer:.1f}瓶，在合理范围内\n"
+        else:
+            report += "- **无饮酒记录**: 保持健康生活习惯\n"
+
+    # 3. 基本统计
+    report += "\n### 3. 基本统计\n"
+    report += f"- **数据日期范围**: {hdf.index.min().strftime('%Y-%m-%d')} 至 {hdf.index.max().strftime('%Y-%m-%d')}\n"
+    report += f"- **总天数**: {len(hdf)} 天\n"
+
+    if not valid_steps.empty:
+        report += f"- **有效步数记录**: {valid_steps.count()} 天 ({valid_steps.count() / len(hdf) * 100:.1f}%)\n"
+    else:
+        report += f"- **有效步数记录**: 0 天 (0.0%)\n"
+
+    if not valid_sleep.empty:
+        report += f"- **有效睡眠记录**: {valid_sleep.count()} 天 ({valid_sleep.count() / len(hdf) * 100:.1f}%)\n"
+    else:
+        report += f"- **有效睡眠记录**: 0 天 (0.0%)\n"
+
+    if has_beer_data and not valid_beer.empty:
+        report += f"- **有效啤酒记录**: {valid_beer.count()} 天 ({valid_beer.count() / len(hdf) * 100:.1f}%)\n"
+    elif has_beer_data:
+        report += f"- **有效啤酒记录**: 0 天 (0.0%)\n"
+    else:
+        report += f"- **啤酒记录**: 未启用\n"
+
+    report += "\n"
+
+    # 4. 步数分析
+    report += "### 4. 步数分析\n"
+    if not valid_steps.empty:
+        report += f"- **平均每日步数**: {valid_steps.mean():.0f} 步\n"
+        report += f"- **最高步数**: {valid_steps.max():.0f} 步 ({valid_steps.idxmax().strftime('%Y-%m-%d')})\n"
+        report += f"- **最低步数**: {valid_steps.min():.0f} 步 ({valid_steps.idxmin().strftime('%Y-%m-%d')})\n"
+
+        # 达标分析
+        达标天数 = (valid_steps >= target).sum()
+        report += f"- **达标天数** (≥{target}步): {达标天数} 天 ({达标天数 / valid_steps.count() * 100:.1f}%)\n"
+
+        # 步数分布
+        if len(valid_steps) >= 5:
+            quartiles = valid_steps.quantile([0.25, 0.5, 0.75])
+            report += (
+                f"- **步数分布**: Q1={quartiles[0.25]:.0f}, 中位数={quartiles[0.5]:.0f}, Q3={quartiles[0.75]:.0f}\n"
+            )
+    else:
+        report += "- 暂无有效步数数据\n"
+
+    report += "\n"
+
+    # 5. 睡眠分析
+    report += "### 5. 睡眠分析\n"
+    if not valid_sleep.empty:
+        avg_sleep_hours = valid_sleep.mean() / 60
+        report += f"- **平均每日睡眠**: {avg_sleep_hours:.1f} 小时 ({valid_sleep.mean():.0f} 分钟)\n"
+        report += f"- **最长睡眠**: {valid_sleep.max() / 60:.1f} 小时 ({valid_sleep.idxmax().strftime('%Y-%m-%d')})\n"
+        report += f"- **最短睡眠**: {valid_sleep.min() / 60:.1f} 小时 ({valid_sleep.idxmin().strftime('%Y-%m-%d')})\n"
+
+        # 达标分析（目标为7小时=420分钟）
+        target_sleep = 420
+        达标睡眠天数 = (valid_sleep >= target_sleep).sum()
+        report += f"- **充足睡眠天数** (≥7小时): {达标睡眠天数} 天 ({达标睡眠天数 / valid_sleep.count() * 100:.1f}%)\n"
+
+        # 睡眠分布
+        if len(valid_sleep) >= 5:
+            quartiles = valid_sleep.quantile([0.25, 0.5, 0.75])
+            report += f"- **睡眠分布**: Q1={quartiles[0.25] / 60:.1f}h, 中位数={quartiles[0.5] / 60:.1f}h, Q3={quartiles[0.75] / 60:.1f}h\n"
+    else:
+        report += "- 暂无有效睡眠数据\n"
+
+    report += "\n"
+
+    # 6. 啤酒消费分析（新增）
+    report += "### 6. 啤酒消费分析\n"
+    if has_beer_data and not valid_beer.empty:
+        report += f"- **平均每日啤酒**: {valid_beer.mean():.1f} 瓶\n"
+        report += f"- **最高单日**: {valid_beer.max():.0f} 瓶 ({valid_beer.idxmax().strftime('%Y-%m-%d')})\n"
+        report += f"- **总消费瓶数**: {valid_beer.sum():.0f} 瓶\n"
+
+        # 超标分析
+        超标天数 = (valid_beer > beer_target).sum()
+        report += f"- **超标天数** (>{beer_target}瓶): {超标天数} 天 ({超标天数 / valid_beer.count() * 100:.1f}%)\n"
+
+        # 饮酒频率
+        饮酒天数 = (valid_beer > 0).sum()
+        report += f"- **饮酒天数**: {饮酒天数} 天 ({饮酒天数 / valid_beer.count() * 100:.1f}%)\n"
+
+        # 月度分析
+        if len(valid_beer) >= 30:
+            monthly_beer = valid_beer.resample("ME").sum()
+            report += f"- **最高月度**: {monthly_beer.max():.0f} 瓶 ({monthly_beer.idxmax().strftime('%Y-%m')})\n"
+            report += f"- **最低月度**: {monthly_beer.min():.0f} 瓶 ({monthly_beer.idxmin().strftime('%Y-%m')})\n"
+    elif has_beer_data:
+        report += "- 暂无啤酒消费记录\n"
+    else:
+        report += "- 未启用啤酒记录功能\n"
+
+    report += "\n"
 
     # 数据完整性建议
-    completeness = (valid_steps.count() + valid_sleep.count()) / (2 * len(hdf)) * 100
+    completeness = (
+        (valid_steps.count() + valid_sleep.count() + (valid_beer.count() if has_beer_data else 0))
+        / (3 * len(hdf))
+        * 100
+    )
     if completeness < 50:
-        report += f"- 📝 **提高记录频率**: 当前数据完整度仅{completeness:.1f}%，建议每日记录\n"
+        report += f"- **提高记录频率**: 当前数据完整度仅{completeness:.1f}%，建议每日记录\n"
     elif completeness < 80:
-        report += f"- 📝 **保持记录习惯**: 当前数据完整度{completeness:.1f}%，继续努力\n"
+        report += f"- **保持记录习惯**: 当前数据完整度{completeness:.1f}%，继续努力\n"
     else:
-        report += f"- ✅ **记录习惯良好**: 当前数据完整度{completeness:.1f}%，继续保持\n"
+        report += f"- **记录习惯良好**: 当前数据完整度{completeness:.1f}%，继续保持\n"
 
     # 添加备注信息
     if "随记" in hdf.columns:
@@ -986,7 +1319,7 @@ def generate_health_report(hdf):
         if not valid_notes.empty:
             interesting_notes = valid_notes[valid_notes.str.len() > 0]
             if len(interesting_notes) > 0:
-                report += "\n### 6. 重要备注\n"
+                report += "\n### 7. 重要备注\n"
                 for date, note in interesting_notes.head(5).items():  # 只显示前5条
                     report += f"- **{date.strftime('%Y-%m-%d')}**: {note}\n"
 
