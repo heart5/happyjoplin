@@ -97,6 +97,24 @@ def stat2df(person: str) -> dict:
 # ### plot_word_counts(daily_counts: dict, title: str) -> str
 
 
+# %% [markdown]
+# ### get_heatmap_note_id(person: str) -> str
+
+
+# %%
+def get_heatmap_note_id(person: str) -> str:
+    """查找指定人员热图笔记的id并返回"""
+    if (person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "person_ids", person)) is None:
+        results = searchnotes(f"四件套更新热图（{person}）")
+        if results:
+            person_heatmap_id = results[0].id
+        else:
+            person_heatmap_id = createnote(title=f"四件套更新热图（{person}）", body="热图笔记已创建。")
+        setcfpoptionvalue("happyjpmonitor", "person_ids", person, person_heatmap_id)
+
+    return person_heatmap_id
+
+
 # %%
 def plot_word_counts(daily_counts: dict, title: str) -> str:
     """图形化输出函数，使用热图展示每天的字数统计。
@@ -312,13 +330,10 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
             linewidth=2,
         )
     )
-    # 20. 在补填内容的日期格子上添加红色虚线边框
+    # 20. 在补填内容的日期格子上添加灰色虚线边框
     log.info(df["addedlater"].unique())
-    # 测试发现值有三种：True、False、nan，需要处理
-    # df['addedlater'] = df['addedlater'].fillna(False).astype(bool)
-    # 使用推荐的 infer_objects（进行lei'xing类型推断） 方法避免 FutureWarning
-    df["addedlater"] = df["addedlater"].fillna(False).infer_objects(copy=False)
-    for marked_date in df[df["addedlater"]]["date"]:
+    # 测试发现值有三种：True、False、nan，只取用值为True的数据即可
+    for marked_date in df[df["addedlater"] == True]["date"]:
         week = dfcount[dfcount["date"] == marked_date]["week_number"].values[0]
         day_of_week = dfcount[dfcount["date"] == marked_date]["day_of_week"].values[0]
         ax.add_patch(
@@ -337,24 +352,6 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     plt.savefig(img_heat_file_path_str)
     plt.close()
     return img_heat_file_path_str  # 返回提示图而非空白
-
-
-# %% [markdown]
-# ### get_heatmap_note_id(person: str) -> str
-
-
-# %%
-def get_heatmap_note_id(person: str) -> str:
-    """查找指定人员热图笔记的id并返回"""
-    if (person_heatmap_id := getcfpoptionvalue("happyjpmonitor", "person_ids", person)) is None:
-        results = searchnotes(f"四件套更新热图（{person}）")
-        if results:
-            person_heatmap_id = results[0].id
-        else:
-            person_heatmap_id = createnote(title=f"四件套更新热图（{person}）", body="热图笔记已创建。")
-        setcfpoptionvalue("happyjpmonitor", "person_ids", person, person_heatmap_id)
-
-    return person_heatmap_id
 
 
 # %% [markdown]
