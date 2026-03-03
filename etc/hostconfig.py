@@ -201,7 +201,7 @@ class HostConfigCollector:
         changes = self._detect_changes(old_config, new_config)
 
         # 如果没有变化，直接返回空记录，不保存到文件
-        if not changes or (len(changes) == 1 and "initial" in changes):
+        if not changes:
             return {
                 "timestamp": update_time,
                 "device_id": self.device_id,
