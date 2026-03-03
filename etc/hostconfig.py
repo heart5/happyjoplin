@@ -778,7 +778,7 @@ class HostConfigCollector:
         """更新Joplin笔记"""
         try:
             # 查找或创建笔记本
-            notebook_title = "系统配置"
+            notebook_title = "ewmobile"
             notebook_id = searchnotebook(notebook_title)
             if not notebook_id:
                 notebook_id = jpapi.add_notebook(title=notebook_title)
