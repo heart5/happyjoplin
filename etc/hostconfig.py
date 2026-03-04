@@ -75,15 +75,21 @@ class HostConfigCollector:
         self.device_name = getdevicename()
         self.config_dir = getdirmain() / "data" / "hostconfig"
         self.config_dir.mkdir(parents=True, exist_ok=True)
-
+        
         # 从云端配置获取库列表
         self.required_libs = self._get_libs_from_cloud("required_libs")
         self.optional_libs = self._get_libs_from_cloud("optional_libs")
         self.ai_libs = self._get_libs_from_cloud("ai_libs")
-
+        
+        # 打印调试信息
+        log.info(f"从云端配置获取的库列表:")
+        log.info(f"  required_libs: {len(self.required_libs)} 个库")
+        log.info(f"  optional_libs: {len(self.optional_libs)} 个库")
+        log.info(f"  ai_libs: {len(self.ai_libs)} 个库")
+        
         # 本地配置文件路径
         self.local_config_file = self.config_dir / f"{self.device_id}.json"
-
+        
         # 更新记录文件
         self.update_record_file = self.config_dir / f"{self.device_id}_updates.json"
 
@@ -803,7 +809,7 @@ class HostConfigCollector:
     # %%
     @timethis
     def parse_config_from_markdown_table(self, markdown_content: str) -> Dict[str, Any]:
-        """从Markdown表格中解析配置信息，并用本地配置补充缺失信息"""
+        """从Markdown表格中解析配置信息"""
         configs = {}
         
         try:
@@ -816,10 +822,11 @@ class HostConfigCollector:
             for i, line in enumerate(lines):
                 line = line.strip()
                 if line.startswith('| 配置项 |') and '|' in line:
-                    parts = line.split('|')
-                    if len(parts) > 2:
-                        # 提取设备名称（跳过第一个"配置项"和最后一个空列）
-                        device_names = [name.strip() for name in parts[2:-1] if name.strip()]
+                    # 分割单元格，移除空值
+                    parts = [p.strip() for p in line.split('|') if p.strip()]
+                    if len(parts) > 1:
+                        # 提取设备名称（跳过第一个"配置项"）
+                        device_names = parts[1:]
                         log.info(f"从表格中解析到设备名称: {device_names}")
                         break
             
@@ -829,9 +836,8 @@ class HostConfigCollector:
             
             # 第二步：为每个设备查找对应的device_id
             for device_name in device_names:
-                # 使用现有的函数获取device_id
                 device_id = findvaluebykeyinsection("happyjpinifromcloud", "device", device_name)
-                if not device_id:
+                if not device_id or device_id == "None":
                     # 如果找不到，使用哈希作为后备
                     import hashlib
                     device_id = f"joplin_{hashlib.md5(device_name.encode()).hexdigest()[:8]}"
@@ -839,73 +845,78 @@ class HostConfigCollector:
                 
                 device_id_map[device_name] = device_id
                 log.info(f"设备映射: {device_name} -> {device_id}")
-            
-            # 第三步：先加载所有本地配置，用于补充缺失信息
-            local_configs = self.load_all_configs()
-            log.info(f"加载了 {len(local_configs)} 个本地配置用于补充")
-            
-            # 第四步：为每个设备创建初始配置结构，优先使用本地配置
-            for device_name, device_id in device_id_map.items():
-                # 优先使用本地配置
-                if device_id in local_configs:
-                    configs[device_id] = local_configs[device_id]
-                    log.info(f"使用本地配置: {device_name}")
-                else:
-                    # 如果没有本地配置，创建空结构
-                    configs[device_id] = {
+                
+                # 创建初始配置结构
+                configs[device_id] = {
+                    "system": {
+                        "device_name": device_name,
+                        "device_id": device_id,
+                        "host_user": "N/A",
                         "system": {
-                            "device_name": device_name,
-                            "device_id": device_id,
-                            "host_user": "N/A",
-                            "system": {
-                                "platform": "N/A",
-                                "system": "N/A",
-                                "release": "N/A",
-                                "version": "N/A",
-                                "machine": "N/A",
-                                "processor": "N/A",
-                                "architecture": ["N/A"]
-                            }
-                        },
-                        "python": {
-                            "python_version": "N/A",
-                            "conda_version": "N/A",
-                            "pip_version": "N/A",
-                            "virtual_env": "N/A",
-                            "conda_env": "N/A"
-                        },
-                        "libraries": {},
-                        "project": {
-                            "project_path": "N/A",
-                            "config_files": {}
-                        },
-                        "collection_time": datetime.now().isoformat()
-                    }
-                    log.info(f"创建新配置: {device_name}")
+                            "platform": "N/A",
+                            "system": "N/A",
+                            "release": "N/A",
+                            "version": "N/A",
+                            "machine": "N/A",
+                            "processor": "N/A",
+                            "architecture": ["N/A"]
+                        }
+                    },
+                    "python": {
+                        "python_version": "N/A",
+                        "conda_version": "N/A",
+                        "pip_version": "N/A",
+                        "virtual_env": "N/A",
+                        "conda_env": "N/A"
+                    },
+                    "libraries": {},
+                    "project": {
+                        "project_path": "N/A",
+                        "config_files": {}
+                    },
+                    "collection_time": datetime.now().isoformat()
+                }
             
-            # 第五步：解析表格内容，但只更新非"N/A"的值
+            # 第三步：解析各个部分的配置
+            section_data = {}
+            current_section = None
+            table_started = False
+            
             for i, line in enumerate(lines):
                 line = line.strip()
                 
                 # 检测章节标题
                 if line.startswith('## '):
                     current_section = line[3:].strip()
+                    table_started = False
                     log.debug(f"检测到章节: {current_section}")
                     continue
                 
-                # 解析表格行（跳过表头分隔行和空行）
-                if (line.startswith('|') and '|' in line and current_section 
-                    and not line.startswith('|:---') and not line.startswith('|---')):
+                # 检测表格开始（表头行）
+                if current_section and line.startswith('|') and '|' in line:
+                    if not table_started:
+                        # 检查是否是表头行（包含设备名称）
+                        if any(device_name in line for device_name in device_names):
+                            table_started = True
+                            log.debug(f"开始解析 {current_section} 表格")
+                        continue
                     
-                    # 清理行：移除首尾的|，分割单元格
+                    # 跳过表头分隔行
+                    if line.startswith('|:---') or line.startswith('|---'):
+                        continue
+                    
+                    # 解析数据行
+                    # 关键修复：正确处理单元格分割
                     cells = [cell.strip() for cell in line.strip('|').split('|')]
-                    
-                    # 跳过空行或无效行
                     if len(cells) < 2:
                         continue
                     
-                    # 第一列是配置项名称
-                    config_item = cells
+                    # 第一列是配置项名称 - 确保是字符串
+                    config_item = cells[0] if cells[0] else ""
+                    
+                    # 跳过空配置项
+                    if not config_item or config_item == "配置项":
+                        continue
                     
                     # 根据当前章节处理数据
                     for j, device_name in enumerate(device_names):
@@ -913,11 +924,14 @@ class HostConfigCollector:
                             value = cells[j + 1]
                             device_id = device_id_map.get(device_name)
                             
-                            # 跳过无效值
-                            if not device_id or device_id not in configs or value in ["N/A", "Not found", "Unknown"]:
+                            if not device_id or device_id not in configs:
                                 continue
                             
-                            # 只更新非"N/A"的值
+                            # 跳过无效值
+                            if value in ["N/A", "Not found", "Unknown", "Not installed", ""]:
+                                continue
+                            
+                            # 根据章节填充数据
                             if current_section == "1. 系统信息":
                                 if config_item == "操作系统":
                                     configs[device_id]["system"]["system"]["platform"] = value
@@ -948,12 +962,22 @@ class HostConfigCollector:
                                     configs[device_id]["python"]["conda_env"] = value
                             
                             elif current_section == "3. 核心库版本":
-                                if value not in ["N/A", "Not installed", "Unknown"]:
-                                    configs[device_id]["libraries"][config_item] = value
+                                # 只处理有效的库版本
+                                if value and value != "N/A":
+                                    # 关键修复：确保 config_item 是字符串
+                                    if isinstance(config_item, str):
+                                        configs[device_id]["libraries"][config_item] = value
+                                    else:
+                                        log.warning(f"配置项不是字符串: {type(config_item)} - {config_item}")
                             
                             elif current_section == "4. AI/ML相关库":
-                                if value not in ["N/A", "Not installed", "Unknown"]:
-                                    configs[device_id]["libraries"][config_item] = value
+                                # 只处理有效的库版本
+                                if value and value != "N/A":
+                                    # 关键修复：确保 config_item 是字符串
+                                    if isinstance(config_item, str):
+                                        configs[device_id]["libraries"][config_item] = value
+                                    else:
+                                        log.warning(f"配置项不是字符串: {type(config_item)} - {config_item}")
                             
                             elif current_section == "5. 项目信息":
                                 if config_item == "项目路径":
@@ -964,75 +988,39 @@ class HostConfigCollector:
                                         "status": value
                                     }
             
-            # 第六步：检查并修复N/A值
+            # 第四步：检查并清理配置
             for device_id, config in configs.items():
                 device_name = config["system"]["device_name"]
                 
-                # 检查system字段是否有N/A
-                system_has_na = False
-                for key, value in config["system"].items():
-                    if isinstance(value, str) and value == "N/A":
-                        system_has_na = True
-                        break
-                    elif isinstance(value, dict):
-                        for sub_key, sub_value in value.items():
-                            if isinstance(sub_value, str) and sub_value == "N/A":
-                                system_has_na = True
-                                break
+                # 清理库信息：移除值为N/A的库
+                libraries = config["libraries"]
+                libraries_to_remove = []
+                for lib_name, lib_value in libraries.items():
+                    if lib_value in ["N/A", "Not installed", "Unknown"]:
+                        libraries_to_remove.append(lib_name)
                 
-                # 如果system字段有N/A，尝试从本地配置补充
-                if system_has_na and device_id in local_configs:
-                    local_config = local_configs[device_id]
-                    log.info(f"为设备 {device_name} 补充缺失的system信息")
-                    
-                    # 补充system信息
-                    for key, value in local_config["system"].items():
-                        if key not in config["system"] or config["system"][key] == "N/A":
-                            config["system"][key] = value
-                        elif isinstance(value, dict) and isinstance(config["system"][key], dict):
-                            for sub_key, sub_value in value.items():
-                                if sub_key not in config["system"][key] or config["system"][key][sub_key] == "N/A":
-                                    config["system"][key][sub_key] = sub_value
+                for lib_name in libraries_to_remove:
+                    del libraries[lib_name]
                 
-                # 检查python字段是否有N/A
-                python_has_na = any(
-                    isinstance(value, str) and value == "N/A" 
-                    for value in config["python"].values()
+                # 检查是否有有效数据
+                has_system_info = any(
+                    value != "N/A" for value in config["system"]["system"].values()
+                )
+                has_python_info = any(
+                    value != "N/A" for value in config["python"].values()
                 )
                 
-                # 如果python字段有N/A，尝试从本地配置补充
-                if python_has_na and device_id in local_configs:
-                    local_config = local_configs[device_id]
-                    log.info(f"为设备 {device_name} 补充缺失的python信息")
-                    
-                    for key, value in local_config["python"].items():
-                        if key not in config["python"] or config["python"][key] == "N/A":
-                            config["python"][key] = value
-                
-                # 检查libraries是否为空，尝试从本地配置补充
-                if not config["libraries"] and device_id in local_configs:
-                    local_config = local_configs[device_id]
-                    if local_config["libraries"]:
-                        log.info(f"为设备 {device_name} 补充缺失的库信息")
-                        config["libraries"] = local_config["libraries"].copy()
+                if not has_system_info and not has_python_info and not libraries:
+                    log.warning(f"设备 {device_name} 的配置信息为空")
             
-            log.info(f"从Markdown表格解析并补充了 {len(configs)} 个主机的配置")
+            log.info(f"从Markdown表格解析了 {len(configs)} 个主机的配置")
             
             # 打印解析结果摘要
             for device_id, config in configs.items():
                 device_name = config["system"]["device_name"]
                 python_version = config["python"].get("python_version", "N/A")
                 lib_count = len(config["libraries"])
-                system_info = config["system"]["system"]
-                
-                # 检查是否有N/A
-                has_na = any(
-                    isinstance(value, str) and value == "N/A"
-                    for value in [python_version, system_info.get("platform", ""), system_info.get("release", "")]
-                )
-                
-                status = "完整" if not has_na else "不完整（有N/A）"
-                log.info(f"设备 {device_name}: Python={python_version}, 库数量={lib_count}, 状态={status}")
+                log.info(f"设备 {device_name}: Python={python_version}, 库数量={lib_count}")
             
             return configs
             
@@ -1170,31 +1158,35 @@ class HostConfigCollector:
 # #### generate_markdown_table(self, configs: Dict[str, Any]) -> str
 
     # %%
-    @timethis
     def generate_markdown_table(self, configs: Dict[str, Any]) -> str:
         """生成Markdown对比表格"""
         if not configs:
             return "# 主机配置对比\n\n暂无配置数据"
-
-        # 提取所有设备ID
-        device_ids = list(configs.keys())
-        device_names = [configs[did]["system"]["device_name"] for did in device_ids]
-
+        
+        # 按设备名称排序
+        sorted_configs = sorted(
+            configs.items(),
+            key=lambda x: x[1].get("system", {}).get("device_name", "").lower()
+        )
+        
+        device_ids = [item[0] for item in sorted_configs]
+        device_names = [getinivaluefromcloud("device", device_id) for device_id in device_ids]
+        
         md_lines = ["# 主机配置对比\n"]
         md_lines.append(f"*更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
-
+        
         # 1. 系统信息对比表
         md_lines.append("## 1. 系统信息\n")
         md_lines.append("| 配置项 | " + " | ".join(device_names) + " |")
         md_lines.append("|:---|" + "|".join([":---:" for _ in device_names]) + "|")
-
+        
         system_items = [
             ("操作系统", lambda c: c["system"]["system"].get("distro", c["system"]["system"]["platform"])),
             ("内核版本", lambda c: c["system"]["system"].get("kernel", c["system"]["system"]["release"])),
             ("架构", lambda c: f"{c['system']['system']['machine']} ({c['system']['system']['architecture'][0]})"),
             ("主机用户", lambda c: c["system"]["host_user"]),
         ]
-
+        
         for item_name, extractor in system_items:
             row = [item_name]
             for did in device_ids:
@@ -1204,12 +1196,12 @@ class HostConfigCollector:
                 except:
                     row.append("N/A")
             md_lines.append("| " + " | ".join(row) + " |")
-
+        
         # 2. Python环境对比表
         md_lines.append("\n## 2. Python环境\n")
         md_lines.append("| 配置项 | " + " | ".join(device_names) + " |")
         md_lines.append("|:---|" + "|".join([":---:" for _ in device_names]) + "|")
-
+        
         python_items = [
             ("Python版本", lambda c: c["python"]["python_version"]),
             ("Conda版本", lambda c: c["python"].get("conda_version", "N/A")),
@@ -1217,7 +1209,7 @@ class HostConfigCollector:
             ("虚拟环境", lambda c: c["python"]["virtual_env"]),
             ("Conda环境", lambda c: c["python"]["conda_env"]),
         ]
-
+        
         for item_name, extractor in python_items:
             row = [item_name]
             for did in device_ids:
@@ -1227,53 +1219,57 @@ class HostConfigCollector:
                 except:
                     row.append("N/A")
             md_lines.append("| " + " | ".join(row) + " |")
-
-        # 3. 核心库版本对比表（从云端配置获取）
+        
+        # 3. 核心库版本对比表（使用云端配置的核心库列表）
         md_lines.append("\n## 3. 核心库版本\n")
-
-        # 使用云端配置的核心库列表
-        core_libs = self.required_libs[:12]  # 取前12个作为核心库
-
+        
+        # 使用云端配置的核心库列表（前12个）
+        core_libs = self.required_libs[:12] if len(self.required_libs) >= 12 else self.required_libs
+        
         md_lines.append("| 库名称 | " + " | ".join(device_names) + " |")
         md_lines.append("|:---|" + "|".join([":---:" for _ in device_names]) + "|")
-
+        
         for lib_name in core_libs:
             row = [lib_name]
             for did in device_ids:
                 try:
-                    version = configs[did]["libraries"].get(lib_name, "Not installed")
+                    # 修复这里：正确获取库版本
+                    version = configs[did]["libraries"].get(lib_name, "N/A")
                     row.append(str(version))
-                except:
+                except Exception as e:
                     row.append("N/A")
             md_lines.append("| " + " | ".join(row) + " |")
-
-        # 4. AI/ML相关库对比表（从云端配置获取）
-        if self.ai_libs:
-            md_lines.append("\n## 4. AI/ML相关库\n")
-
+        
+        # 4. AI/ML相关库对比表
+        md_lines.append("\n## 4. AI/ML相关库\n")
+        
+        # 使用云端配置的AI/ML库列表
+        ai_libs = self.ai_libs if hasattr(self, 'ai_libs') else []
+        
+        if ai_libs:
             md_lines.append("| 库名称 | " + " | ".join(device_names) + " |")
             md_lines.append("|:---|" + "|".join([":---:" for _ in device_names]) + "|")
-
-            for lib_name in self.ai_libs:
+            
+            for lib_name in ai_libs:
                 row = [lib_name]
                 for did in device_ids:
                     try:
-                        version = configs[did]["libraries"].get(lib_name, "Not installed")
+                        version = configs[did]["libraries"].get(lib_name, "N/A")
                         row.append(str(version))
                     except:
                         row.append("N/A")
                 md_lines.append("| " + " | ".join(row) + " |")
-
-        # 5. 项目信息
+        
+        # 5. 项目信息对比表
         md_lines.append("\n## 5. 项目信息\n")
         md_lines.append("| 配置项 | " + " | ".join(device_names) + " |")
         md_lines.append("|:---|" + "|".join([":---:" for _ in device_names]) + "|")
-
+        
         project_items = [
-            ("项目路径", lambda c: c["project"]["project_path"]),
-            ("requirements.txt", lambda c: c["project"]["config_files"].get("requirements.txt", "Not found")),
+            ("项目路径", lambda c: c["project"].get("project_path", "N/A")),
+            ("requirements.txt", lambda c: c["project"].get("config_files", {}).get("requirements.txt", {}).get("status", "Not found")),
         ]
-
+        
         for item_name, extractor in project_items:
             row = [item_name]
             for did in device_ids:
@@ -1283,22 +1279,17 @@ class HostConfigCollector:
                 except:
                     row.append("N/A")
             md_lines.append("| " + " | ".join(row) + " |")
-
+        
         # 6. 收集时间
         md_lines.append("\n## 6. 信息收集时间\n")
         md_lines.append("| 主机 | 收集时间 |")
         md_lines.append("|:---|:---|")
-
+        
         for did in device_ids:
             device_name = configs[did]["system"]["device_name"]
-            collection_time = configs[did].get("collection_time", "Unknown")
-            try:
-                dt = datetime.fromisoformat(collection_time)
-                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
-            except:
-                formatted_time = collection_time
-            md_lines.append(f"| {device_name} | {formatted_time} |")
-
+            collection_time = configs[did].get("collection_time", "N/A")
+            md_lines.append(f"| {device_name} | {collection_time} |")
+        
         return "\n".join(md_lines)
 
 # %% [markdown]
@@ -1396,6 +1387,7 @@ class HostConfigCollector:
                 # 添加更新历史
                 update_history = self.generate_update_history(all_update_records)
                 markdown_content += update_history
+                print("调试线…… ————……")
                 
                 # 更新笔记
                 if existing_notes and len(existing_notes) > 0:
