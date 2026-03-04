@@ -36,7 +36,7 @@ import pathmagic
 
 with pathmagic.context():
     from etc.getid import getdeviceid, getdevicename, gethostuser
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.configpr import findvaluebykeyinsection, getcfpoptionvalue, setcfpoptionvalue
     from func.first import dirmainpath, getdirmain
     from func.jpfuncs import (
         createnote,
@@ -172,6 +172,69 @@ class HostConfigCollector:
         except Exception as e:
             log.error(f"加载上一次配置失败: {e}")
             return {}
+
+# %% [markdown]
+# #### _cleanup_old_configs(self, current_configs: Dict[str, Any]) -> None
+
+    # %%
+    def _cleanup_old_configs(self, current_configs: Dict[str, Any]) -> None:
+        """清理过时的本地配置文件"""
+        try:
+            # 获取当前有效的设备ID集合
+            current_device_ids = set(current_configs.keys())
+            current_device_ids.add(self.device_id)  # 包括当前主机
+            
+            # 遍历所有配置文件
+            for config_file in self.config_dir.glob("*.json"):
+                if "_updates.json" in str(config_file):
+                    continue
+                
+                # 提取设备ID（从文件名）
+                device_id = config_file.stem
+                
+                # 如果设备ID不在当前有效集合中，且不是当前主机
+                if device_id not in current_device_ids and device_id != self.device_id:
+                    # 检查文件创建时间
+                    file_age_days = (datetime.now() - datetime.fromtimestamp(config_file.stat().st_mtime)).days
+                    
+                    if file_age_days > 30:  # 超过30天的旧文件
+                        try:
+                            config_file.unlink()
+                            log.info(f"清理过时配置文件: {device_id} ({file_age_days}天)")
+                        except Exception as e:
+                            log.error(f"清理配置文件失败: {device_id}, {e}")
+        except Exception as e:
+            log.error(f"清理过时配置失败: {e}")
+
+# %% [markdown]
+# #### _is_config_complete(self, config: Dict[str, Any]) -> bool
+
+    # %%
+    def _is_config_complete(self, config: Dict[str, Any]) -> bool:
+        """检查配置是否完整"""
+        try:
+            # 检查必需字段
+            required_fields = ["system", "python", "libraries", "collection_time"]
+            
+            for field in required_fields:
+                if field not in config:
+                    log.debug(f"配置缺少必需字段: {field}")
+                    return False
+            
+            # 检查system字段的必需子字段
+            if "device_name" not in config["system"]:
+                log.debug(f"配置缺少device_name")
+                return False
+            
+            if "device_id" not in config["system"]:
+                log.debug(f"配置缺少device_id")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            log.debug(f"检查配置完整性失败: {e}")
+            return False
 
 # %% [markdown]
 # #### _load_update_records(self) -> List[Dict[str, Any]]
@@ -536,6 +599,304 @@ class HostConfigCollector:
         return update_record
 
 # %% [markdown]
+# #### save_configs_to_local(self, configs: Dict[str, Any]) -> None
+
+    # %%
+    def save_configs_to_local(self, configs: Dict[str, Any]) -> None:
+        """将从笔记加载的配置保存到本地"""
+        saved_count = 0
+        
+        for device_id, config in configs.items():
+            # 跳过当前主机的配置（已经保存过了）
+            if device_id == self.device_id:
+                continue
+            
+            # 构建本地配置文件路径
+            config_file = self.config_dir / f"{device_id}.json"
+            
+            # 检查是否需要保存（文件不存在或内容不同）
+            should_save = False
+            
+            if not config_file.exists():
+                should_save = True
+                log.info(f"本地配置文件不存在，将保存: {device_id}")
+            else:
+                try:
+                    # 读取现有配置进行比较
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        existing_config = json.load(f)
+                    
+                    # 简单比较：检查收集时间是否不同
+                    existing_time = existing_config.get("collection_time", "")
+                    new_time = config.get("collection_time", "")
+                    
+                    if existing_time != new_time:
+                        should_save = True
+                        log.info(f"配置时间不同，将更新: {device_id} ({existing_time} -> {new_time})")
+                except Exception as e:
+                    should_save = True
+                    log.info(f"读取现有配置失败，将覆盖: {device_id}, {e}")
+            
+            # 保存配置
+            if should_save:
+                try:
+                    with open(config_file, "w", encoding="utf-8") as f:
+                        json.dump(config, f, indent=2, ensure_ascii=False)
+                    saved_count += 1
+                    log.info(f"保存配置到本地: {device_id} -> {config_file}")
+                except Exception as e:
+                    log.error(f"保存配置失败: {device_id}, {e}")
+        
+        if saved_count > 0:
+            log.info(f"共保存了 {saved_count} 个其他主机的配置到本地")
+        else:
+            log.info("没有需要保存的其他主机配置")
+
+# %% [markdown]
+# #### save_configs_to_local_smart(self, configs: Dict[str, Any]) -> None
+
+    # %%
+    def save_configs_to_local_smart(self, configs: Dict[str, Any]) -> None:
+        """智能保存从笔记加载的配置到本地（增强版）"""
+        saved_count = 0
+        updated_count = 0
+        skipped_count = 0
+    
+        for device_id, config in configs.items():
+            # 跳过当前主机的配置（已经保存过了）
+            if device_id == self.device_id:
+                skipped_count += 1
+                continue
+    
+            # 构建本地配置文件路径
+            config_file = self.config_dir / f"{device_id}.json"
+    
+            # 检查配置的完整性
+            if not self._is_config_complete(config):
+                log.warning(f"配置不完整，跳过保存: {device_id}")
+                skipped_count += 1
+                continue
+    
+            # 决定是否保存
+            should_save = False
+            save_reason = ""
+    
+            if not config_file.exists():
+                should_save = True
+                save_reason = "文件不存在"
+            else:
+                try:
+                    # 读取现有配置进行比较
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        existing_config = json.load(f)
+    
+                    # 比较关键字段
+                    existing_time = existing_config.get("collection_time", "")
+                    new_time = config.get("collection_time", "")
+    
+                    # 如果收集时间不同，或者配置内容有显著差异
+                    if existing_time != new_time:
+                        should_save = True
+                        save_reason = f"时间不同 ({existing_time} -> {new_time})"
+                    else:
+                        # 比较其他关键字段
+                        existing_name = existing_config.get("system", {}).get("device_name", "")
+                        new_name = config.get("system", {}).get("device_name", "")
+    
+                        if existing_name != new_name:
+                            should_save = True
+                            save_reason = f"设备名称不同 ({existing_name} -> {new_name})"
+                except Exception as e:
+                    should_save = True
+                    save_reason = f"读取失败: {e}"
+    
+            # 保存配置
+            if should_save:
+                try:
+                    # 确保配置目录存在
+                    self.config_dir.mkdir(parents=True, exist_ok=True)
+    
+                    # 保存配置
+                    with open(config_file, "w", encoding="utf-8") as f:
+                        json.dump(config, f, indent=2, ensure_ascii=False)
+    
+                    if config_file.exists():
+                        saved_count += 1
+                        log.info(f"保存配置: {device_id} ({save_reason}) -> {config_file}")
+                    else:
+                        log.error(f"保存失败: {device_id}")
+                except Exception as e:
+                    log.error(f"保存配置失败: {device_id}, {e}")
+            else:
+                updated_count += 1
+                log.debug(f"跳过保存（无变化）: {device_id}")
+    
+        # 统计报告
+        log.info(f"配置保存统计: 保存{saved_count}个, 跳过{skipped_count}个, 无变化{updated_count}个")
+    
+        # 清理过时的配置文件
+        self._cleanup_old_configs(configs)
+
+# %% [markdown]
+# #### parse_config_from_markdown_table(self, markdown_content: str) -> Dict[str, Any]
+
+    # %%
+    @timethis
+    def parse_config_from_markdown_table(self, markdown_content: str) -> Dict[str, Any]:
+        """从Markdown表格中解析配置信息"""
+        configs = {}
+        
+        try:
+            lines = markdown_content.split('\n')
+            current_section = None
+            device_names = []
+            
+            # 第一步：解析设备名称
+            for i, line in enumerate(lines):
+                if line.startswith('| 配置项 |') and '|' in line:
+                    parts = line.split('|')
+                    if len(parts) > 2:
+                        device_names = [name.strip() for name in parts[2:-1] if name.strip()]
+                        break
+            
+            if not device_names:
+                return {}
+            
+            # 第二步：为每个设备创建配置结构
+            for device_name in device_names:
+                if not (device_id := findvaluebykeyinsection):
+                    device_id = f"joplin_{hash(device_name) & 0xFFFFFFFF}"
+                configs[device_id] = {
+                    "system": {"device_name": device_name, "device_id": device_id},
+                    "python": {},
+                    "libraries": {},
+                    "project": {},
+                    "collection_time": datetime.now().isoformat()
+                }
+            
+            # 第三步：解析各个部分的配置
+            for i, line in enumerate(lines):
+                line = line.strip()
+                
+                # 检测章节标题
+                if line.startswith('## '):
+                    current_section = line[3:].strip()
+                    continue
+                
+                # 解析表格行
+                if line.startswith('|') and '|' in line and current_section:
+                    parts = [p.strip() for p in line.split('|') if p.strip()]
+                    if len(parts) > len(device_names) + 1:
+                        config_item = parts
+                        
+                        # 根据章节处理不同的配置项
+                        for j, device_name in enumerate(device_names):
+                            if j + 1 < len(parts):
+                                value = parts[j + 1]
+                                device_id = f"joplin_{hash(device_name) & 0xFFFFFFFF}"
+                                
+                                if current_section == "1. 系统信息":
+                                    if config_item == "操作系统":
+                                        configs[device_id]["system"]["platform"] = value
+                                    elif config_item == "内核版本":
+                                        configs[device_id]["system"]["release"] = value
+                                    elif config_item == "架构":
+                                        configs[device_id]["system"]["machine"] = value
+                                    elif config_item == "主机用户":
+                                        configs[device_id]["system"]["host_user"] = value
+                                
+                                elif current_section == "2. Python环境":
+                                    if config_item == "Python版本":
+                                        configs[device_id]["python"]["python_version"] = value
+                                    elif config_item == "Conda版本":
+                                        configs[device_id]["python"]["conda_version"] = value
+                                    elif config_item == "Pip版本":
+                                        configs[device_id]["python"]["pip_version"] = value
+                                    elif config_item == "虚拟环境":
+                                        configs[device_id]["python"]["virtual_env"] = value
+                                    elif config_item == "Conda环境":
+                                        configs[device_id]["python"]["conda_env"] = value
+                                
+                                elif current_section == "3. 核心库版本":
+                                    configs[device_id]["libraries"][config_item] = value
+            
+            log.info(f"从Markdown表格解析了 {len(configs)} 个主机的配置")
+            return configs
+            
+        except Exception as e:
+            log.error(f"解析Markdown表格失败: {e}")
+            return {}
+
+# %% [markdown]
+# #### load_configs_from_joplin_note(self) -> Dict[str, Any]
+
+    # %%
+    @timethis
+    def load_configs_from_joplin_note(self) -> Dict[str, Any]:
+        """从Joplin笔记中读取所有主机的配置"""
+        try:
+            # 查找配置笔记
+            note_title = "主机配置对比表"
+            existing_notes = searchnotes(note_title)
+            
+            if not existing_notes or len(existing_notes) == 0:
+                log.info("未找到主机配置对比笔记")
+                return {}
+            
+            note = existing_notes[0]
+            note_content = note.body
+            
+            # 使用新的解析方法
+            configs = self.parse_config_from_markdown_table(note_content)
+            
+            if configs:
+                log.info(f"从Joplin笔记中成功解析 {len(configs)} 个主机的配置")
+            else:
+                log.warning("无法从Joplin笔记中解析配置信息")
+            
+            return configs
+            
+        except Exception as e:
+            log.error(f"从Joplin笔记读取配置失败: {e}")
+            return {}
+
+# %% [markdown]
+# #### merge_all_configs(self) -> Dict[str, Any]
+
+    # %%
+    @timethis
+    def merge_all_configs(self) -> Dict[str, Any]:
+        """合并本地配置和Joplin笔记中的配置"""
+        # 加载本地所有配置
+        local_configs = self.load_all_configs()
+        
+        # 从Joplin笔记中读取配置
+        joplin_configs = self.load_configs_from_joplin_note()
+        
+        # 关键新增：将从笔记加载的配置保存到本地
+        if joplin_configs:
+            self.save_configs_to_local_smart(joplin_configs)
+        
+        # 重新加载本地配置（可能已经更新）
+        local_configs = self.load_all_configs()
+        
+        # 合并配置（本地配置优先）
+        merged_configs = {}
+        
+        # 首先添加所有本地配置
+        for device_id, config in local_configs.items():
+            merged_configs[device_id] = config
+        
+        # 然后添加Joplin笔记中的配置（不覆盖本地配置）
+        for device_id, config in joplin_configs.items():
+            if device_id not in merged_configs:
+                merged_configs[device_id] = config
+                log.info(f"从Joplin笔记添加主机配置: {config['system']['device_name']}")
+        
+        log.info(f"合并后共有 {len(merged_configs)} 个主机的配置")
+        return merged_configs
+
+# %% [markdown]
 # #### load_all_configs(self)
 
     # %%
@@ -793,22 +1154,23 @@ class HostConfigCollector:
     
             # 保存配置并检测变化
             update_record = self.save_config_with_change_detection(current_config)
-    
+
             # 只有有变化时才更新笔记
             if update_record.get("has_changes", False):
-                # 加载所有配置
-                all_configs = self.load_all_configs()
-    
+                # 关键修改：合并本地配置和joplin笔记中的配置
+                # 这个函数现在会自动将从笔记加载的配置保存到本地
+                all_configs = self.merge_all_configs()
+                
                 # 加载所有更新记录
                 all_update_records = self.load_all_update_records()
-    
-                # 生成Markdown内容
+                
+                # 生成markdown对比表格（包含所有主机）
                 markdown_content = self.generate_markdown_table(all_configs)
-    
+                
                 # 添加更新历史
                 update_history = self.generate_update_history(all_update_records)
                 markdown_content += update_history
-    
+                
                 # 更新笔记
                 if existing_notes and len(existing_notes) > 0:
                     # 更新现有笔记（取第一个匹配的笔记）
@@ -842,7 +1204,6 @@ class HostConfigCollector:
 # #### show_config_summary(self)
 
     # %%
-    @timethis
     def show_config_summary(self):
         """显示配置摘要"""
         config = self.collect_all_info()
