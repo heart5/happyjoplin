@@ -265,10 +265,10 @@ class HostConfigCollector:
     def _save_update_record(self, old_config: Dict[str, Any], new_config: Dict[str, Any]) -> Dict[str, Any]:
         """保存更新记录"""
         update_time = datetime.now().isoformat()
-
+        
         # 检测变化
         changes = self._detect_changes(old_config, new_config)
-
+        
         # 如果没有变化，直接返回空记录，不保存到文件
         if not changes:
             return {
@@ -279,7 +279,7 @@ class HostConfigCollector:
                 "changes": {},
                 "summary": "无变化"
             }
-
+        
         update_record = {
             "timestamp": update_time,
             "device_id": self.device_id,
@@ -288,15 +288,15 @@ class HostConfigCollector:
             "changes": changes,
             "summary": self._generate_change_summary(changes),
         }
-
+        
         # 加载现有记录
         records = self._load_update_records()
-
+        
         # 只保留最近100条记录
         records.insert(0, update_record)
         if len(records) > 100:
             records = records[:100]
-
+        
         # 保存记录
         try:
             with open(self.update_record_file, "w", encoding="utf-8") as f:
@@ -304,7 +304,7 @@ class HostConfigCollector:
             log.info(f"更新记录已保存: {self.update_record_file}")
         except Exception as e:
             log.error(f"保存更新记录失败: {e}")
-
+        
         return update_record
 
 # %% [markdown]
@@ -1100,12 +1100,22 @@ class HostConfigCollector:
         # 首先添加所有本地配置
         for device_id, config in local_configs.items():
             merged_configs[device_id] = config
-        
-        # 然后添加Joplin笔记中的配置（不覆盖本地配置）
-        for device_id, config in joplin_configs.items():
+
+        # 然后添加本地配置（如果不存在于Joplin配置中）
+        for device_id, config in local_configs.items():
             if device_id not in merged_configs:
                 merged_configs[device_id] = config
-                log.info(f"从Joplin笔记添加主机配置: {config['system']['device_name']}")
+            else:
+                # 如果已经存在，检查收集时间，保留最新的
+                joplin_time = merged_configs[device_id].get("collection_time", "")
+                local_time = config.get("collection_time", "")
+                
+                # 如果本地配置的收集时间更新，则更新合并后的配置
+                if local_time > joplin_time:
+                    merged_configs[device_id] = config
+        
+        # 保存其他主机的配置到本地（用于下次比较）
+        self.save_configs_to_local(merged_configs)
         
         log.info(f"合并后共有 {len(merged_configs)} 个主机的配置")
         return merged_configs
@@ -1155,6 +1165,58 @@ class HostConfigCollector:
         return all_records
 
 # %% [markdown]
+# #### sync_update_records(self) -> None
+
+    # %%
+    def sync_update_records(self) -> None:
+        """同步所有主机的更新记录"""
+        # 从Joplin笔记加载所有配置
+        joplin_configs = self.load_configs_from_joplin_note()
+    
+        # 为每个主机加载更新记录
+        all_update_records = {}
+    
+        for device_id in joplin_configs.keys():
+            # 构建更新记录文件路径
+            update_file = self.config_dir / f"{device_id}_updates.json"
+    
+            if update_file.exists():
+                try:
+                    with open(update_file, "r", encoding="utf-8") as f:
+                        records = json.load(f)
+                        all_update_records[device_id] = records
+                except Exception as e:
+                    log.error(f"加载更新记录文件 {update_file} 失败: {e}")
+    
+        # 保存合并后的更新记录到本地
+        for device_id, records in all_update_records.items():
+            if device_id != self.device_id:  # 不覆盖当前主机的记录
+                update_file = self.config_dir / f"{device_id}_updates.json"
+    
+                # 检查是否需要更新
+                should_save = False
+                if not update_file.exists():
+                    should_save = True
+                else:
+                    try:
+                        with open(update_file, "r", encoding="utf-8") as f:
+                            existing_records = json.load(f)
+    
+                        # 如果记录数量不同，则更新
+                        if len(existing_records) != len(records):
+                            should_save = True
+                    except:
+                        should_save = True
+    
+                if should_save:
+                    try:
+                        with open(update_file, "w", encoding="utf-8") as f:
+                            json.dump(records, f, indent=2, ensure_ascii=False)
+                        log.info(f"同步更新记录: {device_id}")
+                    except Exception as e:
+                        log.error(f"保存更新记录失败: {device_id}, {e}")
+
+# %% [markdown]
 # #### generate_markdown_table(self, configs: Dict[str, Any]) -> str
 
     # %%
@@ -1170,7 +1232,8 @@ class HostConfigCollector:
         )
         
         device_ids = [item[0] for item in sorted_configs]
-        device_names = [getinivaluefromcloud("device", device_id) for device_id in device_ids]
+        # device_names = [getinivaluefromcloud("device", device_id) for device_id in device_ids]
+        device_names = [configs[device_id]["system"]["device_name"] for device_id in device_ids]
         
         md_lines = ["# 主机配置对比\n"]
         md_lines.append(f"*更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n")
@@ -1279,72 +1342,96 @@ class HostConfigCollector:
                 except:
                     row.append("N/A")
             md_lines.append("| " + " | ".join(row) + " |")
-        
-        # 6. 收集时间
+
+        # 6. 信息收集时间 - 修复：使用每个主机自己的收集时间
         md_lines.append("\n## 6. 信息收集时间\n")
         md_lines.append("| 主机 | 收集时间 |")
         md_lines.append("|:---|:---|")
         
         for did in device_ids:
             device_name = configs[did]["system"]["device_name"]
+            # 关键修复：从配置中获取实际的收集时间
             collection_time = configs[did].get("collection_time", "N/A")
-            md_lines.append(f"| {device_name} | {collection_time} |")
-        
+            
+            # 格式化时间：将ISO格式转换为更易读的格式
+            if collection_time != "N/A":
+                try:
+                    # 如果是ISO格式的时间字符串，转换为更友好的格式
+                    if "T" in collection_time:
+                        dt = datetime.fromisoformat(collection_time.replace("Z", "+00:00"))
+                        formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        formatted_time = collection_time
+                except:
+                    formatted_time = collection_time
+            else:
+                formatted_time = "N/A"
+            
+            md_lines.append(f"| {device_name} | {formatted_time} |")
+
         return "\n".join(md_lines)
 
 # %% [markdown]
 # #### generate_update_history(self, all_records: Dict[str, Any]) -> str
 
     # %%
-    @timethis
     def generate_update_history(self, all_records: Dict[str, Any]) -> str:
         """生成更新历史记录"""
         if not all_records:
             return "\n## 更新历史\n\n暂无更新记录"
-
+    
         md_lines = ["\n## 更新历史\n"]
         md_lines.append("*按时间倒序排列，最近更新在前*\n")
-
-        # 收集所有更新记录
+    
+        # 收集所有主机的更新记录
         all_updates = []
         for device_id, records in all_records.items():
-            for record in records:
-                record["device_id"] = device_id
-                all_updates.append(record)
-
+            if isinstance(records, list):
+                for record in records:
+                    if isinstance(record, dict):
+                        # 确保每条记录都有设备ID
+                        record_copy = record.copy()
+                        record_copy["device_id"] = device_id
+                        all_updates.append(record_copy)
+    
         # 按时间排序（倒序）
         all_updates.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-
+    
         # 只显示最近20条记录
         recent_updates = all_updates[:20]
-
+    
         md_lines.append("| 时间 | 主机 | 变化摘要 |")
         md_lines.append("|:---|:---|:---|")
-
+    
         for update in recent_updates:
             timestamp = update.get("timestamp", "")
             device_name = update.get("device_name", update.get("device_id", "Unknown"))
             summary = update.get("summary", "无变化")
-
+    
             # 格式化时间
             try:
-                dt = datetime.fromisoformat(timestamp)
-                formatted_time = dt.strftime("%Y-%m-%d %H:%M")
+                if "T" in timestamp:
+                    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                    formatted_time = dt.strftime("%Y-%m-%d %H:%M")
+                else:
+                    formatted_time = timestamp
             except:
                 formatted_time = timestamp
-
+    
             # 如果有变化，加粗显示
-            if update.get("has_changes", False):
+            if update.get("has_changes", False) and summary != "无变化":
                 summary = f"**{summary}**"
-
+    
             md_lines.append(f"| {formatted_time} | {device_name} | {summary} |")
-
+    
         # 添加统计信息
         total_updates = len(all_updates)
-        changes_count = sum(1 for u in all_updates if u.get("has_changes", False))
-
+        changes_count = sum(
+            1 for u in all_updates if u.get("has_changes", False) and u.get("summary", "无变化") != "无变化"
+        )
+    
         md_lines.append(f"\n*统计：共 {total_updates} 次更新，其中 {changes_count} 次有配置变化*")
-
+    
         return "\n".join(md_lines)
 
 # %% [markdown]
@@ -1377,6 +1464,9 @@ class HostConfigCollector:
                 # 关键修改：合并本地配置和joplin笔记中的配置
                 # 这个函数现在会自动将从笔记加载的配置保存到本地
                 all_configs = self.merge_all_configs()
+            
+                # 同步更新记录（新增）
+                self.sync_update_records()
                 
                 # 加载所有更新记录
                 all_update_records = self.load_all_update_records()
