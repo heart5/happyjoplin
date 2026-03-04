@@ -738,93 +738,308 @@ class HostConfigCollector:
         self._cleanup_old_configs(configs)
 
 # %% [markdown]
+# #### fix_config_with_local_data(self, parsed_configs: Dict[str, Any]) -> Dict[str, Any]
+
+    # %%
+    def fix_config_with_local_data(self, parsed_configs: Dict[str, Any]) -> Dict[str, Any]:
+        """用本地配置修复解析的配置"""
+        fixed_configs = parsed_configs.copy()
+        
+        # 加载所有本地配置
+        local_configs = self.load_all_configs()
+        
+        for device_id, config in fixed_configs.items():
+            device_name = config["system"]["device_name"]
+            
+            # 检查是否需要修复
+            needs_fix = False
+            
+            # 检查system字段
+            if config["system"].get("host_user") == "N/A":
+                needs_fix = True
+            if config["system"]["system"].get("platform") == "N/A":
+                needs_fix = True
+            
+            # 检查python字段
+            if config["python"].get("python_version") == "N/A":
+                needs_fix = True
+            
+            # 检查libraries是否为空
+            if not config["libraries"]:
+                needs_fix = True
+            
+            # 如果需要修复且有本地配置
+            if needs_fix and device_id in local_configs:
+                local_config = local_configs[device_id]
+                log.info(f"修复设备 {device_name} 的配置")
+                
+                # 修复system字段
+                if config["system"].get("host_user") == "N/A" and "host_user" in local_config["system"]:
+                    config["system"]["host_user"] = local_config["system"]["host_user"]
+                
+                # 修复system.system字段
+                for key in ["platform", "system", "release", "version", "machine", "processor"]:
+                    if config["system"]["system"].get(key) == "N/A" and key in local_config["system"]["system"]:
+                        config["system"]["system"][key] = local_config["system"]["system"][key]
+                
+                # 修复python字段
+                for key in ["python_version", "conda_version", "pip_version", "virtual_env", "conda_env"]:
+                    if config["python"].get(key) == "N/A" and key in local_config["python"]:
+                        config["python"][key] = local_config["python"][key]
+                
+                # 修复libraries
+                if not config["libraries"] and local_config["libraries"]:
+                    config["libraries"] = local_config["libraries"].copy()
+                
+                # 修复project
+                if config["project"].get("project_path") == "N/A" and "project_path" in local_config["project"]:
+                    config["project"]["project_path"] = local_config["project"]["project_path"]
+        
+        return fixed_configs
+
+# %% [markdown]
 # #### parse_config_from_markdown_table(self, markdown_content: str) -> Dict[str, Any]
 
     # %%
     @timethis
     def parse_config_from_markdown_table(self, markdown_content: str) -> Dict[str, Any]:
-        """从Markdown表格中解析配置信息"""
+        """从Markdown表格中解析配置信息，并用本地配置补充缺失信息"""
         configs = {}
         
         try:
             lines = markdown_content.split('\n')
             current_section = None
             device_names = []
+            device_id_map = {}
             
-            # 第一步：解析设备名称
+            # 第一步：解析设备名称（从第一个表格的标题行）
             for i, line in enumerate(lines):
+                line = line.strip()
                 if line.startswith('| 配置项 |') and '|' in line:
                     parts = line.split('|')
                     if len(parts) > 2:
+                        # 提取设备名称（跳过第一个"配置项"和最后一个空列）
                         device_names = [name.strip() for name in parts[2:-1] if name.strip()]
+                        log.info(f"从表格中解析到设备名称: {device_names}")
                         break
             
             if not device_names:
+                log.warning("无法从表格中解析设备名称")
                 return {}
             
-            # 第二步：为每个设备创建配置结构
+            # 第二步：为每个设备查找对应的device_id
             for device_name in device_names:
-                if not (device_id := findvaluebykeyinsection("happyjpinifromcloud", "device", device_name)):
-                    device_id = f"joplin_{hash(device_name) & 0xFFFFFFFF}"
-                configs[device_id] = {
-                    "system": {"device_name": device_name, "device_id": device_id},
-                    "python": {},
-                    "libraries": {},
-                    "project": {},
-                    "collection_time": datetime.now().isoformat()
-                }
+                # 使用现有的函数获取device_id
+                device_id = findvaluebykeyinsection("happyjpinifromcloud", "device", device_name)
+                if not device_id:
+                    # 如果找不到，使用哈希作为后备
+                    import hashlib
+                    device_id = f"joplin_{hashlib.md5(device_name.encode()).hexdigest()[:8]}"
+                    log.warning(f"无法找到设备 {device_name} 的ID，使用哈希ID: {device_id}")
+                
+                device_id_map[device_name] = device_id
+                log.info(f"设备映射: {device_name} -> {device_id}")
             
-            # 第三步：解析各个部分的配置
+            # 第三步：先加载所有本地配置，用于补充缺失信息
+            local_configs = self.load_all_configs()
+            log.info(f"加载了 {len(local_configs)} 个本地配置用于补充")
+            
+            # 第四步：为每个设备创建初始配置结构，优先使用本地配置
+            for device_name, device_id in device_id_map.items():
+                # 优先使用本地配置
+                if device_id in local_configs:
+                    configs[device_id] = local_configs[device_id]
+                    log.info(f"使用本地配置: {device_name}")
+                else:
+                    # 如果没有本地配置，创建空结构
+                    configs[device_id] = {
+                        "system": {
+                            "device_name": device_name,
+                            "device_id": device_id,
+                            "host_user": "N/A",
+                            "system": {
+                                "platform": "N/A",
+                                "system": "N/A",
+                                "release": "N/A",
+                                "version": "N/A",
+                                "machine": "N/A",
+                                "processor": "N/A",
+                                "architecture": ["N/A"]
+                            }
+                        },
+                        "python": {
+                            "python_version": "N/A",
+                            "conda_version": "N/A",
+                            "pip_version": "N/A",
+                            "virtual_env": "N/A",
+                            "conda_env": "N/A"
+                        },
+                        "libraries": {},
+                        "project": {
+                            "project_path": "N/A",
+                            "config_files": {}
+                        },
+                        "collection_time": datetime.now().isoformat()
+                    }
+                    log.info(f"创建新配置: {device_name}")
+            
+            # 第五步：解析表格内容，但只更新非"N/A"的值
             for i, line in enumerate(lines):
                 line = line.strip()
                 
                 # 检测章节标题
                 if line.startswith('## '):
                     current_section = line[3:].strip()
+                    log.debug(f"检测到章节: {current_section}")
                     continue
                 
-                # 解析表格行
-                if line.startswith('|') and '|' in line and current_section:
-                    parts = [p.strip() for p in line.split('|') if p.strip()]
-                    if len(parts) > len(device_names) + 1:
-                        config_item = parts
-                        
-                        # 根据章节处理不同的配置项
-                        for j, device_name in enumerate(device_names):
-                            if j + 1 < len(parts):
-                                value = parts[j + 1]
-                                device_id = f"joplin_{hash(device_name) & 0xFFFFFFFF}"
-                                
-                                if current_section == "1. 系统信息":
-                                    if config_item == "操作系统":
-                                        configs[device_id]["system"]["platform"] = value
-                                    elif config_item == "内核版本":
-                                        configs[device_id]["system"]["release"] = value
-                                    elif config_item == "架构":
-                                        configs[device_id]["system"]["machine"] = value
-                                    elif config_item == "主机用户":
-                                        configs[device_id]["system"]["host_user"] = value
-                                
-                                elif current_section == "2. Python环境":
-                                    if config_item == "Python版本":
-                                        configs[device_id]["python"]["python_version"] = value
-                                    elif config_item == "Conda版本":
-                                        configs[device_id]["python"]["conda_version"] = value
-                                    elif config_item == "Pip版本":
-                                        configs[device_id]["python"]["pip_version"] = value
-                                    elif config_item == "虚拟环境":
-                                        configs[device_id]["python"]["virtual_env"] = value
-                                    elif config_item == "Conda环境":
-                                        configs[device_id]["python"]["conda_env"] = value
-                                
-                                elif current_section == "3. 核心库版本":
+                # 解析表格行（跳过表头分隔行和空行）
+                if (line.startswith('|') and '|' in line and current_section 
+                    and not line.startswith('|:---') and not line.startswith('|---')):
+                    
+                    # 清理行：移除首尾的|，分割单元格
+                    cells = [cell.strip() for cell in line.strip('|').split('|')]
+                    
+                    # 跳过空行或无效行
+                    if len(cells) < 2:
+                        continue
+                    
+                    # 第一列是配置项名称
+                    config_item = cells
+                    
+                    # 根据当前章节处理数据
+                    for j, device_name in enumerate(device_names):
+                        if j + 1 < len(cells):
+                            value = cells[j + 1]
+                            device_id = device_id_map.get(device_name)
+                            
+                            # 跳过无效值
+                            if not device_id or device_id not in configs or value in ["N/A", "Not found", "Unknown"]:
+                                continue
+                            
+                            # 只更新非"N/A"的值
+                            if current_section == "1. 系统信息":
+                                if config_item == "操作系统":
+                                    configs[device_id]["system"]["system"]["platform"] = value
+                                elif config_item == "内核版本":
+                                    configs[device_id]["system"]["system"]["release"] = value
+                                elif config_item == "架构":
+                                    # 解析架构信息，如 "x86_64 (64bit)"
+                                    if "(" in value:
+                                        machine = value.split("(")[0].strip()
+                                        arch = value.split("(")[1].replace(")", "").strip()
+                                        configs[device_id]["system"]["system"]["machine"] = machine
+                                        configs[device_id]["system"]["system"]["architecture"] = [arch]
+                                    else:
+                                        configs[device_id]["system"]["system"]["machine"] = value
+                                elif config_item == "主机用户":
+                                    configs[device_id]["system"]["host_user"] = value
+                            
+                            elif current_section == "2. Python环境":
+                                if config_item == "Python版本":
+                                    configs[device_id]["python"]["python_version"] = value
+                                elif config_item == "Conda版本":
+                                    configs[device_id]["python"]["conda_version"] = value
+                                elif config_item == "Pip版本":
+                                    configs[device_id]["python"]["pip_version"] = value
+                                elif config_item == "虚拟环境":
+                                    configs[device_id]["python"]["virtual_env"] = value
+                                elif config_item == "Conda环境":
+                                    configs[device_id]["python"]["conda_env"] = value
+                            
+                            elif current_section == "3. 核心库版本":
+                                if value not in ["N/A", "Not installed", "Unknown"]:
                                     configs[device_id]["libraries"][config_item] = value
+                            
+                            elif current_section == "4. AI/ML相关库":
+                                if value not in ["N/A", "Not installed", "Unknown"]:
+                                    configs[device_id]["libraries"][config_item] = value
+                            
+                            elif current_section == "5. 项目信息":
+                                if config_item == "项目路径":
+                                    configs[device_id]["project"]["project_path"] = value
+                                elif config_item == "requirements.txt" and value != "Not found":
+                                    configs[device_id]["project"]["config_files"]["requirements.txt"] = {
+                                        "exists": True,
+                                        "status": value
+                                    }
             
-            log.info(f"从Markdown表格解析了 {len(configs)} 个主机的配置")
+            # 第六步：检查并修复N/A值
+            for device_id, config in configs.items():
+                device_name = config["system"]["device_name"]
+                
+                # 检查system字段是否有N/A
+                system_has_na = False
+                for key, value in config["system"].items():
+                    if isinstance(value, str) and value == "N/A":
+                        system_has_na = True
+                        break
+                    elif isinstance(value, dict):
+                        for sub_key, sub_value in value.items():
+                            if isinstance(sub_value, str) and sub_value == "N/A":
+                                system_has_na = True
+                                break
+                
+                # 如果system字段有N/A，尝试从本地配置补充
+                if system_has_na and device_id in local_configs:
+                    local_config = local_configs[device_id]
+                    log.info(f"为设备 {device_name} 补充缺失的system信息")
+                    
+                    # 补充system信息
+                    for key, value in local_config["system"].items():
+                        if key not in config["system"] or config["system"][key] == "N/A":
+                            config["system"][key] = value
+                        elif isinstance(value, dict) and isinstance(config["system"][key], dict):
+                            for sub_key, sub_value in value.items():
+                                if sub_key not in config["system"][key] or config["system"][key][sub_key] == "N/A":
+                                    config["system"][key][sub_key] = sub_value
+                
+                # 检查python字段是否有N/A
+                python_has_na = any(
+                    isinstance(value, str) and value == "N/A" 
+                    for value in config["python"].values()
+                )
+                
+                # 如果python字段有N/A，尝试从本地配置补充
+                if python_has_na and device_id in local_configs:
+                    local_config = local_configs[device_id]
+                    log.info(f"为设备 {device_name} 补充缺失的python信息")
+                    
+                    for key, value in local_config["python"].items():
+                        if key not in config["python"] or config["python"][key] == "N/A":
+                            config["python"][key] = value
+                
+                # 检查libraries是否为空，尝试从本地配置补充
+                if not config["libraries"] and device_id in local_configs:
+                    local_config = local_configs[device_id]
+                    if local_config["libraries"]:
+                        log.info(f"为设备 {device_name} 补充缺失的库信息")
+                        config["libraries"] = local_config["libraries"].copy()
+            
+            log.info(f"从Markdown表格解析并补充了 {len(configs)} 个主机的配置")
+            
+            # 打印解析结果摘要
+            for device_id, config in configs.items():
+                device_name = config["system"]["device_name"]
+                python_version = config["python"].get("python_version", "N/A")
+                lib_count = len(config["libraries"])
+                system_info = config["system"]["system"]
+                
+                # 检查是否有N/A
+                has_na = any(
+                    isinstance(value, str) and value == "N/A"
+                    for value in [python_version, system_info.get("platform", ""), system_info.get("release", "")]
+                )
+                
+                status = "完整" if not has_na else "不完整（有N/A）"
+                log.info(f"设备 {device_name}: Python={python_version}, 库数量={lib_count}, 状态={status}")
+            
             return configs
             
         except Exception as e:
             log.error(f"解析Markdown表格失败: {e}")
+            import traceback
+            log.error(traceback.format_exc())
             return {}
 
 # %% [markdown]
@@ -846,10 +1061,21 @@ class HostConfigCollector:
             note = existing_notes[0]
             note_content = note.body
             
-            # 使用新的解析方法
+            # 使用解析方法
             configs = self.parse_config_from_markdown_table(note_content)
             
             if configs:
+                # 检查是否有N/A值需要修复
+                needs_fix = False
+                for device_id, config in configs.items():
+                    if config["system"].get("host_user") == "N/A" or config["python"].get("python_version") == "N/A":
+                        needs_fix = True
+                        break
+                
+                if needs_fix:
+                    log.info("检测到N/A值，使用本地配置进行修复")
+                    configs = self.fix_config_with_local_data(configs)
+                
                 log.info(f"从Joplin笔记中成功解析 {len(configs)} 个主机的配置")
             else:
                 log.warning("无法从Joplin笔记中解析配置信息")
