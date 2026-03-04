@@ -764,7 +764,7 @@ class HostConfigCollector:
             
             # 第二步：为每个设备创建配置结构
             for device_name in device_names:
-                if not (device_id := findvaluebykeyinsection):
+                if not (device_id := findvaluebykeyinsection("happyjpinifromcloud", "device", device_name)):
                     device_id = f"joplin_{hash(device_name) & 0xFFFFFFFF}"
                 configs[device_id] = {
                     "system": {"device_name": device_name, "device_id": device_id},
