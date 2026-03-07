@@ -1053,7 +1053,7 @@ class JoplinConfigManager:
                 log.info("未找到主机配置对比笔记")
                 return {}, {}
 
-            note = existing_notes
+            note = existing_notes[0]
             note_content = note.body
 
             # 使用解析方法获取配置字典
