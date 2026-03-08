@@ -12,24 +12,24 @@
 #       format_version: '1.3'
 # ---
 
-# %%
-"""IP信息更新工具 (增强版).
+# %% [markdown]
+# # IP信息更新工具 (增强版)
 
-功能：获取设备IP和WiFi信息，记录变化并更新至Jupyter笔记
-优化点：修复数字类型处理、增强错误处理、添加Markdown函数声明.
-"""
+# %% [markdown]
+# 功能：获取设备IP和WiFi信息，记录变化并更新至Jupyter笔记
+# 优化点：修复数字类型处理、增强错误处理、添加Markdown函数声明.
 
 # %% [markdown]
 # ## 导入依赖库
 
 # %%
-import datetime
-import ipaddress
-import os
-import platform
 import re
-import sys
-from typing import Optional, Tuple
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+import pandas as pd
 
 # %%
 try:
@@ -43,6 +43,7 @@ try:
         from func.jpfuncs import (
             createnote,
             getinivaluefromcloud,
+            jpapi,
             searchnotebook,
             searchnotes,
             updatenote_body,
@@ -54,398 +55,352 @@ try:
         # from func.nettools import get_ip4alleth
         from func.sysfunc import execcmd, is_tool_valid, not_IPython
         from func.termuxtools import termux_wifi_connectioninfo
+        from func.wrapfuncs import timethis
 except ImportError as e:
     log.error(f"导入模块失败: {e}")
     # 尝试添加路径（适用于JupyterLab环境）
-    sys.path.append(
-        os.path.expanduser("~/codebase/happyjoplin")
-    )  # 请修改为你的实际项目路径
+    sys.path.append(os.path.expanduser("~/codebase/happyjoplin"))  # 请修改为你的实际项目路径
     log.info("已尝试添加路径到sys.path")
 
 # %% [markdown]
 # ## 配置常量
-
 # %%
 CONFIG_NAME = "happyjpip"
+pathtext = getinivaluefromcloud(CONFIG_NAME, f"{getdeviceid()}_ip_log")
+LOG_FILE_PATH = Path(f"{pathtext}").expanduser()  # 示例路径，需根据实际调整
+REPORT_DAYS = getinivaluefromcloud(CONFIG_NAME, "REPORT_DAYS")
 
 
 # %% [markdown]
 # ## 核心功能函数
 
 # %% [markdown]
-# ### is_valid_ip(ip_str: Optional[str]) -> bool
+# ### parse_ip_log_file(log_path: Path) -> pd.DataFrame
 
 # %%
-def is_valid_ip(ip_str: Optional[str]) -> bool:
-    """验证一个字符串是否是有效的IPv4或IPv6地址.
-
-    使用标准库 ipaddress 进行验证，最为可靠。
+def parse_ip_log_file(log_path: Path) -> pd.DataFrame:
+    """解析结构化的IP日志文件，返回DataFrame。
+    格式：2026-03-09 00:35:02 | Network: WiFi | WiFi_Name: yj8510 | Public_IP: 219.76.131.102 | ...
     """
-    if not ip_str:
-        return False
+    data = []
+    pattern = re.compile(
+        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| "
+        r"Network: (\w+) \| "
+        r"WiFi_Name: ([^|]+) \| "
+        r"Public_IP: ([^|]+) \| "
+        r"Local_IP: ([^|]+) \| "
+        r"VPN_Interface: ([^|]+) \| "
+        r"VPN_IP: ([^|\n]+)"
+    )
     try:
-        ipaddress.ip_address(ip_str.strip())
-        return True
-    except ValueError:
-        return False
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                match = pattern.match(line.strip())
+                if match:
+                    (
+                        timestamp,
+                        network,
+                        wifi_name,
+                        public_ip,
+                        local_ip,
+                        vpn_intf,
+                        vpn_ip,
+                    ) = match.groups()
+                    # 清洗数据，将"Unknown"替换为None或空字符串以便分析
+                    public_ip = None if public_ip.strip() == "Unknown" else public_ip.strip()
+                    wifi_name = None if wifi_name.strip() == "Unknown_WiFi" else wifi_name.strip()
+                    data.append(
+                        {
+                            "timestamp": pd.to_datetime(timestamp),
+                            "network": network.strip(),
+                            "wifi_name": wifi_name,
+                            "public_ip": public_ip,
+                            "local_ip": local_ip.strip(),
+                            "vpn_interface": vpn_intf.strip(),
+                            "vpn_ip": vpn_ip.strip(),
+                        }
+                    )
+        df = pd.DataFrame(data)
+        if not df.empty:
+            df = df.sort_values("timestamp").reset_index(drop=True)
+        return df
+    except FileNotFoundError:
+        log.error(f"日志文件未找到: {log_path}")
+        return pd.DataFrame()
 
 
 # %% [markdown]
-# ### get_public_ip() -> Tuple[Optional[str], Optional[str]]
+# ### analyze_ip_data(df: pd.DataFrame, days: int = REPORT_DAYS) -> Dict
 
 # %%
-def get_public_ip() -> Tuple[Optional[str], Optional[str]]:
-    """尝试从多个源获取公网IP地址.
+def analyze_ip_data(df: pd.DataFrame, days: int = REPORT_DAYS) -> Dict:
+    """分析IP数据，生成统计摘要和用于可视化的数据。
 
-    返回一个元组 (ip_address, error_message)。
-    如果成功获取到有效IP，则error_message为None。
-    如果获取失败或IP无效，则ip_address为None，并返回错误信息。.
+    返回一个包含各类分析结果的字典。
     """
-    # 定义多个可靠的公网IP查询服务
-    ip_services = [
-        " https://api.ipify.org ",  # 简单可靠
-        " https://ident.me ",
-        " https://ifconfig.me/ip ",
-        " https://ipinfo.io/ip ",
-    ]
+    if df.empty:
+        return {}
 
-    for service in ip_services:
-        try:
-            # 使用带超时的curl命令，避免长时间阻塞
-            cmd = f"curl -s -m 8 {service}"
-            ip_candidate = execcmd(cmd).strip()
+    # 筛选指定时间范围
+    cutoff_time = datetime.now() - timedelta(days=days)
+    df_recent = df[df["timestamp"] >= cutoff_time].copy()
 
-            if is_valid_ip(ip_candidate):
-                # 成功获取到有效IP
-                return (ip_candidate, None)
-            else:
-                # 获取到了响应，但内容不是IP，记录日志
-                log.warning(f"服务 {service} 返回了无效内容: {ip_candidate}")
-                continue
+    analysis = {
+        "time_range": (df["timestamp"].min(), df["timestamp"].max()),
+        "total_records": len(df),
+        "recent_records": len(df_recent),
+        "summary": {},
+        "detail": {},  # 关键修复：添加 detail 键
+    }
 
-        except Exception as e:
-            # 命令执行失败（超时、网络错误等）
-            error_msg = f"从 {service} 获取IP失败: {str(e)}"
-            log.warning(error_msg)
-            continue
+    # 1. 网络连接类型统计
+    analysis["summary"]["network_stats"] = df_recent["network"].value_counts().to_dict()
 
-    # 所有服务都尝试失败
-    return (None, "所有公网IP查询服务均不可用或返回无效数据")
+    # 2. WiFi热点统计 (Top 5)
+    wifi_stats = df_recent["wifi_name"].value_counts().head(5)
+    analysis["summary"]["wifi_stats"] = wifi_stats.to_dict()
+
+    # 3. 公网IP变化分析
+    # 识别公网IP变化的时刻
+    df_recent["public_ip_change"] = df_recent["public_ip"] != df_recent["public_ip"].shift(1)
+    ip_change_points = df_recent[df_recent["public_ip_change"]]
+    analysis["summary"]["public_ip_changes"] = len(ip_change_points)
+    analysis["detail"]["ip_change_log"] = ip_change_points[["timestamp", "public_ip"]].to_dict("records")
+
+    # 4. 本地IP段统计 (例如 192.168.1.x, 10.116.20.x)
+    def extract_ip_segment(ip):
+        if ip and "." in ip:
+            parts = ip.split(".")
+            return f"{parts[0]}.{parts[1]}.{parts[2]}.x"
+        return "Unknown"
+
+    df_recent["ip_segment"] = df_recent["local_ip"].apply(extract_ip_segment)
+    analysis["summary"]["local_ip_segments"] = df_recent["ip_segment"].value_counts().to_dict()
+
+    # 5. VPN连接稳定性 (VPN接口是否存在)
+    vpn_stats = df_recent["vpn_interface"].value_counts()
+    analysis["summary"]["vpn_stats"] = vpn_stats.to_dict()
+
+    # 为图表准备数据
+    analysis["chart_data"] = {
+        "timeline": df_recent[["timestamp", "public_ip", "wifi_name"]],
+        "network_dist": analysis["summary"]["network_stats"],
+        "wifi_dist": analysis["summary"]["wifi_stats"],
+    }
+    return analysis
+
 
 # %% [markdown]
-# ### getipwifi() - 获取IP和WiFi信息
-#
-# 根据不同操作系统，调用命令行工具获取ip（本地、外部）和wifi信息
-#
-# **返回格式:** (ip_local, ip_public, wifi, wifiid)
-#
-# **异常处理:** 自动降级处理，确保单点故障不影响整体功能
-
+# ### generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[str, Optional[bytes]]
 
 # %%
-def getipwifi() -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """根据不同操作系统，调用命令行工具获取ip（本地、外部）和wifi信息.
+def generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[str, Optional[bytes]]:
+    """生成图文并茂的Markdown报告内容，并返回报告文本和图表图片的二进制数据（可选）。"""
+    if not analysis:
+        return "# IP网络分析报告\n\n暂无有效数据。\n", None
 
-    返回格式: (ip_local, ip_public, wifi, wifiid)
-    """
-    ip_local, ip_public, wifi, wifiid = "", "", "", ""
-    sys_platform_str = execcmd("uname -a")
+    md_lines = []
+    # 标题与概览
+    md_lines.append(f"# 🌐 IP网络连接分析报告 ({host_user})")
+    md_lines.append(f"**设备ID**: `{device_id}`  |  **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    md_lines.append(f"**分析时间范围**: {analysis['time_range'][0]} 至 {analysis['time_range'][1]}")
+    md_lines.append(
+        f"**总记录数**: {analysis['total_records']} | **近期记录数(最近{REPORT_DAYS}天)**: {analysis['recent_records']}\n"
+    )
 
-    if re.findall("Linux", sys_platform_str):
-        # 获取本地IP - 使用更通用的ip命令，而非nmcli
-        try:
-            # 优先使用 `ip` 命令，它比 ifconfig 更现代且普遍
-            ip_output = execcmd("ip addr show")
-            # 一个简单的例子，解析 IP 地址，可能需要更复杂的逻辑处理多个接口
-            ip_match = (
-                re.search(r"inet (192\.168\.\d+\.\d+)/", ip_output)
-                or re.search(r"inet (10\.\d+\.\d+\.\d+)/", ip_output)
-                or re.search(r"inet (172\.1[6-9]\.\d+\.\d+)/", ip_output)
-            )
-            if ip_match:
-                ip_local = ip_match.group(1)
-            else:
-                #  fallback to ifconfig
-                ifinet_str = execcmd(
-                    "ifconfig | grep 'inet ' | grep -v 127.0.0.1 | awk '{print $2}'"
-                )
-                if ifinet_str:
-                    ip_local = ifinet_str.split()[-1]  # 可能需要调整获取逻辑
-        except Exception as e:
-            log.warning(f"获取本地IP失败: {e}")
+    # 1. 核心摘要 (用表格展示)
+    md_lines.append("## 📊 核心摘要")
+    summary_table = []
+    summary = analysis["summary"]
+    summary_table.append(["**公网IP变化次数**", f"{summary.get('public_ip_changes', 0)} 次"])
+    # 主要网络类型
+    main_network = max(
+        summary.get("network_stats", {}),
+        key=summary.get("network_stats", {}).get,
+        default="N/A",
+    )
+    summary_table.append(["**主要连接方式**", main_network])
+    # 主要WiFi
+    main_wifi = max(
+        summary.get("wifi_stats", {}),
+        key=summary.get("wifi_stats", {}).get,
+        default="N/A",
+    )
+    summary_table.append(["**最常连接WiFi**", main_wifi])
+    # 主要本地IP段
+    main_segment = max(
+        summary.get("local_ip_segments", {}),
+        key=summary.get("local_ip_segments", {}).get,
+        default="N/A",
+    )
+    summary_table.append(["**主要本地IP段**", main_segment])
 
-        # 获取公网IP - 使用通用的curl命令
-        ip_public, ip_error = get_public_ip()
-        if ip_public is None:
-            log.error(f"获取公网IP失败，原因：{ip_error}")
+    # 使用Markdown表格语法
+    md_lines.append("| 指标 | 值 |")
+    md_lines.append("|:---|:---|")
+    for row in summary_table:
+        md_lines.append(f"| {row[0]} | {row[1]} |")
+    md_lines.append("")
 
-        # 获取WiFi信息 - 首先检查nmcli是否存在，不存在则尝试其他方法
-        if re.findall("Android", sys_platform_str):
-            # Termux 环境
-            try:
-                wifi_info = termux_wifi_connectioninfo()
-                wifi = wifi_info.get("ssid", "")
-                wifiid = wifi_info.get("bssid", "") if wifi != "<unknown ssid>" else ""
-                wifi = "" if wifi == "<unknown ssid>" else wifi
-            except Exception as e:
-                log.warning(f"Android WiFi信息获取失败: {e}")
-        else:
-            # 非Android Linux环境
-            # 首先检查nmcli是否存在
-            if is_tool_valid("nmcli"):
-                try:
-                    nmcli_str = execcmd("nmcli dev wifi")
-                    if nmcli_str:
-                        connected_lines = [
-                            line for line in nmcli_str.split("\n") if "*" in line
-                        ]
-                        if connected_lines:
-                            wifi = connected_lines[0].split()
-                            nmclilst_str = execcmd("nmcli device wifi list")
-                            if nmclilst_str:
-                                for line in nmclilst_str.split("\n"):
-                                    if wifi in line:
-                                        wifiid = line.split()[-1]
-                                        break
-                except Exception as e:
-                    log.warning(f"nmcli WiFi信息获取失败: {e}")
-            else:
-                log.info("nmcli 不可用，尝试其他方法获取WiFi信息")
-                # 备选方案1: 查看无线设备状态（需要sudo权限或特定配置）
-                try:
-                    # 检查是否有无线设备
-                    wireless_dev = execcmd(
-                        "iw dev | awk '$1==\"Interface\"{print $2}'"
-                    ).strip()
-                    if wireless_dev:
-                        # 尝试获取连接信息，这可能需要root权限
-                        iw_output = execcmd(f"iw {wireless_dev} link")
-                        if iw_output and "Connected" in iw_output:
-                            ssid_match = re.search(r"SSID: (.+)", iw_output)
-                            if ssid_match:
-                                wifi = ssid_match.group(1)
-                            # BSSID 可能也在输出中
-                            bssid_match = re.search(r"Connected to (.+) \(", iw_output)
-                            if bssid_match:
-                                wifiid = bssid_match.group(1)
-                except Exception as e:
-                    log.warning(f"iw command failed: {e}")
+    # 2. 详细统计表格
+    md_lines.append("## 📈 详细统计")
+    # 网络类型分布
+    md_lines.append("### 网络连接类型分布")
+    for net_type, count in summary.get("network_stats", {}).items():
+        md_lines.append(f"- **{net_type}**: {count} 次")
+    md_lines.append("")
 
-                # 备选方案2: 解析系统文件 (如 /proc/net/wireless)
-                # 注意：此文件通常不直接提供SSID，主要提供信号质量
-                try:
-                    with open("/proc/net/wireless", "r") as f:
-                        wireless_lines = f.readlines()
-                    if len(wireless_lines) > 2:  # 有标题行和至少一个设备行
-                        # 这里可能只能获取设备名和信号强度，难以直接获取SSID
-                        dev_line = wireless_lines[2].split()
-                        dev_name = dev_line[0].strip(":")
-                        log.info(
-                            f"无线设备 {dev_name} 活跃，但无法通过文件直接获取SSID"
-                        )
-                except (IOError, IndexError) as e:
-                    log.info(f"无法读取 /proc/net/wireless 或无线设备未激活{e}")
+    # WiFi热点分布
+    md_lines.append("### 常连WiFi热点 (Top 5)")
+    for wifi, count in summary.get("wifi_stats", {}).items():
+        display_name = wifi if wifi else "<未知>"
+        md_lines.append(f"- **{display_name}**: {count} 次")
+    md_lines.append("")
 
-    # 对于Windows系统，可以使用netsh
-    elif platform.system() == "Windows":
-        try:
-            ipconfig_str = execcmd("ipconfig")
-            ip_matches = [
-                line.split(":")[-1].strip()
-                for line in re.findall("IPv4.*", ipconfig_str)
-                if re.search(r"\.\d+$", line)
-            ]
-            ip_local = ip_matches[-1] if ip_matches else ""
-
-            nslookup_str = execcmd("nslookup myip.opendns.com resolver1.opendns.com")
-            ip_public_matches = [
-                line.split(":")[-1].strip()
-                for line in re.findall("Address.*", nslookup_str)
-                if re.search(r"\.\d+$", line)
-            ]
-            ip_public = ip_public_matches[-1] if ip_public_matches else ""
-
-            wifi_str = execcmd("netsh wlan show interfaces")
-            resultlst = [
-                line.split(":", 1) for line in re.findall(".*SSID.*", wifi_str)
-            ]
-            splitlist = [x.strip() for line in resultlst for x in line]
-            wifidict = dict(zip(splitlist[::2], splitlist[1::2]))
-            wifi = wifidict.get("SSID", "")
-            wifiid = wifidict.get("BSSID", "")
-        except Exception as e:
-            log.error(f"Windows系统信息获取失败: {e}")
-
+    # 3. 公网IP变化历史
+    md_lines.append("## 🔄 公网IP变化历史")
+    change_log = analysis.get("detail", {}).get("ip_change_log", [])
+    if change_log:
+        md_lines.append("| 时间 | 公网IP |")
+        md_lines.append("|:---|:---|")
+        for entry in change_log[-10:]:  # 显示最近10次变化
+            md_lines.append(f"| {entry['timestamp']} | `{entry['public_ip']}` |")
     else:
-        log.warning(f"未知操作系统: {platform.system()}")
-        ip_local, ip_public, wifi, wifiid = "", "", "", ""
+        md_lines.append("近期无公网IP变化。")
+    md_lines.append("")
 
-    # 处理空值并确保字符串类型
-    result = [
-        str(ip_local) if ip_local else None,
-        str(ip_public) if ip_public else None,
-        str(wifi) if wifi else None,
-        str(wifiid) if wifiid else None,
-    ]
-    log.info(f"获取到的信息: {result}")
-    return tuple(result)
+    # 4. 生成图表 (此处为示例，实际需调用matplotlib生成)
+    # 假设 generate_charts 函数返回图表图片的base64字符串或二进制数据
+    chart_image_data = generate_charts(analysis["chart_data"])
+
+    # 在报告中插入图表引用
+    if chart_image_data:
+        # 如果图表已保存为资源文件并获取了资源ID
+        # md_lines.append(f"## 📸 可视化图表\n\n![IP连接趋势图](:/{resource_id})")
+        md_lines.append("## 📸 可视化图表\n\n*(图表已更新至笔记附件)*")
+    else:
+        md_lines.append("## 📸 可视化图表\n\n*(图表生成跳过)*")
+
+    # 5. 原始数据摘要
+    md_lines.append("## 📁 数据来源")
+    md_lines.append(f"- 日志文件: `{LOG_FILE_PATH}`")
+    md_lines.append(f"- 最后更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    md_lines.append("- 注：本报告基于自动采集的日志生成。\n")
+
+    report_content = "\n".join(md_lines)
+    return report_content, chart_image_data
 
 
 # %% [markdown]
-# ### showiprecords() - 显示IP记录
-#
-# 综合输出ip记录，处理IP信息变化并更新笔记
-#
-# **流程:**
-# 1. 获取当前IP信息
-# 2. 查找或创建笔记
-# 3. 比较信息变化
-# 4. 保存变化记录
-# 5. 更新云端笔记
-
+# ### generate_charts(chart_data: Dict) -> Optional[bytes]
 
 # %%
-def showiprecords() -> bool:
-    """主函数：获取IP记录并更新笔记，处理数字类型转换问题.
-
-    Returns:
-        bool: 执行是否成功
+def generate_charts(chart_data: Dict) -> Optional[bytes]:
+    """生成可视化图表，返回图片二进制数据（如PNG格式）。
+    可以生成：
+        1. 公网IP随时间的变化序列（折线图，不同IP用不同颜色）。
+        2. 网络类型与WiFi热点分布（条形图或饼图）。
     """
+    try:
+        # 示例：生成一个简单的公网IP出现次数的条形图
+        plt.figure(figsize=(10, 6))
+        ip_series = chart_data["timeline"]["public_ip"].dropna()
+        if not ip_series.empty:
+            ip_counts = ip_series.value_counts().head(8)  # Top 8个IP
+            ip_counts.plot(kind="bar", color="skyblue")
+            plt.title("近期公网IP出现频率 (Top 8)")
+            plt.xlabel("公网IP地址")
+            plt.ylabel("出现次数")
+            plt.xticks(rotation=45, ha="right")
+            plt.tight_layout()
+
+            # 将图表保存到字节流
+            import io
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png", dpi=150)
+            plt.close()
+            buf.seek(0)
+            return buf.getvalue()
+    except Exception as e:
+        log.error(f"生成图表时出错: {e}")
+    return None
+
+
+# %% [markdown]
+# ### update_ip_report_note()
+
+# %%
+@timethis
+def update_ip_report_note():
+    """主函数：读取日志、分析数据、生成报告并更新Joplin笔记。"""
     try:
         device_id = getdeviceid()
-        section = f"{device_id}"
-        noteip_title = f"ip动态_【{gethostuser()}】"
+        host_user = gethostuser()
 
-        # 获取当前IP信息
-        ip_local, ip_public, wifi, wifiid = getipwifi()
-        log.info(f"当前获取的信息: {ip_local}, {ip_public}, {wifi}, {wifiid}")
+        # 1. 读取数据
+        df = parse_ip_log_file(LOG_FILE_PATH)
+        if df.empty:
+            log.warning("IP日志文件为空或解析失败，跳过报告更新。")
+            return False, "无数据"
 
-        should_update = False
-        # 1. 检查公网IP是否有效
-        if not is_valid_ip(ip_public):
-            # 本次获取失败，但可能有之前有效的记录
-            log.error(
-                f"本次获取失败，公网IP无效: {ip_public}。将尝试使用上次的有效记录进行对比。"
-            )
-            # 从配置中读取上一次成功的公网IP记录
-            ip_public_r_prev = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r_prev")).strip()
-            # 如果上一次的记录是有效的，说明网络状态可能从“有IP”变成了“无IP”（如断网）
-            if is_valid_ip(ip_public_r_prev):
-                log.info("检测到公网IP丢失（从有到无），这是一种状态变化，需要记录。")
-                # 此处可以特殊处理，例如记录一条“网络断开”的日志
-                should_update = True
-            else:
-                log.info("本次和上次获取均失败，无有效状态变化，跳过更新。")
-                return False  # 不更新记录
+        # 2. 分析数据
+        analysis = analyze_ip_data(df, days=REPORT_DAYS)
 
-        # 2. 检查其他信息是否有效（例如本地IP）
-        if not is_valid_ip(ip_local):
-            log.warning(f"本地IP地址无效: {ip_local}，但仍可继续处理公网IP")
+        # 3. 生成报告文本和图表
+        report_content, chart_image = generate_ip_report(analysis, device_id, host_user)
 
-        # 3. 只有所有核心信息（至少公网IP）有效，才与历史记录比较并决定是否更新
-        ip_public_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_public_r")).strip()
-        if is_valid_ip(ip_public):
-            if ip_public.strip() != ip_public_r.strip():
-                should_update = True
+        # 4. 查找或创建笔记
+        notebook_id = searchnotebook("ewmobile")  # 假设仍在ewmobile笔记本
+        note_title = f"IP分析报告_{host_user}"
+        existing_notes = searchnotes(note_title, parent_id=notebook_id)
 
-        # 查找或创建笔记
-        nbid = searchnotebook("ewmobile")
-        ip_cloud_id = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_cloud_id")).strip()
-        if not ip_cloud_id:
-            ipnotefindlist = searchnotes(f"{noteip_title}")
-            if ipnotefindlist:
-                ip_cloud_id = ipnotefindlist[-1].id
-            else:
-                ip_cloud_id = createnote(title=noteip_title, parent_id=nbid)
-                log.info(f"新建IP动态笔记: {ip_cloud_id}")
-            setcfpoptionvalue(CONFIG_NAME, section, "ip_cloud_id", str(ip_cloud_id))
-
-        # 使用安全函数获取记录信息
-        nowstr = datetime.datetime.now().strftime("%F %T")
-        ip_local_r = str(getcfpoptionvalue(CONFIG_NAME, section, "ip_local_r")).strip()
-        wifi_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifi_r")).strip()
-        wifiid_r = str(getcfpoptionvalue(CONFIG_NAME, section, "wifiid_r")).strip()
-        start_r = str(getcfpoptionvalue(CONFIG_NAME, section, "start_r")).strip()
-
-        log.info(f"上次记录的信息: {ip_local_r}, {ip_public_r}, {wifi_r}, {wifiid_r}")
-
-        # 检查信息是否有变化（全部作为字符串比较）
-        has_changed = (
-            (str(ip_local).strip() != str(ip_local_r).strip())
-            or (str(ip_public).strip() != str(ip_public_r).strip())
-            or (str(wifi).strip() != str(wifi_r).strip())
-            or (str(wifiid).strip() != str(wifiid_r).strip())
-        )
-
-        if has_changed or not start_r or should_update:
-            log.info("检测到信息变化或首次运行，更新记录")
-
-            # 保存变化记录到文件
-            txtfilename = os.path.join(
-                dirmainpath, "data", "ifttt", f"ip_{section}.txt"
-            )
-            os.makedirs(os.path.dirname(txtfilename), exist_ok=True)
-
-            # 读取现有记录
-            itemread = readfromtxt(txtfilename) if os.path.exists(txtfilename) else []
-            itemclean = [x for x in itemread if "timeout" not in x]
-            itempolluted = [x for x in itemread if "timeout" in x]
-
-            if itempolluted:
-                log.info(f"发现不合法记录: {itempolluted}")
-
-            # 添加新记录并写入文件
-            if start_r and ip_local_r and ip_public_r:  # 有之前记录
-                new_record = f"{ip_local_r}\t{ip_public_r}\t{wifi_r}\t{wifiid_r}\t{start_r}\t{nowstr}"
-                itemnewr = [new_record] + itemclean
-                write2txt(txtfilename, itemnewr)
-
-            # 更新当前记录（确保存储为字符串）
-            setcfpoptionvalue(CONFIG_NAME, section, "ip_local_r", str(ip_local).strip())
-            setcfpoptionvalue(CONFIG_NAME, section, "ip_public_r", str(ip_public).strip())
-            setcfpoptionvalue(CONFIG_NAME, section, "wifi_r", str(wifi).strip())
-            setcfpoptionvalue(CONFIG_NAME, section, "wifiid_r", str(wifiid).strip())
-            setcfpoptionvalue(CONFIG_NAME, section, "start_r", nowstr)
-
-            # 更新笔记
-            # 构建当前记录行
-            if is_valid_ip(ip_public) and is_valid_ip(ip_local):
-                # 一切正常，记录数据行
-                current_record = f"{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}"
-            else:
-                # 获取失败，记录一条错误日志行（以#或//开头以示区别）
-                error_type = "NoPublicIP" if not is_valid_ip(ip_public) else "NoLocalIP"
-                current_record = f"# ERROR::timeout::{error_type}::{nowstr}:: Local={ip_local}, Public={ip_public}"
-            # current_records = [f"{ip_local}\t{ip_public}\t{wifi}\t{wifiid}\t{nowstr}"]
-            current_records = [current_record]
-            if start_r and ip_local_r and ip_public_r:
-                current_records.extend(itemnewr[:30])  # 保留最近几条记录
-
-            updatenote_title(ip_cloud_id, noteip_title, parent_id=nbid)
-            updatenote_body(ip_cloud_id, "\n".join(current_records), parent_id=nbid)
-            log.info("IP信息已更新")
+        if existing_notes:
+            note = existing_notes[0]
+            note_id = note.id
+            log.info(f"找到现有笔记: {note_title}")
         else:
-            log.info("IP信息无变化，无需更新")
+            note_id = createnote(title=note_title, parent_id=notebook_id)
+            log.info(f"创建新笔记: {note_title}")
 
-        return True
+        # 5. 如果有图表，先上传为资源文件并获取链接
+        if chart_image:
+            # 此处需要调用Joplin API上传资源，并获取资源ID
+            # resource_id = jpapi.add_resource_from_bytes(chart_image, title="ip_chart.png", mime="image/png")
+            # 在报告内容中插入图片链接
+            # report_content += f"\n\n![IP分析图表](:/{resource_id})"
+            # 简化处理：先保存图表到临时文件，然后上传
+            temp_chart_path = Path("/tmp/ip_chart.png")
+            with open(temp_chart_path, "wb") as f:
+                f.write(chart_image)
+            resource_id = jpapi.add_resource(str(temp_chart_path))
+            # 在报告开头或合适位置插入图片引用
+            report_content = report_content.replace("*(图表已更新至笔记附件)*", f"![IP连接分析图表](:/{resource_id})")
+
+        # 6. 更新笔记内容和标题（附带更新时间）
+        new_title = f"{note_title} (更新于{datetime.now().strftime('%Y-%m-%d %H:%M')})"
+        updatenote_title(note_id, new_title)
+        updatenote_body(note_id, report_content)
+
+        log.info(f"IP分析报告已更新至笔记: {new_title}")
+        return True, "报告更新成功"
 
     except Exception as e:
-        log.error(f"执行showiprecords时发生错误: {e}")
-        return False
+        import traceback
+
+        error_detail = traceback.format_exc()
+        log.error(f"更新IP报告笔记失败: {e}\n详细错误信息:\n{error_detail}")
+        return False, f"更新失败: {str(e)} - 详细错误请查看日志"
 
 
 # %% [markdown]
-# ## 主执行函数
-#
-# 程序入口点，处理执行逻辑和日志记录
+# ## 主函数main()
 
 # %%
 if __name__ == "__main__":
-    is_log_details = getinivaluefromcloud("happyjoplin", "logdetails")
-    if not_IPython() and is_log_details:
-        log.info(f"开始运行文件 {__file__}")
-
-    success = showiprecords()
-
-    if not_IPython() and is_log_details:
-        log.info(f"文件执行完毕，状态: {'成功' if success else '失败'}")
+    if not_IPython():
+        log.info(f"开始运行文件\t{__file__}")
+    success, message = update_ip_report_note()
+    if not_IPython():
+        status = "成功" if success else "失败"
+        log.info(f"文件执行{status}{message}\t{__file__}")
