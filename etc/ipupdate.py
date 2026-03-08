@@ -370,7 +370,7 @@ def update_ip_report_note():
             # 在报告内容中插入图片链接
             # report_content += f"\n\n![IP分析图表](:/{resource_id})"
             # 简化处理：先保存图表到临时文件，然后上传
-            temp_chart_path = Path("/tmp/ip_chart.png")
+            temp_chart_path = Path(dirmainpath) / "img" / "ip_chart.png"
             with open(temp_chart_path, "wb") as f:
                 f.write(chart_image)
             resource_id = jpapi.add_resource(str(temp_chart_path))
