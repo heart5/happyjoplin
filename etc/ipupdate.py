@@ -150,24 +150,45 @@ def analyze_ip_data(df: pd.DataFrame, days: int = REPORT_DAYS) -> Dict:
         "total_records": len(df),
         "recent_records": len(df_recent),
         "summary": {},
-        "detail": {},  # 关键修复：添加 detail 键
+        "detail": {},
+        "latest_record": {},  # 新增：最新记录
     }
 
-    # 1. 网络连接类型统计
+    # 1. 获取最新一行IP数据记录
+    if not df.empty:
+        latest_row = df.iloc[-1]  # 获取最新一行（已按时间排序）
+        analysis["latest_record"] = {
+            "timestamp": latest_row["timestamp"],
+            "network": latest_row["network"],
+            "wifi_name": latest_row["wifi_name"],
+            "public_ip": latest_row["public_ip"],
+            "local_ip": latest_row["local_ip"],
+            "vpn_interface": latest_row["vpn_interface"],
+            "vpn_ip": latest_row["vpn_ip"],
+        }
+
+    # 2. 网络连接类型统计
     analysis["summary"]["network_stats"] = df_recent["network"].value_counts().to_dict()
 
-    # 2. WiFi热点统计 (Top 5)
-    wifi_stats = df_recent["wifi_name"].value_counts().head(5)
-    analysis["summary"]["wifi_stats"] = wifi_stats.to_dict()
+    # 3. WiFi热点统计 (Top 5) 并添加最近连接时间
+    wifi_stats = {}
+    for wifi_name in df_recent["wifi_name"].dropna().unique():
+        wifi_data = df_recent[df_recent["wifi_name"] == wifi_name]
+        count = len(wifi_data)
+        latest_time = wifi_data["timestamp"].max() if not wifi_data.empty else None
+        wifi_stats[wifi_name] = {"count": count, "latest_time": latest_time}
 
-    # 3. 公网IP变化分析
-    # 识别公网IP变化的时刻
+    # 按连接次数排序，取Top 5
+    sorted_wifi = sorted(wifi_stats.items(), key=lambda x: x["count"], reverse=True)[:5]
+    analysis["summary"]["wifi_stats"] = dict(sorted_wifi)
+
+    # 4. 公网IP变化分析
     df_recent["public_ip_change"] = df_recent["public_ip"] != df_recent["public_ip"].shift(1)
     ip_change_points = df_recent[df_recent["public_ip_change"]]
     analysis["summary"]["public_ip_changes"] = len(ip_change_points)
     analysis["detail"]["ip_change_log"] = ip_change_points[["timestamp", "public_ip"]].to_dict("records")
 
-    # 4. 本地IP段统计 (例如 192.168.1.x, 10.116.20.x)
+    # 5. 本地IP段统计
     def extract_ip_segment(ip):
         if ip and "." in ip:
             parts = ip.split(".")
@@ -177,7 +198,7 @@ def analyze_ip_data(df: pd.DataFrame, days: int = REPORT_DAYS) -> Dict:
     df_recent["ip_segment"] = df_recent["local_ip"].apply(extract_ip_segment)
     analysis["summary"]["local_ip_segments"] = df_recent["ip_segment"].value_counts().to_dict()
 
-    # 5. VPN连接稳定性 (VPN接口是否存在)
+    # 6. VPN连接稳定性
     vpn_stats = df_recent["vpn_interface"].value_counts()
     analysis["summary"]["vpn_stats"] = vpn_stats.to_dict()
 
@@ -185,8 +206,9 @@ def analyze_ip_data(df: pd.DataFrame, days: int = REPORT_DAYS) -> Dict:
     analysis["chart_data"] = {
         "timeline": df_recent[["timestamp", "public_ip", "wifi_name"]],
         "network_dist": analysis["summary"]["network_stats"],
-        "wifi_dist": analysis["summary"]["wifi_stats"],
+        "wifi_dist": {wifi: data["count"] for wifi, data in analysis["summary"]["wifi_stats"].items()},
     }
+
     return analysis
 
 
@@ -200,6 +222,7 @@ def generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[
         return "# IP网络分析报告\n\n暂无有效数据。\n", None
 
     md_lines = []
+
     # 标题与概览
     md_lines.append(f"# 🌐 IP网络连接分析报告 ({host_user})")
     md_lines.append(f"**设备ID**: `{device_id}`  |  **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -212,7 +235,20 @@ def generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[
     md_lines.append("## 📊 核心摘要")
     summary_table = []
     summary = analysis["summary"]
+
+    # 新增：显示最新IP记录
+    latest_record = analysis.get("latest_record", {})
+    if latest_record:
+        latest_time = latest_record.get("timestamp", "")
+        if isinstance(latest_time, pd.Timestamp):
+            latest_time = latest_time.strftime("%Y-%m-%d %H:%M:%S")
+        summary_table.append(["**最新记录时间**", f"{latest_time}"])
+        summary_table.append(["**最新网络类型**", f"{latest_record.get('network', 'N/A')}"])
+        summary_table.append(["**最新公网IP**", f"`{latest_record.get('public_ip', 'N/A')}`"])
+        summary_table.append(["**最新本地IP**", f"`{latest_record.get('local_ip', 'N/A')}`"])
+
     summary_table.append(["**公网IP变化次数**", f"{summary.get('public_ip_changes', 0)} 次"])
+
     # 主要网络类型
     main_network = max(
         summary.get("network_stats", {}),
@@ -220,13 +256,7 @@ def generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[
         default="N/A",
     )
     summary_table.append(["**主要连接方式**", main_network])
-    # 主要WiFi
-    main_wifi = max(
-        summary.get("wifi_stats", {}),
-        key=summary.get("wifi_stats", {}).get,
-        default="N/A",
-    )
-    summary_table.append(["**最常连接WiFi**", main_wifi])
+
     # 主要本地IP段
     main_segment = max(
         summary.get("local_ip_segments", {}),
@@ -244,17 +274,32 @@ def generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[
 
     # 2. 详细统计表格
     md_lines.append("## 📈 详细统计")
+
     # 网络类型分布
     md_lines.append("### 网络连接类型分布")
     for net_type, count in summary.get("network_stats", {}).items():
         md_lines.append(f"- **{net_type}**: {count} 次")
     md_lines.append("")
 
-    # WiFi热点分布
+    # WiFi热点分布 (新增最近连接时间)
     md_lines.append("### 常连WiFi热点 (Top 5)")
-    for wifi, count in summary.get("wifi_stats", {}).items():
+    wifi_stats = summary.get("wifi_stats", {})
+    for wifi, data in wifi_stats.items():
+        count = data.get("count", 0)
+        latest_time = data.get("latest_time")
+
+        # 格式化时间
+        if latest_time:
+            if isinstance(latest_time, pd.Timestamp):
+                time_str = latest_time.strftime("%Y-%m-%d %H:%M")
+            else:
+                time_str = str(latest_time)
+            time_display = f" (最近连接: {time_str})"
+        else:
+            time_display = ""
+
         display_name = wifi if wifi else "<未知>"
-        md_lines.append(f"- **{display_name}**: {count} 次")
+        md_lines.append(f"- **{display_name}**: {count} 次{time_display}")
     md_lines.append("")
 
     # 3. 公网IP变化历史
@@ -264,19 +309,19 @@ def generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[
         md_lines.append("| 时间 | 公网IP |")
         md_lines.append("|:---|:---|")
         for entry in change_log[-10:]:  # 显示最近10次变化
-            md_lines.append(f"| {entry['timestamp']} | `{entry['public_ip']}` |")
+            timestamp = entry.get("timestamp", "")
+            if isinstance(timestamp, pd.Timestamp):
+                timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
+            md_lines.append(f"| {timestamp} | `{entry['public_ip']}` |")
     else:
         md_lines.append("近期无公网IP变化。")
     md_lines.append("")
 
-    # 4. 生成图表 (此处为示例，实际需调用matplotlib生成)
-    # 假设 generate_charts 函数返回图表图片的base64字符串或二进制数据
+    # 4. 生成图表
     chart_image_data = generate_charts(analysis["chart_data"])
 
     # 在报告中插入图表引用
     if chart_image_data:
-        # 如果图表已保存为资源文件并获取了资源ID
-        # md_lines.append(f"## 📸 可视化图表\n\n![IP连接趋势图](:/{resource_id})")
         md_lines.append("## 📸 可视化图表\n\n*(图表已更新至笔记附件)*")
     else:
         md_lines.append("## 📸 可视化图表\n\n*(图表生成跳过)*")
