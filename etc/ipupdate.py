@@ -23,10 +23,11 @@
 # ## 导入依赖库
 
 # %%
+import json
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -66,6 +67,8 @@ except ImportError as e:
 # ## 配置常量
 # %%
 CONFIG_NAME = "happyjpip"
+IP_UPDATE_CONFIG_SECTION = "ip_update_status"
+
 pathtext = getinivaluefromcloud(CONFIG_NAME, f"{getdeviceid()}_ip_log")
 LOG_FILE_PATH = Path(f"{pathtext}").expanduser()  # 示例路径，需根据实际调整
 REPORT_DAYS = getinivaluefromcloud(CONFIG_NAME, "REPORT_DAYS")
@@ -379,6 +382,79 @@ def generate_charts(chart_data: Dict) -> Optional[bytes]:
 
 
 # %% [markdown]
+# ### detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]
+
+# %%
+def detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
+    """检测IP记录是否有变化，返回是否有变化和变化详情"""
+    # 从本地ini文件获取上一次的记录
+    last_record_str = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_record")
+    last_record = json.loads(last_record_str) if last_record_str else {}
+
+    if not last_record:
+        # 首次运行，记录当前状态
+        setcfpoptionvalue(
+            CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_record", json.dumps(current_record, ensure_ascii=False)
+        )
+        setcfpoptionvalue(
+            CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+        return True, {"initial": "首次记录IP状态"}
+
+    # 比较关键字段
+    changes = {}
+
+    # 1. 比较公网IP
+    last_public_ip = last_record.get("public_ip", "")
+    current_public_ip = current_record.get("public_ip", "")
+    if last_public_ip != current_public_ip:
+        changes["public_ip"] = {"old": last_public_ip, "new": current_public_ip}
+
+    # 2. 比较网络类型
+    last_network = last_record.get("network", "")
+    current_network = current_record.get("network", "")
+    if last_network != current_network:
+        changes["network"] = {"old": last_network, "new": current_network}
+
+    # 3. 比较WiFi名称
+    last_wifi = last_record.get("wifi_name", "")
+    current_wifi = current_record.get("wifi_name", "")
+    if last_wifi != current_wifi:
+        changes["wifi_name"] = {"old": last_wifi, "new": current_wifi}
+
+    # 4. 比较本地IP
+    last_local_ip = last_record.get("local_ip", "")
+    current_local_ip = current_record.get("local_ip", "")
+    if last_local_ip != current_local_ip:
+        changes["local_ip"] = {"old": last_local_ip, "new": current_local_ip}
+
+    # 5. 比较VPN接口
+    last_vpn_intf = last_record.get("vpn_interface", "")
+    current_vpn_intf = current_record.get("vpn_interface", "")
+    if last_vpn_intf != current_vpn_intf:
+        changes["vpn_interface"] = {"old": last_vpn_intf, "new": current_vpn_intf}
+
+    # 6. 比较VPN IP
+    last_vpn_ip = last_record.get("vpn_ip", "")
+    current_vpn_ip = current_record.get("vpn_ip", "")
+    if last_vpn_ip != current_vpn_ip:
+        changes["vpn_ip"] = {"old": last_vpn_ip, "new": current_vpn_ip}
+
+    if changes:
+        # 有变化，更新本地记录
+        setcfpoptionvalue(
+            CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_record", json.dumps(current_record, ensure_ascii=False)
+        )
+        setcfpoptionvalue(
+            CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+        return True, changes
+    else:
+        # 无变化
+        return False, {}
+
+
+# %% [markdown]
 # ### update_ip_report_note()
 
 # %%
@@ -395,45 +471,81 @@ def update_ip_report_note():
             log.warning("IP日志文件为空或解析失败，跳过报告更新。")
             return False, "无数据"
 
-        # 2. 分析数据
+        # 2. 获取最新记录用于变化检测
+        latest_row = df.iloc[-1]
+        current_record = {
+            "timestamp": latest_row["timestamp"].isoformat()
+            if hasattr(latest_row["timestamp"], "isoformat")
+            else str(latest_row["timestamp"]),
+            "network": latest_row["network"],
+            "wifi_name": latest_row["wifi_name"],
+            "public_ip": latest_row["public_ip"],
+            "local_ip": latest_row["local_ip"],
+            "vpn_interface": latest_row["vpn_interface"],
+            "vpn_ip": latest_row["vpn_ip"],
+        }
+
+        # 3. 检测IP变化
+        has_changes, changes = detect_ip_changes(current_record)
+
+        # 4. 如果没有变化，检查是否需要强制更新（基于时间）
+        if not has_changes:
+            # 检查上次更新时间
+            last_update_time_str = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_full_update")
+            if last_update_time_str:
+                last_update_time = datetime.strptime(last_update_time_str, "%Y-%m-%d %H:%M:%S")
+                time_diff = datetime.now() - last_update_time
+                # 如果超过24小时没有完整更新，强制更新
+                if time_diff.total_seconds() < 24 * 3600:
+                    log.info("IP记录无变化，且上次完整更新在24小时内，跳过报告更新。")
+                    return True, "IP无变化，跳过更新"
+
+            log.info("IP记录无变化，但超过24小时未更新报告，执行强制更新。")
+
+        # 5. 分析数据
         analysis = analyze_ip_data(df, days=REPORT_DAYS)
 
-        # 3. 生成报告文本和图表
+        # 6. 生成报告文本和图表
         report_content, chart_image = generate_ip_report(analysis, device_id, host_user)
 
-        # 4. 查找或创建笔记
-        notebook_id = searchnotebook("ewmobile")  # 假设仍在ewmobile笔记本
+        # 7. 查找或创建笔记
+        notebook_id = searchnotebook("ewmobile")
         note_title = f"IP分析报告_{host_user}"
         existing_notes = searchnotes(note_title, parent_id=notebook_id)
 
         if existing_notes:
-            note = existing_notes[0]
+            note = existing_notes
             note_id = note.id
             log.info(f"找到现有笔记: {note_title}")
         else:
             note_id = createnote(title=note_title, parent_id=notebook_id)
             log.info(f"创建新笔记: {note_title}")
 
-        # 5. 如果有图表，先上传为资源文件并获取链接
+        # 8. 如果有图表，上传为资源文件
         if chart_image:
-            # 此处需要调用Joplin API上传资源，并获取资源ID
-            # resource_id = jpapi.add_resource_from_bytes(chart_image, title="ip_chart.png", mime="image/png")
-            # 在报告内容中插入图片链接
-            # report_content += f"\n\n![IP分析图表](:/{resource_id})"
-            # 简化处理：先保存图表到临时文件，然后上传
-            temp_chart_path = Path(dirmainpath) / "img" / "ip_chart.png"
+            temp_chart_path = Path("/tmp/ip_chart.png")
             with open(temp_chart_path, "wb") as f:
                 f.write(chart_image)
             resource_id = jpapi.add_resource(str(temp_chart_path))
-            # 在报告开头或合适位置插入图片引用
             report_content = report_content.replace("*(图表已更新至笔记附件)*", f"![IP连接分析图表](:/{resource_id})")
 
-        # 6. 更新笔记内容和标题（附带更新时间）
+        # 9. 更新笔记内容和标题
         new_title = f"{note_title} (更新于{datetime.now().strftime('%Y-%m-%d %H:%M')})"
         updatenote_title(note_id, new_title)
         updatenote_body(note_id, report_content)
 
-        log.info(f"IP分析报告已更新至笔记: {new_title}")
+        # 10. 记录完整更新时间
+        setcfpoptionvalue(
+            CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_full_update", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        # 11. 记录更新摘要
+        if has_changes:
+            change_summary = "; ".join([f"{k}: {v['old']}→{v['new']}" for k, v in changes.items()])
+            log.info(f"IP分析报告已更新至笔记: {new_title}, 变化: {change_summary}")
+        else:
+            log.info(f"IP分析报告已更新至笔记: {new_title} (强制更新，无IP变化)")
+
         return True, "报告更新成功"
 
     except Exception as e:
