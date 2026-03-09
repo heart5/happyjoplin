@@ -585,7 +585,7 @@ def update_ip_report_note():
 
         # 11. 记录更新摘要
         if has_changes:
-            change_summary = generate_change_summary()"; ".join([f"{k}: {v['old']}→{v['new']}" for k, v in changes.items()])
+            change_summary = generate_change_summary(changes)
             log.info(f"IP分析报告已更新至笔记: {new_title}, 变化: {change_summary}")
         else:
             log.info(f"IP分析报告已更新至笔记: {new_title} (强制更新，无IP变化)")
