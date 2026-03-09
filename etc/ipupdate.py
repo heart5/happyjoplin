@@ -417,8 +417,8 @@ def detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, A
         changes["network"] = {"old": last_network, "new": current_network}
 
     # 3. 比较WiFi名称
-    last_wifi = last_record.get("wifi_name", "")
-    current_wifi = current_record.get("wifi_name", "")
+    last_wifi = str(last_record.get("wifi_name", ""))
+    current_wifi = str(current_record.get("wifi_name", ""))
     if last_wifi != current_wifi:
         changes["wifi_name"] = {"old": last_wifi, "new": current_wifi}
 
@@ -452,6 +452,50 @@ def detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, A
     else:
         # 无变化
         return False, {}
+
+
+# %% [markdown]
+# ### generate_change_summary(changes: Dict[str, Any]) -> str
+
+# %%
+def generate_change_summary(changes: Dict[str, Any]) -> str:
+    """安全生成变化摘要，处理各种数据类型"""
+    if not changes:
+        return "无变化"
+
+    summary_parts = []
+
+    # 定义需要检查的字段及其显示名称
+    field_display_names = {
+        "public_ip": "公网IP",
+        "network": "网络类型",
+        "wifi_name": "WiFi",
+        "local_ip": "本地IP",
+        "vpn_interface": "VPN接口",
+        "vpn_ip": "VPN IP",
+        "initial": "状态",
+    }
+
+    for key, value in changes.items():
+        display_name = field_display_names.get(key, key)
+
+        if isinstance(value, dict):
+            # 检查是否是标准的变化字典
+            if "old" in value and "new" in value:
+                old_val = value["old"] if value["old"] is not None else "空"
+                new_val = value["new"] if value["new"] is not None else "空"
+                summary_parts.append(f"{display_name}: {old_val} → {new_val}")
+            else:
+                # 其他字典格式
+                summary_parts.append(f"{display_name}: {str(value)}")
+        elif key == "initial":
+            # 首次运行的特殊情况
+            summary_parts.append(f"首次记录: {value}")
+        else:
+            # 其他数据类型
+            summary_parts.append(f"{display_name}: {str(value)}")
+
+    return "; ".join(summary_parts)
 
 
 # %% [markdown]
@@ -541,7 +585,7 @@ def update_ip_report_note():
 
         # 11. 记录更新摘要
         if has_changes:
-            change_summary = "; ".join([f"{k}: {v['old']}→{v['new']}" for k, v in changes.items()])
+            change_summary = generate_change_summary()"; ".join([f"{k}: {v['old']}→{v['new']}" for k, v in changes.items()])
             log.info(f"IP分析报告已更新至笔记: {new_title}, 变化: {change_summary}")
         else:
             log.info(f"IP分析报告已更新至笔记: {new_title} (强制更新，无IP变化)")
