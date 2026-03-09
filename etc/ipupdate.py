@@ -151,12 +151,12 @@ def analyze_ip_data(df: pd.DataFrame, days: int = REPORT_DAYS) -> Dict:
         "recent_records": len(df_recent),
         "summary": {},
         "detail": {},
-        "latest_record": {},  # 新增：最新记录
+        "latest_record": {},
     }
 
     # 1. 获取最新一行IP数据记录
     if not df.empty:
-        latest_row = df.iloc[-1]  # 获取最新一行（已按时间排序）
+        latest_row = df.iloc[-1]
         analysis["latest_record"] = {
             "timestamp": latest_row["timestamp"],
             "network": latest_row["network"],
@@ -178,8 +178,14 @@ def analyze_ip_data(df: pd.DataFrame, days: int = REPORT_DAYS) -> Dict:
         latest_time = wifi_data["timestamp"].max() if not wifi_data.empty else None
         wifi_stats[wifi_name] = {"count": count, "latest_time": latest_time}
 
-    # 按连接次数排序，取Top 5
-    sorted_wifi = sorted(wifi_stats.items(), key=lambda x: x["count"], reverse=True)[:5]
+    # 修正：按连接次数排序，取Top 5
+    # wifi_stats.items() 返回 (wifi_name, data_dict) 元组
+    # 需要访问 data_dict["count"] 进行排序
+    sorted_wifi = sorted(
+        wifi_stats.items(),
+        key=lambda x: x[1]["count"],  # 修正：x[1] 是 data_dict
+        reverse=True,
+    )[:5]
     analysis["summary"]["wifi_stats"] = dict(sorted_wifi)
 
     # 4. 公网IP变化分析
