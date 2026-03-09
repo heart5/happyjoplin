@@ -514,7 +514,7 @@ def update_ip_report_note():
         existing_notes = searchnotes(note_title, parent_id=notebook_id)
 
         if existing_notes:
-            note = existing_notes
+            note = existing_notes[0]
             note_id = note.id
             log.info(f"找到现有笔记: {note_title}")
         else:
