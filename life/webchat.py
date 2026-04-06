@@ -40,8 +40,6 @@ from collections import deque
 # %%
 import itchat
 import itchat.storage
-
-# from itchat.content import *
 from bs4 import BeautifulSoup
 from itchat.content import (
     ATTACHMENT,
@@ -55,6 +53,8 @@ from itchat.content import (
     TEXT,
     VIDEO,
 )
+
+# from itchat.content import *
 
 
 # %%
@@ -84,6 +84,7 @@ with pathmagic.context():
     from func.pdtools import db2img
     from func.sysfunc import execcmd, listallloghander, not_IPython, uuid3hexstr
     from func.termuxtools import termux_sms_send
+    from joplin_qa_client import client, qa4joplin
     from life.wcdelay import delayimg2note, inserttimeitem2db, showdelayimg
 
 
@@ -656,6 +657,45 @@ def text_reply(msg):
     #             # 折线图发送记录备档
     #             makemsg2write(innermsg, imgzhanjirel)
 
+    if msg["Text"].find("白异") >= 0:
+        qrylst = msg["Text"].split("\n")
+        # 去除某行首位空格
+        qrylst = [x.strip() for x in qrylst]
+        # 去掉空行
+        qrylst = [x.strip() for x in qrylst if len(x.strip()) != 0]
+        print(f"{qrylst}")
+        diyihang = qrylst[0].split()
+        if diyihang[0].strip() == "白异":
+            if len(diyihang) == 1:
+                response = "“白异”为提示词，加空格后面就直接是提问内容，注意不要在内容中有空格或换行"
+                itchat.send_msg(response, toUserName=msg["FromUserName"])
+                makemsg2write(innermsg, response)
+                return
+            elif diyihang[1] == "清空":
+                clear_result = client.clear_history()
+                if clear_result.get("success"):
+                    response = clear_result["message"]
+                else:
+                    response = clear_result.get("error")
+                itchat.send_msg(response, toUserName=msg["FromUserName"])
+                makemsg2write(innermsg, response)
+                return
+            elif diyihang[1] == "统计":
+                stats_result = client.get_statistics()
+                if stats_result.get("success"):
+                    stats = stats_result["statistics"]
+                    response = f"数据库笔记数: {stats.get('total_notes_in_db')}"
+                    response += f"对话历史数: {stats.get('conversation_history_count')}"
+                    response += f"使用模型: {stats.get('config', {}).get('chat_model')}"
+                else:
+                    response = f"获取统计失败: {stats_result.get('error')}"
+                itchat.send_msg(response, toUserName=msg["FromUserName"])
+                makemsg2write(innermsg, response)
+                return
+            response = qa4joplin(diyihang[1])
+            itchat.send_msg(response, toUserName=msg["FromUserName"])
+            makemsg2write(innermsg, response)
+            return
     if msg["Text"].find("真元信使") >= 0:
         qrylst = msg["Text"].split("\n")
         # 去除某行首位空格
