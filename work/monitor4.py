@@ -139,7 +139,7 @@ class NoteMonitor:
         entries_dict_raw = dict(
             zip(
                 [
-                    datetime.strptime(re.sub(r"\s+", "", datestr), "%Y年%m月%d日").date()
+                    datetime.strptime(re.sub(r"\s+", "", datestr).replace("号", "日"), "%Y年%m月%d日").date()
                     for datestr in date_lst_raw[1::2]
                 ],
                 date_lst_raw[2::2],
