@@ -94,10 +94,6 @@ def stat2df(person: str) -> dict:
 
 
 # %% [markdown]
-# ### plot_word_counts(daily_counts: dict, title: str) -> str
-
-
-# %% [markdown]
 # ### get_heatmap_note_id(person: str) -> str
 
 
@@ -113,6 +109,9 @@ def get_heatmap_note_id(person: str) -> str:
         setcfpoptionvalue("happyjpmonitor", "person_ids", person, person_heatmap_id)
 
     return person_heatmap_id
+
+# %% [markdown]
+# ### plot_word_counts(daily_counts: dict, title: str) -> str
 
 
 # %%
@@ -259,15 +258,40 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     ax.set_yticklabels(week_labels)
     ax.set_xticks(np.arange(7) + 0.5, minor=False)
     ax.set_xticklabels(["一", "二", "三", "四", "五", "六", "日"], minor=False)
-    # 新增月份分割线
+
+    # 新增月份分割线，并记录每月第一天的坐标用于在格子内标注
     month_locs = []
     month_labels = []
+    first_day_coords = []  # 新增：用于存储每月第一天的(week_num, day_of_week)坐标
+
     temp_date = start_date
     while temp_date <= end_date:
         if temp_date.day == 1:  # 每月第一天
             week_num = ((temp_date - start_date).days // 7) + 1
             month_locs.append(week_num - 0.5)
             month_labels.append(temp_date.strftime("%Y-%m"))
+
+            # 新增：计算该日期在热图中的行列坐标
+            # 注意：热图的行索引（week_number）可能因pivot_table的索引方式有偏移，需要对齐
+            # 使用与“起始日期”、“当天日期”相同的坐标计算方法
+            try:
+                # 在df中查找该日期对应的week_number和day_of_week
+                date_row = df[df["date"] == temp_date]
+                if not date_row.empty:
+                    week_in_heatmap = date_row["week_number"].iloc
+                    weekday_in_heatmap = date_row["day_of_week"].iloc
+                    # 存储坐标和日期字符串
+                    first_day_coords.append(
+                        {
+                            "week": week_in_heatmap,
+                            "weekday": weekday_in_heatmap,
+                            "date_str": temp_date.strftime("%m-%d"),  # 格式如"03-01"
+                        }
+                    )
+            except Exception as e:
+                # 如果查找失败，跳过该日期的标记
+                if getinivaluefromcloud("monitor", "debug"):
+                    log.info(f"无法定位月份第一天 {temp_date.strftime('%Y-%m-%d')} 在热图中的位置: {e}")
         temp_date += pd.DateOffset(days=1)
 
     ax.hlines(month_locs, -0.5, 6.5, colors="gray", linestyles="dashed", linewidth=0.5)
@@ -348,7 +372,38 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
             )
         )
 
-    # 21. 将图像保存到文件
+    # 21 在每个月的第一天格子里添加日期文本（例如“03-01”）
+    for coord in first_day_coords:
+        # 计算文本在热图中的位置（格子中心）
+        text_x = coord["weekday"] + 0.5
+        text_y = coord["week"] - min(pivot_table.index) + 0.5  # 对齐热图索引
+
+        # 添加文本，使用与月份分割线协调的灰色，字体稍小以区分
+        ax.text(
+            text_x,
+            text_y,
+            coord["date_str"],
+            ha="center",
+            va="center",
+            color="dimgray",  # 使用深灰色，与月份分割线呼应
+            fontsize=10,  # 字体大小略小于起始/当天日期(12)
+            alpha=0.8,
+        )
+
+        # 可选：为每月第一天的格子添加一个浅色背景或边框以增强可视性
+        ax.add_patch(
+            plt.Rectangle(
+                (coord["weekday"], coord["week"] - min(pivot_table.index)),
+                1,
+                1,
+                fill=True,
+                facecolor="lightgray",
+                alpha=0.1,  # 非常浅的背景
+                zorder=1,  # 确保在热图之下
+            )
+        )
+
+    # 22. 将图像保存到文件
     plt.savefig(img_heat_file_path_str)
     plt.close()
     return img_heat_file_path_str  # 返回提示图而非空白
