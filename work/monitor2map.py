@@ -278,8 +278,8 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
                 # 在df中查找该日期对应的week_number和day_of_week
                 date_row = df[df["date"] == temp_date]
                 if not date_row.empty:
-                    week_in_heatmap = date_row["week_number"].iloc
-                    weekday_in_heatmap = date_row["day_of_week"].iloc
+                    week_in_heatmap = date_row["week_number"].iloc[0]
+                    weekday_in_heatmap = date_row["day_of_week"].iloc[0]
                     # 存储坐标和日期字符串
                     first_day_coords.append(
                         {
