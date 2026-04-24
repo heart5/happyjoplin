@@ -26,6 +26,7 @@ import pathmagic
 with pathmagic.context():
     from etc.getid import getdeviceid, getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.datatools import getkeysfromcloud
     from func.first import dirmainpath, getdirmain, touchfilepath2depth
     from func.logme import log
     from func.nettools import trycounttimes2
@@ -37,7 +38,7 @@ with pathmagic.context():
 
 # %%
 class JoplinQAClient:
-    def __init__(self, base_url="http://127.0.0.1:5000"):
+    def __init__(self, base_url="http://127.0.0.1:5000", session_id=None, api_key=None):
         self.base_url = base_url
         # 关键修改：允许传入 session_id，否则生成一个随机的
         if session_id is None:
@@ -45,11 +46,20 @@ class JoplinQAClient:
 
             session_id = f"session_{uuid.uuid4().hex[:8]}"  # 生成随机会话ID
         self.session_id = session_id
+        self.api_key = api_key
         log.info(f"JoplinQAClient 初始化，会话ID: {self.session_id}")
+
+    def _get_headers(self):
+        """构建包含认证头的请求头"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        return headers
 
     def ask(self, question, use_history=True):
         resp = requests.post(
             f"{self.base_url}/ask",
+            headers=self._get_headers(),  # 新增：加入认证头
             json={
                 "question": question,
                 "session_id": self.session_id,
@@ -61,6 +71,7 @@ class JoplinQAClient:
     def get_history(self, limit=10):
         resp = requests.get(
             f"{self.base_url}/history",
+            headers=self._get_headers(),  # 新增：加入认证头
             params={"session_id": self.session_id, "limit": limit},
         )
         return resp.json()
@@ -79,7 +90,10 @@ class JoplinQAClient:
 
         try:
             response = requests.post(
-                url, json={"session_id": self.session_id}, timeout=10
+                url,
+                headers=self._get_headers(),  # 新增：加入认证头
+                json={"session_id": self.session_id},
+                timeout=10,
             )
             response.raise_for_status()  # 如果状态码不是200，抛出异常
             return response.json()
@@ -105,7 +119,12 @@ class JoplinQAClient:
         try:
             # 这里使用GET请求，并通过查询参数传递session_id
             params = {"session_id": self.session_id}
-            response = requests.get(url, params=params, timeout=10)
+            response = requests.get(
+                url,
+                headers=self._get_headers(),  # 新增：加入认证头
+                params=params,
+                timeout=10,
+            )
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -120,7 +139,11 @@ class JoplinQAClient:
 # # 全局变量
 
 # %%
-client = JoplinQAClient()
+keys = getkeysfromcloud()
+list(keys.values())[0]
+
+# %%
+client = JoplinQAClient(base_url="https://ask.strcoder.com", api_key=list(keys.values())[0])
 
 
 # %% [markdown]
@@ -144,5 +167,5 @@ def qa4joplin(question: str) -> str:
 
 # %%
 if __name__ == "__main__":
-    result = qa4joplin("介绍以下我（白晔峰）")
+    result = qa4joplin("帮我做一个下周工作安排，核心工作要备注清楚")
     print(result)
