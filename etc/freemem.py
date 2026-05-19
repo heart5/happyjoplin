@@ -32,7 +32,7 @@ import pathmagic
 
 with pathmagic.context():
     # from func.first import getdirmain
-    from etc.getid import getdevicename, gethostuser
+    from func.getid import getdevicename, gethostuser
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.jpfuncs import (
         add_resource_from_bytes,

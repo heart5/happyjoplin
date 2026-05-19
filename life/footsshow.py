@@ -20,6 +20,8 @@
 
 # %%
 import os
+import random
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -28,8 +30,8 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import requests as http_req
 import seaborn as sns
-
 
 # %%
 from geopy.distance import great_circle
@@ -62,9 +64,9 @@ class Config:
     """参数配置类"""
 
     REPORT_LEVELS: Optional[dict] = None
-    PLOT_WIDTH: int = 12  # 图像宽度默认10英寸
-    PLOT_HEIGHT: int = 12  # 图像高度默认12英寸
-    DPI: int = 300  # 图像分辨率默认300
+    PLOT_WIDTH: int = 8  # 图像宽度默认8英寸
+    PLOT_HEIGHT: int = 8  # 图像高度默认8英寸
+    DPI: int = 150  # 图像分辨率默认150
     TIME_WINDOW: str = "2h"  # 判断设备活跃的时间窗口，默认2h，可以为30min等数值
     STAY_DIST_THRESH: int = 200  # 停留点距离阈值（米），默认200米
     TIME_JUMP_DAY_THRESH: int = 30  # 时间跳跃，白天阈值（分钟）
@@ -106,6 +108,28 @@ class Config:
                 "yearly": 12,
                 "two_year": 24,
             }
+
+
+def _safe_add_resource(data: bytes, title: str, max_tries: int = 3) -> str:
+    """上传资源到 Joplin，带指数退避重试"""
+    last_exc = None
+    for attempt in range(1, max_tries + 1):
+        try:
+            return add_resource_from_bytes(data, title=title)
+        except (
+            http_req.exceptions.ConnectionError,
+            http_req.exceptions.ReadTimeout,
+            http_req.exceptions.ConnectTimeout,
+            ConnectionRefusedError,
+            ConnectionResetError,
+            OSError,
+        ) as e:
+            last_exc = e
+            if attempt < max_tries:
+                wait = random.randint(2, 10) * attempt
+                log.warning(f"资源上传失败（第{attempt}次），{wait}秒后重试: {e}")
+                time.sleep(wait)
+    raise last_exc
 
 
 # %% [markdown]
@@ -152,7 +176,19 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
             log.warning(f"未找到{month_str}的位置数据附件")
             continue
 
-        res_data = jpapi.get_resource_file(location_resource.id)
+        try:
+            res_data = jpapi.get_resource_file(location_resource.id)
+        except TypeError as e:
+            # charset_normalizer frozenset bug in joppy's debug logging on binary responses.
+            # Fallback: direct HTTP avoids joppy's response.text access which triggers chardet.
+            log.warning(f"joppy get_resource_file 编码检测失败，直连获取: {e}")
+            resp = http_req.get(
+                f"{jpapi.base_url}/resources/{location_resource.id}/file",
+                params={"token": jpapi.token},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            res_data = resp.content
         df = pd.read_excel(BytesIO(res_data))
         df["month"] = month_str
         monthly_dfs.append(df)
@@ -951,7 +987,7 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         )
         plt.close()
 
-        return add_resource_from_bytes(buf.getvalue(), title=f"轨迹图_{scope}_带地图.png")
+        return _safe_add_resource(buf.getvalue(), title=f"轨迹图_{scope}_带地图.png")
 
     except ImportError as ie:
         log.critical(f"未安装contextily库，无法添加《{scope}》位置地图底图。{ie}")
@@ -1030,7 +1066,7 @@ def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Confi
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return add_resource_from_bytes(buf.getvalue(), title=f"轨迹图_{scope}.png")
+    return _safe_add_resource(buf.getvalue(), title=f"轨迹图_{scope}.png")
 
 
 # %% [markdown]
@@ -1095,7 +1131,7 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return add_resource_from_bytes(buf.getvalue(), f"停留点分布_{scope}.png")
+    return _safe_add_resource(buf.getvalue(), title=f"停留点分布_{scope}.png")
 
 
 # %% [markdown]
@@ -1190,7 +1226,7 @@ def generate_time_series_analysis(df: pd.DataFrame, scope: str, config: Config) 
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return add_resource_from_bytes(buf.getvalue(), f"时间序列分析_{scope}.png")
+    return _safe_add_resource(buf.getvalue(), title=f"时间序列分析_{scope}.png")
 
 
 # %% [markdown]
@@ -1232,7 +1268,7 @@ def enhanced_stay_points_analysis(df: pd.DataFrame, scope: str, config: Config) 
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return add_resource_from_bytes(buf.getvalue(), f"增强停留点分析_{scope}.png")
+    return _safe_add_resource(buf.getvalue(), title=f"增强停留点分析_{scope}.png")
 
 
 # %% [markdown]
@@ -1280,7 +1316,7 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return add_resource_from_bytes(buf.getvalue(), f"数据质量仪表板_{scope}.png")
+    return _safe_add_resource(buf.getvalue(), title=f"数据质量仪表板_{scope}.png")
 
 
 # %% [markdown]
@@ -1332,7 +1368,7 @@ def movement_pattern_analysis(df: pd.DataFrame, scope: str, config: Config) -> s
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return add_resource_from_bytes(buf.getvalue(), f"移动模式分析_{scope}.png")
+    return _safe_add_resource(buf.getvalue(), title=f"移动模式分析_{scope}.png")
 
 
 # %% [markdown]

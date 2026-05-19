@@ -24,7 +24,7 @@ import requests
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdeviceid, getdevicename
+    from func.getid import getdeviceid, getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.datatools import getkeysfromcloud
     from func.first import dirmainpath, getdirmain, touchfilepath2depth

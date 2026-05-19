@@ -37,7 +37,7 @@ try:
     import pathmagic
 
     with pathmagic.context():
-        from etc.getid import getdeviceid, gethostuser
+        from func.getid import getdeviceid, gethostuser
         from func.configpr import getcfpoptionvalue, setcfpoptionvalue
         from func.datatools import readfromtxt, write2txt
         from func.first import dirmainpath

@@ -33,7 +33,7 @@ import pandas as pd
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdevicename
+    from func.getid import getdevicename
     from etc.voice2txt import batch_v4txt, query_v4txt
     from filedatafunc import getfilemtime as getfltime
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue

@@ -17,6 +17,8 @@
 
 # %%
 import re
+import time
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +27,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import requests
 from tzlocal import get_localzone
 
 # %%
@@ -470,6 +473,27 @@ def heatmap2note() -> None:
 
         return day_identity == check_day_identity
 
+    def retry_jp(callable, *args, max_tries=3, **kwargs):
+        """Joplin API 调用重试，带指数退避"""
+        last_exc = None
+        for attempt in range(1, max_tries + 1):
+            try:
+                return callable(*args, **kwargs)
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectTimeout,
+                ConnectionRefusedError,
+                ConnectionResetError,
+                OSError,
+            ) as e:
+                last_exc = e
+                if attempt < max_tries:
+                    wait = random.randint(2, 10) * attempt
+                    log.warning(f"Joplin API 调用失败（第{attempt}次），{wait}秒后重试: {e}")
+                    time.sleep(wait)
+        raise last_exc
+
     note_monitor = NoteMonitor()
     ptn = re.compile(r"[(（](\w+)[)）]")
     # 获取person列表
@@ -482,7 +506,7 @@ def heatmap2note() -> None:
     print(person_lst)
     # 获取最新的被监控笔记id列表
     note_id_list_refresh = get_refresh_id_list()
-    jpapi = getapi()
+    jpapi = retry_jp(getapi)
     for person in person_lst:
         # 筛选出指定person相关的{note_id:note_info}字典，同时确保只处理当前列表中的笔记
         targetdict = {k: v for k, v in note_monitor.monitored_notes.items() if person in v["title"]}
@@ -498,7 +522,11 @@ def heatmap2note() -> None:
                 continue
             note_ini_time = normalize_timestamp(getcfpoptionvalue("happyjpmonitor", "note_update_time", note_id))
             note_json_time = normalize_timestamp(note_info["note_update_time"])
-            note_cloud_time = normalize_timestamp(getattr(getnote(note_id), "updated_time"))
+            try:
+                note_cloud_time = normalize_timestamp(getattr(getnote(note_id), "updated_time"))
+            except Exception as e:
+                log.critical(f"获取id为“{note_id}”的笔记时出错如下，或许是不存在或笔记冲突导致的：\n{e}")
+                continue
             # 如果是第一次循环，计算当前的"日志天标识"
             if current_day_identity is None:
                 current_day_identity = arrow.now(get_localzone()).replace(hour=8, minute=0, second=0, microsecond=0)
@@ -544,10 +572,14 @@ def heatmap2note() -> None:
                 # buffer = plot_word_counts(v, k)
                 img_heat_file_path = plot_word_counts(v, k)
                 title = f"{k}-{person}"
-                res_id = jpapi.add_resource(img_heat_file_path, title=title)
-                newbodystr += f"![{title}](:/{res_id})" + "\n"
+                try:
+                    res_id = retry_jp(jpapi.add_resource, img_heat_file_path, title=title)
+                    newbodystr += f"![{title}](:/{res_id})" + "\n"
+                except Exception as e:
+                    log.critical(f"上传热图资源失败（{title}）: {e}")
 
-            updatenote_body(heatmap_id, newbodystr)
+            if newbodystr:
+                retry_jp(updatenote_body, heatmap_id, newbodystr)
             # 操作成功后再删除原始笔记中的资源文件
             lines = getattr(oldnote, "body").split()
             res_ids = [re.search(r"\(:/(.+)\)", line).group(1) for line in lines if re.search(r"\(:/(.+)\)", line)]

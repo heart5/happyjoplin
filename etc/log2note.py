@@ -28,7 +28,7 @@ import pathmagic
 
 # %%
 with pathmagic.context():
-    from etc.getid import getdeviceid
+    from func.getid import getdeviceid
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain
     from func.jpfuncs import (

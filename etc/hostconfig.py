@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Set, Tuple
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdeviceid, getdevicename, gethostuser
+    from func.getid import getdeviceid, getdevicename, gethostuser
     from func.configpr import findvaluebykeyinsection, getcfpoptionvalue, setcfpoptionvalue
     from func.first import dirmainpath, getdirmain
     from func.jpfuncs import (

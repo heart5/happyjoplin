@@ -31,7 +31,7 @@ import pandas as pd
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdeviceid
+    from func.getid import getdeviceid
     from filedatafunc import getfilemtime as getfltime
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain

@@ -64,7 +64,7 @@ with pathmagic.context():
     # from work.weixinzhang import showjinzhang, showshoukuan
     # import evernote.edam.type.ttypes as ttypes
     # from work.zymessage import searchcustomer, searchqiankuan, searchpinxiang
-    from etc.getid import getdeviceid, getdevicename
+    from func.getid import getdeviceid, getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.datatools import readfromtxt, write2txt
     from func.datetimetools import gethumantimedelay

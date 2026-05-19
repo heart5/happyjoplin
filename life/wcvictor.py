@@ -40,7 +40,7 @@ from wordcloud import ImageColorGenerator, WordCloud  # 做词云图
 import pathmagic
 
 with pathmagic.context():
-    from etc.getid import getdevicename
+    from func.getid import getdevicename
     from filedatafunc import getfilemtime as getfltime
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain, touchfilepath2depth

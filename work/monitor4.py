@@ -38,7 +38,7 @@ with pathmagic.context():
     # from func.wrapfuncs import timethis
     # from func.termuxtools import termux_location, termux_telephony_deviceinfo
     # from func.nettools import ifttt_notify
-    # from etc.getid import getdevicename, gethostuser
+    # from func.getid import getdevicename, gethostuser
     from func.sysfunc import not_IPython
 
 
@@ -323,19 +323,19 @@ def monitor_notes(note_ids: list, note_monitor: NoteMonitor) -> None:
             last_update_day_identity = last_update_day_identity.shift(days=-1)
         # 判断是否需要监控, 监控条件：当天的笔记更新时间大于上次更新时间，或当天的笔记更新时间大于8点，且上次更新时间小于8点
         should_monitor = False
-        if monitor_current_date := getcfpoptionvalue("happyjpmonitor", "monitor_current_date", "note_id"):
+        if monitor_current_date := getcfpoptionvalue("happyjpmonitor", "monitor_current_date", note_id):
             if monitor_current_date != current_day_identity.date().strftime("%Y-%m-%d"):
                 should_monitor = True
                 setcfpoptionvalue(
                     "happyjpmonitor",
                     "monitor_current_date",
-                    "note_id",
+                    note_id,
                     current_day_identity.date().strftime("%Y-%m-%d"),
                 )
         else:
             should_monitor = True
             setcfpoptionvalue(
-                "happyjpmonitor", "monitor_current_date", "note_id", current_day_identity.date().strftime("%Y-%m-%d")
+                "happyjpmonitor", "monitor_current_date", note_id, current_day_identity.date().strftime("%Y-%m-%d")
             )
         # 更新监控信息，用笔记更新时间和日志标识做判断依据
         if last_update_time_note != note_monitor.monitored_notes[note_id]["note_update_time"]:
@@ -448,6 +448,8 @@ def split_ref() -> None:
 
         # 检查person和section是否已经设置，没有设置则设置之
         for note_id in note_ids_to_monitor:
+            if note_id not in note_monitor.monitored_notes:
+                continue
             info = note_monitor.monitored_notes[note_id]
             if len(info["person"]) == 0:
                 if grp := re.findall(person_ptn, info["title"]):
