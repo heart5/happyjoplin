@@ -584,6 +584,18 @@ def _build_header(person: str, stats: dict) -> str:
     return "".join(parts)
 
 
+# %%
+def _build_footer() -> str:
+    """构建热图笔记底部规则说明。"""
+    return (
+        "\n---\n\n"
+        "> 📋 **更新统计规则**\n>\n"
+        "> - ⏰ **日界**：早上 08:00 前更新计入前一天，08:00 后计入当天\n"
+        "> - ⏳ **延迟**：编辑完成后需稳定 30 分钟才会被系统确认，不会即时反映\n"
+        "> - 📏 **计数**：按每日 `### YYYY年MM月DD日` 段落统计字数，同一人多篇取当日最高\n"
+    )
+
+
 # %% [markdown]
 # ## 全量报告生成入口
 
@@ -643,6 +655,7 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
                     log.critical(f"上传热图资源失败（{title}-{person}）: {e}")
 
             if new_body_parts:
+                new_body_parts.append(_build_footer())
                 new_body = "".join(new_body_parts)
                 retry_jp(updatenote_body, heatmap_id, new_body)
 
