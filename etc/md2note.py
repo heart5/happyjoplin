@@ -167,11 +167,11 @@ def sync_file(
             if not quiet:
                 print(f"已创建笔记《{title}》← {fpath}")
     else:
-        updatenote_body(note_id, body, parent_id=parent_id)
+        updatenote_body(note_id, body)
 
         stored = _stored_title(fpath)
         if title != stored:
-            updatenote_title(note_id, title, parent_id=parent_id)
+            updatenote_title(note_id, title)
             log.info(f"标题更新：《{stored}》→《{title}》")
 
         _save(fpath, note_id, title, current_mtime)
