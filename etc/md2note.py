@@ -93,12 +93,12 @@ def _save(fpath: Path, note_id: str, title: str, mtime: float) -> None:
 
 
 def _make_title(fpath: Path, base: str) -> str:
-    """追加相对home路径以区分同名文件"""
+    """追加父目录路径以区分同名文件"""
     try:
-        rel = fpath.relative_to(Path.home())
+        rel = fpath.parent.relative_to(Path.home())
         return f"{base} (~/{rel})"
     except ValueError:
-        return f"{base} ({fpath})"
+        return f"{base} ({fpath.parent})"
 
 
 # %%
