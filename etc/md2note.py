@@ -30,12 +30,11 @@ import pathmagic
 # %%
 with pathmagic.context():
     from func.configpr import getcfp, getcfpoptionvalue, removesection, setcfpoptionvalue
-    from func.first import getdirmain
     from func.jpfuncs import (
         createnote,
         jpapi,
-        searchnotes,
         searchnotebook,
+        searchnotes,
         updatenote_body,
         updatenote_title,
     )

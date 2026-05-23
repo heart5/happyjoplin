@@ -3,7 +3,7 @@ target-version = "py310"
 # 启用核心规则集
 line-length = 120
 lint.select = ["E", "F", "W", "I", "N", "ANN"] # ANN为类型注解规则，N强制执行PEP8命名规范，I自动排序import语句
-lint.ignore = ["E501", "D415", "D413", "D400", "D103"]
+lint.ignore = ["E501", "D100", "D203", "D213", "D415", "D413", "D400", "D103", "ANN201", "ANN202"]
 extend-include = ["*.ipynb"]
 lint.extend-select = ["D"]
 
@@ -21,7 +21,7 @@ lint.extend-select = ["D"]
 [tool.ruff.format]
 indent-style = "space"
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 # 按类型分组排序import
 # profile = "black"
 
