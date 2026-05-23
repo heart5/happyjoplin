@@ -32,8 +32,8 @@ import pathmagic
 
 with pathmagic.context():
     # from func.first import getdirmain
-    from func.getid import getdevicename, gethostuser
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+    from func.getid import getdevicename, gethostuser
     from func.jpfuncs import (
         add_resource_from_bytes,
         createnote,
@@ -256,7 +256,7 @@ def load_disk_monitor_config(script_dir=None):
                         config[key] = value
                 return config
         except json.JSONDecodeError:
-            print(f"配置文件格式错误，使用默认配置")
+            print("配置文件格式错误，使用默认配置")
 
     return default_config
 
@@ -330,7 +330,7 @@ def parse_disk_logs_with_config(script_dir=None):
                             "line_number": line_num,
                         }
                         disk_data.append(entry)
-                    except (ValueError, IndexError) as e:
+                    except (ValueError, IndexError):
                         continue
 
     return disk_data, config

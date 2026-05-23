@@ -3,7 +3,19 @@ target-version = "py310"
 # 启用核心规则集
 line-length = 120
 lint.select = ["E", "F", "W", "I", "N", "ANN"] # ANN为类型注解规则，N强制执行PEP8命名规范，I自动排序import语句
-lint.ignore = ["E501", "D100", "D203", "D213", "D415", "D413", "D400", "D103", "ANN201", "ANN202"]
+lint.ignore = [
+    "E501",   # 行太长（由line-length=120控制，不强制）
+    "D100",   # 模块缺docstring（jupytext的markdown cell已说明用途）
+    "D103",   # 公开函数缺docstring（同上）
+    "D203",   # 类docstring前无空行（与D211互斥，保留D211）
+    "D213",   # 多行docstring摘要另起一行（与D212互斥，保留D212）
+    "D400",   # docstring首行不以句号结尾（中文文档不适用）
+    "D413",   # docstring末行无空行（过于严格）
+    "D415",   # docstring首行不以标点结尾（中文文档不适用）
+    "ANN001", # 函数参数缺类型注解（历史代码量大，暂忽略）
+    "ANN201", # 公开函数缺返回类型注解（同上）
+    "ANN202", # 私有函数缺返回类型注解（同上）
+]
 extend-include = ["*.ipynb"]
 lint.extend-select = ["D"]
 
