@@ -27,7 +27,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -37,10 +37,9 @@ try:
     import pathmagic
 
     with pathmagic.context():
-        from func.getid import getdeviceid, gethostuser
         from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-        from func.datatools import readfromtxt, write2txt
         from func.first import dirmainpath
+        from func.getid import getdeviceid, gethostuser
         from func.jpfuncs import (
             createnote,
             getinivaluefromcloud,
@@ -54,14 +53,10 @@ try:
         from func.logme import log
 
         # from func.nettools import get_ip4alleth
-        from func.sysfunc import execcmd, is_tool_valid, not_IPython
-        from func.termuxtools import termux_wifi_connectioninfo
+        from func.sysfunc import not_IPython
         from func.wrapfuncs import timethis
 except ImportError as e:
     log.error(f"导入模块失败: {e}")
-    # 尝试添加路径（适用于JupyterLab环境）
-    sys.path.append(os.path.expanduser("~/codebase/happyjoplin"))  # 请修改为你的实际项目路径
-    log.info("已尝试添加路径到sys.path")
 
 # %% [markdown]
 # ## 配置常量
@@ -83,6 +78,7 @@ REPORT_DAYS = getinivaluefromcloud(CONFIG_NAME, "REPORT_DAYS")
 # %%
 def parse_ip_log_file(log_path: Path) -> pd.DataFrame:
     """解析结构化的IP日志文件，返回DataFrame。
+
     格式：2026-03-09 00:35:02 | Network: WiFi | WiFi_Name: yj8510 | Public_IP: 219.76.131.102 | ...
     """
     data = []
@@ -351,6 +347,7 @@ def generate_ip_report(analysis: Dict, device_id: str, host_user: str) -> Tuple[
 # %%
 def generate_charts(chart_data: Dict) -> Optional[bytes]:
     """生成可视化图表，返回图片二进制数据（如PNG格式）。
+
     可以生成：
         1. 公网IP随时间的变化序列（折线图，不同IP用不同颜色）。
         2. 网络类型与WiFi热点分布（条形图或饼图）。
