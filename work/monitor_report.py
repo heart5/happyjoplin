@@ -449,9 +449,7 @@ def _get_spark_candidates() -> list[str]:
 
         quotes = []
         for section in sections[1:]:
-            items = re.findall(
-                r"(?:^|\n)\d+[\.\、\)）]\s*(.+?)(?=\n\d+[\.\、\)）]|\n###|\Z)", section, re.S
-            )
+            items = re.findall(r"(?:^|\n)\d+[\.\、\)）]\s*(.+?)(?=\n\d+[\.\、\)）]|\n###|\Z)", section, re.S)
             for item in items:
                 clean = item.strip()
                 clean = re.sub(r'["""\']+', "", clean)
@@ -547,7 +545,13 @@ def _compute_person_stats(person: str, active_note_ids: list[str]) -> dict:
             break
         month_total += daily_max.get(d, 0)
 
-    return {"streak": streak, "week_max": week_max, "week_max_date": week_max_date, "month_total": month_total, "eff_today": eff_today}
+    return {
+        "streak": streak,
+        "week_max": week_max,
+        "week_max_date": week_max_date,
+        "month_total": month_total,
+        "eff_today": eff_today,
+    }
 
 
 # %%
@@ -557,19 +561,22 @@ def _build_header(person: str, stats: dict) -> str:
     title = _get_person_title(stats["streak"])
 
     streak_str = (
-        f"今天有望恢复" if stats["streak"] == 0
+        f"今天有望恢复"
+        if stats["streak"] == 0
         else f"{stats['eff_today'] - timedelta(days=stats['streak'] - 1):%m-%d} → {stats['eff_today']:%m-%d}"
     )
 
-    week_max_str = (
-        f"{stats['week_max']} 字" if stats["week_max"] > 0
-        else "暂无"
-    )
+    week_max_str = f"{stats['week_max']} 字" if stats["week_max"] > 0 else "暂无"
+    week_date_str = f"{stats['week_max_date']:%m-%d 周%a}" if stats["week_max_date"] else ""
     week_date_str = (
-        f"{stats['week_max_date']:%m-%d 周%a}" if stats["week_max_date"]
-        else ""
+        week_date_str.replace("Mon", "一")
+        .replace("Tue", "二")
+        .replace("Wed", "三")
+        .replace("Thu", "四")
+        .replace("Fri", "五")
+        .replace("Sat", "六")
+        .replace("Sun", "日")
     )
-    week_date_str = week_date_str.replace("Mon", "一").replace("Tue", "二").replace("Wed", "三").replace("Thu", "四").replace("Fri", "五").replace("Sat", "六").replace("Sun", "日")
 
     parts = [f"> {title}\n"]
     if spark:
@@ -617,14 +624,20 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
     # 文字报告总是更新（汇总所有笔记）
     text_id = generate_text_report()
 
-    # 热图：确定需要更新的person
+    # 热图：确定需要更新的person（云端配置优先）
+    if plst_str := getinivaluefromcloud("monitor", "person_list"):
+        all_persons = [p.strip() for p in plst_str.split("，") if p.strip()]
+    else:
+        all_persons = list(get_person_set())
+
     if dirty_only:
-        persons = get_dirty_persons()
+        dirty_set = get_dirty_persons()
+        persons = [p for p in all_persons if p in dirty_set] if dirty_set else []
         if not persons:
             log.info("无脏标记person，跳过热图更新")
             return {"text_report_id": text_id, "heatmap_persons": []}
     else:
-        persons = list(get_person_set())
+        persons = all_persons
 
     log.info(f"将为以下人员生成热图: {persons}")
 
