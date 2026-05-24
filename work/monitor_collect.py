@@ -234,6 +234,9 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
 
     # 正式快照
     word_count = len(body.strip())
+    # 补填参考时间：以内容稳定时刻（pending.last_seen）为准，而非快照拍摄时刻，
+    # 避免冷却期导致的延迟被误判为补填
+    backfill_ref = _parse_pending_time(pending["last_seen"]) if pending else current_time
     snapshot_id = insert_snapshot(
         note_id=note_id,
         captured_at=current_time,
@@ -248,7 +251,7 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
     # 解析每日条目
     daily = parse_daily_entries(body, current_time)
     for entry_date, wc in daily.items():
-        is_backfill = _check_backfill(entry_date, current_time) if snapshot_id else 0
+        is_backfill = _check_backfill(entry_date, backfill_ref) if snapshot_id else 0
         upsert_daily_stat(
             note_id=note_id,
             entry_date=entry_date,
@@ -297,6 +300,14 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
 
 # %% [markdown]
 # ## 辅助函数
+
+
+# %%
+def _parse_pending_time(val) -> datetime:
+    """将 pending 中的时间字段统一转为 datetime。"""
+    if isinstance(val, str):
+        return datetime.fromisoformat(val)
+    return val
 
 
 # %%
