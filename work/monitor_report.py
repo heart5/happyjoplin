@@ -257,11 +257,13 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     dfready = dfall[dfall.date >= min_date]
     end_date = max_date + pd.Timedelta(days=6 - max_date.weekday())
     all_dates = pd.date_range(start=start_date, end=end_date)
-    all_dates_df = pd.DataFrame({"date": all_dates, "count": -1})
+    all_dates_df = pd.DataFrame({"date": all_dates, "count": -1, "addedlater": False})
 
     df = pd.concat([dfready, all_dates_df], ignore_index=True)
     df = df.drop_duplicates(subset=["date"], keep="first")
     df = df.sort_values(by="date").reset_index(drop=True)
+    # 有效日期区间内缺失的天 → 0字（黄色），而非无数据（白色）
+    df.loc[(df["date"] >= min_date) & (df["date"] <= max_date) & (df["count"] == -1), "count"] = 0
 
     df["year"] = df["date"].dt.year
     df["week"] = df["date"].dt.isocalendar().week
@@ -383,7 +385,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     )
 
     # 补填标记
-    for marked_date_str in df[df["addedlater"].fillna(False).infer_objects(copy=False)]["date"]:
+    for marked_date_str in df[df["addedlater"]]["date"]:
         m_row = df[df["date"] == marked_date_str]
         if m_row.empty:
             continue
