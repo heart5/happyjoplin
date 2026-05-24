@@ -252,6 +252,32 @@ def get_latest_snapshot(note_id: str) -> dict | None:
         return dict(row) if row else None
 
 
+def get_snapshot_by_date(note_id: str, target_date: str) -> dict | None:
+    """获取最接近目标日期且不晚于目标日期次日的快照。
+
+    target_date: 'YYYY-MM-DD' 格式。
+    返回 captured_at >= target_date 的最早一条快照（即目标日期之后产生的第一个快照，
+    其 body_fulltext 包含了目标日期当天的内容）。
+    """
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM snapshots WHERE note_id=? AND captured_at >= ? ORDER BY captured_at ASC LIMIT 1",
+            (note_id, f"{target_date} 00:00:00"),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_snapshots(note_id: str, limit: int = 20) -> list[dict]:
+    """列出笔记的最近N条快照摘要（不含body全文）。"""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, captured_at, content_hash, word_count, is_forced FROM snapshots "
+            "WHERE note_id=? ORDER BY captured_at DESC LIMIT ?",
+            (note_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 # %% [markdown]
 # ## daily_stats 表操作
 
