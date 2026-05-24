@@ -28,6 +28,7 @@ with pathmagic.context():
     from func.jpfuncs import content_hash, getnote, searchnotes
     from func.logme import log
     from func.sysfunc import not_IPython
+    from func.nettools import ifttt_notify
     from work.monitor_store import (
         MAX_PENDING_WAIT_HOURS,
         STABILITY_COOLDOWN_MINUTES,
@@ -160,6 +161,10 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
             )
             mark_note_inactive(note_id)
             log.warning(f"笔记《{info.get('title', note_id)}》无法访问，已标记为不活跃")
+            ifttt_notify(
+                f"笔记消失告警:《{info.get('title', note_id)}》无法访问，已标记不活跃",
+                "monitor_collect",
+            )
         return False
 
     title = getattr(note, "title", "")
@@ -272,6 +277,10 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
                 )
                 log.warning(
                     f"笔记《{title}》字数骤降: {prev_snap['word_count']}→{word_count} ({drop_pct:.0%})"
+                )
+                ifttt_notify(
+                    f"内容骤降告警:《{title}》{prev_snap['word_count']}→{word_count}字({drop_pct:.0%})",
+                    "monitor_collect",
                 )
 
     # 标记脏
@@ -389,6 +398,18 @@ def collect_all(current_time: datetime | None = None) -> dict:
     pending_count = len(get_pending_changes_summary())
 
     log.info(f"采集完成: 共{total}篇笔记, {changed}篇生成快照, {pending_count}篇待确认, dirty_persons={dirty}")
+
+    # 汇总未解决告警并推送通知
+    from work.monitor_store import get_all_unresolved_alerts
+    alerts = get_all_unresolved_alerts()
+    if alerts:
+        alert_summary = "; ".join(
+            f"[{a['alert_type']}]{a['person']}:{a['prev_word_count']}→{a['new_word_count']}"
+            for a in alerts[:5]
+        )
+        if len(alerts) > 5:
+            alert_summary += f" ...等{len(alerts)}条"
+        log.critical(f"本次采集产生{len(alerts)}条未解决告警: {alert_summary}")
 
     return {
         "total": total,
