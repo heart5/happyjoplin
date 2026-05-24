@@ -134,6 +134,21 @@ CREATE TABLE IF NOT EXISTS spark_log (
 CREATE INDEX IF NOT EXISTS idx_spark_log_date ON spark_log(used_date);
 CREATE INDEX IF NOT EXISTS idx_spark_log_person ON spark_log(person);
 
+CREATE TABLE IF NOT EXISTS content_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    note_id TEXT NOT NULL,
+    person TEXT NOT NULL,
+    detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    prev_word_count INTEGER NOT NULL,
+    new_word_count INTEGER NOT NULL,
+    prev_snapshot_id INTEGER,
+    alert_type TEXT NOT NULL DEFAULT 'content_drop',
+    resolved INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_alerts_person ON content_alerts(person);
+CREATE INDEX IF NOT EXISTS idx_content_alerts_note_id ON content_alerts(note_id);
+
 -- 迁移旧表：补充可能缺失的列
 ALTER TABLE spark_log ADD COLUMN person TEXT NOT NULL DEFAULT '';
 ALTER TABLE spark_log ADD COLUMN quote_text TEXT NOT NULL DEFAULT '';
@@ -276,6 +291,67 @@ def list_snapshots(note_id: str, limit: int = 20) -> list[dict]:
             (note_id, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def get_previous_snapshot(note_id: str) -> dict | None:
+    """获取倒数第二新的快照（用于对比字数变化）。"""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM snapshots WHERE note_id=? ORDER BY captured_at DESC LIMIT 2",
+            (note_id,),
+        ).fetchall()
+        return dict(rows[1]) if len(rows) >= 2 else None
+
+
+# %% [markdown]
+# ## content_alerts 表操作
+
+
+# %%
+def insert_alert(
+    note_id: str,
+    person: str,
+    prev_word_count: int,
+    new_word_count: int,
+    alert_type: str = "content_drop",
+    prev_snapshot_id: int | None = None,
+) -> int:
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            """INSERT INTO content_alerts (note_id, person, prev_word_count, new_word_count, alert_type, prev_snapshot_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (note_id, person, prev_word_count, new_word_count, alert_type, prev_snapshot_id),
+        )
+        return cursor.lastrowid
+
+
+def get_alerts_by_person(person: str, resolved: int | None = 0) -> list[dict]:
+    with _get_conn() as conn:
+        query = "SELECT * FROM content_alerts WHERE person=?"
+        params: tuple = (person,)
+        if resolved is not None:
+            query += " AND resolved=?"
+            params = (person, resolved)
+        rows = conn.execute(query + " ORDER BY detected_at DESC", params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_all_unresolved_alerts() -> list[dict]:
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM content_alerts WHERE resolved=0 ORDER BY detected_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def resolve_alert(alert_id: int) -> None:
+    with _get_conn() as conn:
+        conn.execute("UPDATE content_alerts SET resolved=1 WHERE id=?", (alert_id,))
+
+
+def mark_note_inactive(note_id: str) -> None:
+    with _get_conn() as conn:
+        conn.execute("UPDATE notes SET is_active=0 WHERE note_id=?", (note_id,))
 
 
 # %% [markdown]

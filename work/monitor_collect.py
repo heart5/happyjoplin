@@ -33,9 +33,14 @@ with pathmagic.context():
         STABILITY_COOLDOWN_MINUTES,
         delete_pending_change,
         get_last_snapshot_hash,
+        get_latest_snapshot,
+        get_note_info,
         get_pending_change,
+        get_previous_snapshot,
         init_db,
+        insert_alert,
         insert_snapshot,
+        mark_note_inactive,
         mark_report_dirty,
         upsert_daily_stat,
         upsert_note,
@@ -140,6 +145,21 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
         note = getnote(note_id)
     except Exception as e:
         log.critical(f"获取笔记 {note_id} 失败: {e}")
+        # 检测笔记是否被删除：notes表中有记录且之前活跃则告警
+        info = get_note_info(note_id)
+        if info and info.get("is_active"):
+            # 从最近快照获取字数作为prev_word_count
+            latest = get_latest_snapshot(note_id)
+            prev_wc = latest["word_count"] if latest else 0
+            insert_alert(
+                note_id=note_id,
+                person=info.get("person", ""),
+                prev_word_count=prev_wc,
+                new_word_count=0,
+                alert_type="note_missing",
+            )
+            mark_note_inactive(note_id)
+            log.warning(f"笔记《{info.get('title', note_id)}》无法访问，已标记为不活跃")
         return False
 
     title = getattr(note, "title", "")
@@ -234,6 +254,25 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
 
     # 处理未写入的日期（填0值）
     _fill_empty_dates(note_id, body, current_time)
+
+    # 内容突变检测：对比上一次快照字数
+    if person and word_count > 0:
+        prev_snap = get_previous_snapshot(note_id)
+        if prev_snap and prev_snap["word_count"] > 0:
+            drop = prev_snap["word_count"] - word_count
+            drop_pct = drop / prev_snap["word_count"]
+            if drop_pct > 0.3 and drop > 500:
+                insert_alert(
+                    note_id=note_id,
+                    person=person,
+                    prev_word_count=prev_snap["word_count"],
+                    new_word_count=word_count,
+                    alert_type="content_drop",
+                    prev_snapshot_id=prev_snap["id"],
+                )
+                log.warning(
+                    f"笔记《{title}》字数骤降: {prev_snap['word_count']}→{word_count} ({drop_pct:.0%})"
+                )
 
     # 标记脏
     if person:
