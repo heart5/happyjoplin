@@ -431,10 +431,13 @@ _spark_cache: dict | None = None
 
 
 def _get_spark_candidates() -> list[str]:
-    """解析思想火花笔记，返回所有10~30字候选句子。模块级缓存避免重复API调用。"""
+    """解析思想火花笔记，返回候选句子。长度上限从云端配置获取，默认50字。模块级缓存避免重复API调用。"""
     global _spark_cache
     if _spark_cache is not None:
         return _spark_cache
+
+    max_len_str = getinivaluefromcloud("monitor", "spark_max_len")
+    max_len = int(max_len_str) if max_len_str else 50
 
     try:
         results = searchnotes("思想火花-（白晔峰）")
@@ -454,7 +457,7 @@ def _get_spark_candidates() -> list[str]:
                 clean = item.strip()
                 clean = re.sub(r'["""\']+', "", clean)
                 clean = re.sub(r"（[^）]*$", "", clean)
-                if 10 <= len(clean) <= 30 and not clean.startswith("+"):
+                if 10 <= len(clean) <= max_len and not clean.startswith("+"):
                     quotes.append(clean)
 
         _spark_cache = quotes
@@ -561,7 +564,7 @@ def _build_header(person: str, stats: dict) -> str:
     title = _get_person_title(stats["streak"])
 
     streak_str = (
-        f"今天有望恢复"
+        "今天有望恢复"
         if stats["streak"] == 0
         else f"{stats['eff_today'] - timedelta(days=stats['streak'] - 1):%m-%d} → {stats['eff_today']:%m-%d}"
     )
