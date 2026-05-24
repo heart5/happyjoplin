@@ -19,7 +19,7 @@
 # %%
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -125,11 +125,18 @@ CREATE TABLE IF NOT EXISTS config (
 CREATE TABLE IF NOT EXISTS spark_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     used_date DATE NOT NULL,
+    person TEXT NOT NULL DEFAULT '',
     quote_hash TEXT NOT NULL,
-    UNIQUE(used_date, quote_hash)
+    quote_text TEXT NOT NULL DEFAULT '',
+    UNIQUE(used_date, person)
 );
 
 CREATE INDEX IF NOT EXISTS idx_spark_log_date ON spark_log(used_date);
+CREATE INDEX IF NOT EXISTS idx_spark_log_person ON spark_log(person);
+
+-- 迁移旧表：补充可能缺失的列
+ALTER TABLE spark_log ADD COLUMN person TEXT NOT NULL DEFAULT '';
+ALTER TABLE spark_log ADD COLUMN quote_text TEXT NOT NULL DEFAULT '';
 """)
 
 
@@ -384,23 +391,35 @@ def delete_config(key: str) -> None:
 
 
 # %%
-def add_spark_log(used_date: str, quote_hash: str) -> None:
-    """记录一条已被使用的火花语录。"""
+def add_spark_log(used_date: str, person: str, quote_hash: str, quote_text: str) -> None:
+    """记录一条已被使用的火花语录（每人每天唯一）。"""
     with _get_conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO spark_log (used_date, quote_hash) VALUES (?, ?)",
-            (used_date, quote_hash),
+            "INSERT OR IGNORE INTO spark_log (used_date, person, quote_hash, quote_text) VALUES (?, ?, ?, ?)",
+            (used_date, person, quote_hash, quote_text),
         )
 
 
-def get_used_spark_hashes(days: int = 7) -> set:
-    """获取最近N天内已使用的火花语录hash集合。"""
+def get_used_spark_hashes(person: str, days: int = 7) -> set:
+    """获取指定人员最近N天内已使用的火花语录hash集合。"""
     cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     with _get_conn() as conn:
         rows = conn.execute(
-            "SELECT DISTINCT quote_hash FROM spark_log WHERE used_date >= ?", (cutoff,)
+            "SELECT DISTINCT quote_hash FROM spark_log WHERE person=? AND used_date >= ?",
+            (person, cutoff),
         ).fetchall()
         return {r["quote_hash"] for r in rows}
+
+
+def get_person_quote_today(person: str) -> str | None:
+    """获取指定人员今天的火花语录文本（保证同日多次更新返回同一句）。"""
+    today_str = date.today().strftime("%Y-%m-%d")
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT quote_text FROM spark_log WHERE person=? AND used_date=?",
+            (person, today_str),
+        ).fetchone()
+        return row["quote_text"] if row else None
 
 
 def cleanup_spark_log(days: int = 7) -> int:

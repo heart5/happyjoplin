@@ -57,6 +57,7 @@ with pathmagic.context():
         get_daily_stats_by_person,
         get_dirty_persons,
         get_latest_snapshot,
+        get_person_quote_today,
         get_person_set,
         get_snapshot_count,
         get_used_spark_hashes,
@@ -437,7 +438,7 @@ def _get_spark_candidates() -> list[str]:
         return _spark_cache
 
     max_len_str = getinivaluefromcloud("monitor", "spark_max_len")
-    max_len = int(max_len_str) if max_len_str else 50
+    max_len = int(max_len_str) if max_len_str else 60
 
     try:
         results = searchnotes("思想火花-（白晔峰）")
@@ -466,14 +467,23 @@ def _get_spark_candidates() -> list[str]:
         return []
 
 
-def _pick_spark_quote() -> str:
-    """选取一条火花语录，排除最近7天已用过的。返回空字符串表示无可选语录。"""
+def _pick_spark_quote(person: str) -> str:
+    """为指定人员选取火花语录（同日固定、7天按人去重）。
+
+    同一人同一天多次触发报告时，返回同一句摘语。
+    7天内不重复仅针对该人员，不同人员可以同日使用同一摘语。
+    """
+    # 同日固定：若该人员今天已有记录，直接返回
+    existing = get_person_quote_today(person)
+    if existing:
+        return existing
+
     candidates = _get_spark_candidates()
     if not candidates:
         return ""
 
     cleanup_spark_log(7)
-    used = get_used_spark_hashes(7)
+    used = get_used_spark_hashes(person, 7)
 
     available = [q for q in candidates if hashlib.md5(q.encode()).hexdigest() not in used]
 
@@ -482,7 +492,7 @@ def _pick_spark_quote() -> str:
 
     chosen = random.choice(available)
     today_str = date.today().strftime("%Y-%m-%d")
-    add_spark_log(today_str, hashlib.md5(chosen.encode()).hexdigest())
+    add_spark_log(today_str, person, hashlib.md5(chosen.encode()).hexdigest(), chosen)
     return chosen
 
 
@@ -560,7 +570,7 @@ def _compute_person_stats(person: str, active_note_ids: list[str]) -> dict:
 # %%
 def _build_header(person: str, stats: dict) -> str:
     """构建热图笔记头部的称号+火花+成就表格。"""
-    spark = _pick_spark_quote()
+    spark = _pick_spark_quote(person)
     title = _get_person_title(stats["streak"])
 
     streak_str = (
