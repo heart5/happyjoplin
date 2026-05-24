@@ -581,7 +581,6 @@ def _build_header(person: str, stats: dict) -> str:
     )
     week_max_str = f"本周最高单日 **{stats['week_max']:,}** 字" if stats["week_max"] > 0 else "本周暂无记录"
     month_str = f"本月累计 **{stats['month_total']:,}** 字"
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     parts = [
         f"### 📋 {person} · 更新热图\n\n",
@@ -589,7 +588,6 @@ def _build_header(person: str, stats: dict) -> str:
     ]
     if spark:
         parts.append(f'> \n> 💡 *"{spark}"*\n')
-    parts.append(f"\n> 🕐 更新于 {now_str}\n")
     parts.append("\n---\n\n")
 
     return "".join(parts)
@@ -597,10 +595,12 @@ def _build_header(person: str, stats: dict) -> str:
 
 # %%
 def _build_footer() -> str:
-    """构建热图笔记底部规则说明（通俗版）。"""
+    """构建热图笔记尾部：规则说明 + 更新信息。"""
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     return (
         "\n---\n\n"
         "> 📋 **统计规则**：每天 08:00 起算新一天 · 编辑完 30 分钟后生效 · 按当天标题段落统计字数 · 同一人多篇取当日最高\n"
+        f"> \n> 🤖 轻行动AI自动更新于 {now_str}\n"
     )
 
 
