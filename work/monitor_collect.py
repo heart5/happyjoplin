@@ -248,7 +248,7 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
     # 解析每日条目
     daily = parse_daily_entries(body, current_time)
     for entry_date, wc in daily.items():
-        is_backfill = _check_backfill(note_id, entry_date) if snapshot_id else 0
+        is_backfill = _check_backfill(entry_date, current_time) if snapshot_id else 0
         upsert_daily_stat(
             note_id=note_id,
             entry_date=entry_date,
@@ -300,16 +300,11 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
 
 
 # %%
-def _check_backfill(note_id: str, entry_date: str) -> int:
-    """检查指定日期条目是否是补填（之前已有该日期的记录）。"""
-    with __import__("sqlite3").connect(
-        str(__import__("pathlib").Path(getdirmain()) / "data" / "monitor.db")
-    ) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM daily_stats WHERE note_id=? AND entry_date=?",
-            (note_id, entry_date),
-        ).fetchone()
-        return 1 if row and row[0] > 0 else 0
+def _check_backfill(entry_date_str: str, current_time: datetime) -> int:
+    """检查指定日期条目是否是补填（快照时间超过该日期的次日08:00截止线）。"""
+    entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
+    deadline = datetime(entry_date.year, entry_date.month, entry_date.day, 8, 0, 0) + timedelta(days=1)
+    return 1 if current_time > deadline else 0
 
 
 # %%

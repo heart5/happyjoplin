@@ -62,6 +62,31 @@ def _get_conn():
 
 
 # %%
+def _migrate_spark_log(conn: sqlite3.Connection) -> None:
+    """增量迁移：为旧版 spark_log 表补充 person/quote_text 列和唯一约束升级。"""
+    cur = conn.execute("PRAGMA table_info(spark_log)")
+    cols = {r[1] for r in cur.fetchall()}
+    if "person" not in cols:
+        conn.execute("ALTER TABLE spark_log ADD COLUMN person TEXT NOT NULL DEFAULT ''")
+    if "quote_text" not in cols:
+        conn.execute("ALTER TABLE spark_log ADD COLUMN quote_text TEXT NOT NULL DEFAULT ''")
+    # 去重：旧数据 person 全为空字符串，同一天可能有多条记录，只保留 id 最大的一条
+    dupes = conn.execute("""
+        SELECT used_date, person, MAX(id) as keep_id, COUNT(*) as cnt
+        FROM spark_log
+        GROUP BY used_date, person
+        HAVING cnt > 1
+    """).fetchall()
+    for due_date, due_person, keep_id, _ in dupes:
+        conn.execute(
+            "DELETE FROM spark_log WHERE used_date=? AND person=? AND id != ?",
+            (due_date, due_person, keep_id),
+        )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_spark_log_date_person ON spark_log(used_date, person)"
+    )
+
+
 def init_db() -> None:
     with _get_conn() as conn:
         conn.executescript("""
@@ -125,14 +150,9 @@ CREATE TABLE IF NOT EXISTS config (
 CREATE TABLE IF NOT EXISTS spark_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     used_date DATE NOT NULL,
-    person TEXT NOT NULL DEFAULT '',
     quote_hash TEXT NOT NULL,
-    quote_text TEXT NOT NULL DEFAULT '',
-    UNIQUE(used_date, person)
+    UNIQUE(used_date)
 );
-
-CREATE INDEX IF NOT EXISTS idx_spark_log_date ON spark_log(used_date);
-CREATE INDEX IF NOT EXISTS idx_spark_log_person ON spark_log(person);
 
 CREATE TABLE IF NOT EXISTS content_alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,11 +168,12 @@ CREATE TABLE IF NOT EXISTS content_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_content_alerts_person ON content_alerts(person);
 CREATE INDEX IF NOT EXISTS idx_content_alerts_note_id ON content_alerts(note_id);
-
--- 迁移旧表：补充可能缺失的列
-ALTER TABLE spark_log ADD COLUMN person TEXT NOT NULL DEFAULT '';
-ALTER TABLE spark_log ADD COLUMN quote_text TEXT NOT NULL DEFAULT '';
 """)
+        # 增量迁移：确保 spark_log 新列存在
+        _migrate_spark_log(conn)
+        # 确保索引存在（CREATE INDEX IF NOT EXISTS 在 execscript 外单独执行更安全）
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_spark_log_date ON spark_log(used_date)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_spark_log_person ON spark_log(person)")
 
 
 # %% [markdown]
