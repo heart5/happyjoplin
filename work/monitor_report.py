@@ -569,36 +569,27 @@ def _compute_person_stats(person: str, active_note_ids: list[str]) -> dict:
 
 # %%
 def _build_header(person: str, stats: dict) -> str:
-    """构建热图笔记头部的称号+火花+成就表格。"""
+    """构建热图笔记头部：姓名+成就摘要+火花摘语。"""
     spark = _pick_spark_quote(person)
     title = _get_person_title(stats["streak"])
 
+    # 成就摘要（自然语言）
     streak_str = (
         "今天有望恢复"
         if stats["streak"] == 0
-        else f"{stats['eff_today'] - timedelta(days=stats['streak'] - 1):%m-%d} → {stats['eff_today']:%m-%d}"
+        else f"已连续更新 **{stats['streak']}** 天（{stats['eff_today'] - timedelta(days=stats['streak'] - 1):%m-%d} → {stats['eff_today']:%m-%d}）"
     )
+    week_max_str = f"本周最高单日 **{stats['week_max']:,}** 字" if stats["week_max"] > 0 else "本周暂无记录"
+    month_str = f"本月累计 **{stats['month_total']:,}** 字"
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    week_max_str = f"{stats['week_max']} 字" if stats["week_max"] > 0 else "暂无"
-    week_date_str = f"{stats['week_max_date']:%m-%d 周%a}" if stats["week_max_date"] else ""
-    week_date_str = (
-        week_date_str.replace("Mon", "一")
-        .replace("Tue", "二")
-        .replace("Wed", "三")
-        .replace("Thu", "四")
-        .replace("Fri", "五")
-        .replace("Sat", "六")
-        .replace("Sun", "日")
-    )
-
-    parts = [f"> {title}\n"]
+    parts = [
+        f"### 📋 {person} · 更新热图\n\n",
+        f"> {title}，{streak_str}，{week_max_str}，{month_str}。\n",
+    ]
     if spark:
-        parts.append(f'> 💡 *"{spark}"*\n')
-    parts.append("\n")
-    parts.append("| 🔥 连续更新 | 🏆 本周最高 | 📝 本月累计 |\n")
-    parts.append("|:---:|:---:|:---:|\n")
-    parts.append(f"| **{stats['streak']}** 天 | **{week_max_str}** | **{stats['month_total']:,}** 字 |\n")
-    parts.append(f"| {streak_str} | {week_date_str} | {stats['eff_today']:%m}月至今 |\n")
+        parts.append(f'> \n> 💡 *"{spark}"*\n')
+    parts.append(f"\n> 🕐 更新于 {now_str}\n")
     parts.append("\n---\n\n")
 
     return "".join(parts)
@@ -606,13 +597,10 @@ def _build_header(person: str, stats: dict) -> str:
 
 # %%
 def _build_footer() -> str:
-    """构建热图笔记底部规则说明。"""
+    """构建热图笔记底部规则说明（通俗版）。"""
     return (
         "\n---\n\n"
-        "> 📋 **更新统计规则**\n>\n"
-        "> - ⏰ **日界**：早上 08:00 前更新计入前一天，08:00 后计入当天\n"
-        "> - ⏳ **延迟**：编辑完成后需稳定 30 分钟才会被系统确认，不会即时反映\n"
-        "> - 📏 **计数**：按每日 `### YYYY年MM月DD日` 段落统计字数，同一人多篇取当日最高\n"
+        "> 📋 **统计规则**：每天 08:00 起算新一天 · 编辑完 30 分钟后生效 · 按当天标题段落统计字数 · 同一人多篇取当日最高\n"
     )
 
 
@@ -675,8 +663,16 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
             for title, daily_counts in data.items():
                 img_path = plot_word_counts(daily_counts, f"{title}-{person}")
                 try:
-                    res_id = retry_jp(jpapi.add_resource, img_path, title=f"{title}-{person}")
-                    new_body_parts.append(f"![{title}-{person}](:/{res_id})\n")
+                    alt = f"{person} · {title}每日更新热图"
+                    res_id = retry_jp(jpapi.add_resource, img_path, title=alt)
+                    new_body_parts.append(f"![{alt}](:/{res_id})\n")
+
+                    valid_days = sum(1 for (wc, _) in daily_counts.values() if wc > 0)
+                    total_wc = sum(wc for (wc, _) in daily_counts.values() if wc > 0)
+                    avg_wc = total_wc // valid_days if valid_days > 0 else 0
+                    new_body_parts.append(
+                        f"> {title} — 有效 {valid_days} 天，累计 {total_wc:,} 字，日均约 {avg_wc:,} 字\n\n"
+                    )
                 except Exception as e:
                     log.critical(f"上传热图资源失败（{title}-{person}）: {e}")
 
