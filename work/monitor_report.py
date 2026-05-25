@@ -623,13 +623,14 @@ def _build_backfill_summary(data: dict) -> str:
         "---\n\n",
         "### 延期补填记录\n\n",
         "> 截止时间：次日 07:30，超时补填将记录于此。\n\n",
-        "| 笔记 | 应完成于 | 字数 |\n",
-        "|:--|:--|--:|\n",
+        "| 笔记 | 日期 | 应完成于 | 字数 |\n",
+        "|:--|:--|:--|--:|\n",
     ]
     for title, date_str, wc in entries:
         d = datetime.strptime(date_str, "%Y-%m-%d")
+        date_display = d.strftime("%m/%d")
         deadline = (d + timedelta(days=1)).strftime("%m/%d") + " 07:30"
-        lines.append(f"| {title} | {deadline} | {wc:,} |\n")
+        lines.append(f"| {title} | {date_display} | {deadline} | {wc:,} |\n")
 
     return "".join(lines)
 
