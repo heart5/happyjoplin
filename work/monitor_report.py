@@ -526,7 +526,7 @@ def _compute_person_stats(person: str, active_note_ids: list[str]) -> dict:
 
     daily_max: dict = {}
     for _title, dc in data.items():
-        for d, (wc, _) in dc.items():
+        for d, (wc, *_) in dc.items():
             if isinstance(d, str):
                 d = datetime.strptime(d, "%Y-%m-%d").date()
             daily_max[d] = max(daily_max.get(d, 0), wc)
@@ -610,9 +610,10 @@ def _build_backfill_summary(data: dict) -> str:
     """从 daily_stats 数据中提取延期补填条目，生成 markdown 汇总表。"""
     entries = []
     for title, daily_counts in data.items():
-        for date_str, (wc, is_backfill) in daily_counts.items():
+        for date_str, (wc, is_backfill, *rest) in daily_counts.items():
             if is_backfill:
-                entries.append((title, date_str, wc))
+                captured_at = rest[0] if rest else None
+                entries.append((title, date_str, wc, captured_at))
 
     if not entries:
         return ""
@@ -623,14 +624,20 @@ def _build_backfill_summary(data: dict) -> str:
         "---\n\n",
         "### 延期补填记录\n\n",
         "> 截止时间：次日 07:30，超时补填将记录于此。\n\n",
-        "| 笔记 | 日期 | 应完成于 | 字数 |\n",
-        "|:--|:--|:--|--:|\n",
+        "| 笔记 | 日期 | 应完成于 | 记录时间 | 字数 |\n",
+        "|:--|:--|:--|:--|--:|\n",
     ]
-    for title, date_str, wc in entries:
+    for title, date_str, wc, captured_at in entries:
         d = datetime.strptime(date_str, "%Y-%m-%d")
         date_display = d.strftime("%m/%d")
         deadline = (d + timedelta(days=1)).strftime("%m/%d") + " 07:30"
-        lines.append(f"| {title} | {date_display} | {deadline} | {wc:,} |\n")
+        if captured_at:
+            if isinstance(captured_at, str):
+                captured_at = datetime.fromisoformat(captured_at)
+            captured_display = captured_at.strftime("%m/%d %H:%M")
+        else:
+            captured_display = "-"
+        lines.append(f"| {title} | {date_display} | {deadline} | {captured_display} | {wc:,} |\n")
 
     return "".join(lines)
 
@@ -711,8 +718,8 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
                 try:
                     alt = f"{person} · {title}每日更新热图"
                     res_id = retry_jp(jpapi.add_resource, img_path, title=alt)
-                    valid_days = sum(1 for (wc, _) in daily_counts.values() if wc > 0)
-                    total_wc = sum(wc for (wc, _) in daily_counts.values() if wc > 0)
+                    valid_days = sum(1 for (wc, *_) in daily_counts.values() if wc > 0)
+                    total_wc = sum(wc for (wc, *_) in daily_counts.values() if wc > 0)
                     avg_wc = total_wc // valid_days if valid_days > 0 else 0
                     new_body_parts.append(f"## 📝 {title}\n\n")
                     new_body_parts.append(f"![{alt}](:/{res_id})\n\n")

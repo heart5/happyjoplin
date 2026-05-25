@@ -405,7 +405,7 @@ def get_daily_stats(note_id: str) -> list[dict]:
 
 
 def get_daily_stats_by_person(person: str, active_note_ids: list[str]) -> dict:
-    """返回 {note_title: {entry_date: (word_count, is_backfill), ...}}"""
+    """返回 {note_title: {entry_date: (word_count, is_backfill, captured_at), ...}}"""
     result = {}
     with _get_conn() as conn:
         for note_id in active_note_ids:
@@ -416,12 +416,16 @@ def get_daily_stats_by_person(person: str, active_note_ids: list[str]) -> dict:
                 continue
             title = title_row["title"]
             rows = conn.execute(
-                """SELECT entry_date, word_count, is_backfill FROM daily_stats
-                   WHERE note_id=?
-                   ORDER BY entry_date, word_count ASC, is_backfill DESC""",
+                """SELECT ds.entry_date, ds.word_count, ds.is_backfill, s.captured_at
+                   FROM daily_stats ds
+                   LEFT JOIN snapshots s ON ds.snapshot_id = s.id
+                   WHERE ds.note_id=?
+                   ORDER BY ds.entry_date, ds.word_count ASC, ds.is_backfill DESC""",
                 (note_id,),
             ).fetchall()
-            result[title] = {r["entry_date"]: (r["word_count"], bool(r["is_backfill"])) for r in rows}
+            result[title] = {
+                r["entry_date"]: (r["word_count"], bool(r["is_backfill"]), r["captured_at"]) for r in rows
+            }
     return result
 
 
