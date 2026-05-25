@@ -228,8 +228,9 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
             continue
         daily_counts_for_filter[dk] = v
 
-    current_day_identity = arrow.now(get_localzone()).replace(hour=8, minute=0, second=0, microsecond=0)
-    if arrow.now().hour < 8:
+    current_day_identity = arrow.now(get_localzone()).replace(hour=7, minute=30, second=0, microsecond=0)
+    now = arrow.now(get_localzone())
+    if now.hour < 7 or (now.hour == 7 and now.minute < 30):
         current_day_identity = current_day_identity.shift(days=-1)
     current_date = pd.to_datetime(current_day_identity.date())
     three_months_ago = current_date - pd.DateOffset(months=monthrange)
@@ -263,7 +264,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
     df = df.drop_duplicates(subset=["date"], keep="first")
     df = df.sort_values(by="date").reset_index(drop=True)
     # 有效日期区间内缺失的天 → 0字（黄色），而非无数据（白色）
-    df.loc[(df["date"] >= min_date) & (df["date"] <= max_date) & (df["count"] == -1), "count"] = 0
+    df.loc[(df["date"] >= start_date) & (df["date"] <= max_date) & (df["count"] == -1), "count"] = 0
 
     df["year"] = df["date"].dt.year
     df["week"] = df["date"].dt.isocalendar().week
@@ -531,8 +532,8 @@ def _compute_person_stats(person: str, active_note_ids: list[str]) -> dict:
             daily_max[d] = max(daily_max.get(d, 0), wc)
 
     now_local = arrow.now(get_localzone())
-    day_identity = now_local.replace(hour=8, minute=0, second=0, microsecond=0)
-    if now_local.hour < 8:
+    day_identity = now_local.replace(hour=7, minute=30, second=0, microsecond=0)
+    if now_local.hour < 7 or (now_local.hour == 7 and now_local.minute < 30):
         day_identity = day_identity.shift(days=-1)
     eff_today = day_identity.date()
 
@@ -605,13 +606,34 @@ def _build_header(person: str, stats: dict) -> str:
 
 
 # %%
+def _build_backfill_summary(data: dict) -> str:
+    """从 daily_stats 数据中提取延期补填条目，生成 markdown 汇总表。"""
+    entries = []
+    for title, daily_counts in data.items():
+        for date_str, (wc, is_backfill) in daily_counts.items():
+            if is_backfill:
+                entries.append((title, date_str, wc))
+
+    if not entries:
+        return ""
+
+    entries.sort(key=lambda x: x[1], reverse=True)
+
+    lines = ["---\n\n", "### 延期补填记录\n\n", "| 笔记 | 日期 | 字数 |\n", "|:--|:--|--:|\n"]
+    for title, date_str, wc in entries:
+        lines.append(f"| {title} | {date_str} | {wc:,} |\n")
+
+    return "".join(lines)
+
+
+# %%
 def _build_footer() -> str:
     """构建热图笔记尾部：折叠规则 + 更新时间。"""
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     return (
         "<details>\n"
         "<summary>📋 统计规则</summary>\n\n"
-        "- 每天 08:00 起算新一天 · 编辑完 30 分钟后生效\n"
+        "- 每天 07:30 起算新一天 · 编辑完 30 分钟后生效\n"
         "- 按当天标题段落统计字数 · 同一人多篇取当日最高\n"
         "- 绿色越深字数越多 · 黄色为有标题无内容 · 灰色虚框为延迟补填\n"
         "\n</details>\n\n"
@@ -693,6 +715,7 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
                     log.critical(f"上传热图资源失败（{title}-{person}）: {e}")
 
             if new_body_parts:
+                new_body_parts.append(_build_backfill_summary(data))
                 new_body_parts.append(_build_footer())
                 new_body = "".join(new_body_parts)
                 retry_jp(updatenote_body, heatmap_id, new_body)

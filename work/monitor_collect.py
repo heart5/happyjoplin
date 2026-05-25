@@ -312,9 +312,13 @@ def _parse_pending_time(val) -> datetime:
 
 # %%
 def _check_backfill(entry_date_str: str, current_time: datetime) -> int:
-    """检查指定日期条目是否是补填（快照时间超过该日期的次日08:00截止线）。"""
+    """检查指定日期条目是否是补填（内容稳定时间超过该日期的次日07:30截止线）。
+
+    截止线设为07:30而非08:00，预留30分钟冷却期+cron间隔的缓冲，
+    避免07:30-08:00间完成的内容被cron延迟检测误判为补填。
+    """
     entry_date = datetime.strptime(entry_date_str, "%Y-%m-%d").date()
-    deadline = datetime(entry_date.year, entry_date.month, entry_date.day, 8, 0, 0) + timedelta(days=1)
+    deadline = datetime(entry_date.year, entry_date.month, entry_date.day, 7, 30, 0) + timedelta(days=1)
     return 1 if current_time > deadline else 0
 
 

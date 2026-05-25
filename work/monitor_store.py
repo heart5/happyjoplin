@@ -416,7 +416,9 @@ def get_daily_stats_by_person(person: str, active_note_ids: list[str]) -> dict:
                 continue
             title = title_row["title"]
             rows = conn.execute(
-                "SELECT entry_date, word_count, is_backfill FROM daily_stats WHERE note_id=? ORDER BY entry_date",
+                """SELECT entry_date, word_count, is_backfill FROM daily_stats
+                   WHERE note_id=?
+                   ORDER BY entry_date, word_count ASC, is_backfill DESC""",
                 (note_id,),
             ).fetchall()
             result[title] = {r["entry_date"]: (r["word_count"], bool(r["is_backfill"])) for r in rows}
