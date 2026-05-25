@@ -571,25 +571,34 @@ def _compute_person_stats(person: str, active_note_ids: list[str]) -> dict:
 
 # %%
 def _build_header(person: str, stats: dict) -> str:
-    """构建热图笔记头部：姓名+成就摘要+火花摘语。"""
+    """构建热图笔记头部：称号 + 成就表格 + 火花摘语。"""
     spark = _pick_spark_quote(person)
     title = _get_person_title(stats["streak"])
 
-    # 成就摘要（自然语言）
     streak_str = (
         "今天有望恢复"
         if stats["streak"] == 0
-        else f"已连续更新 **{stats['streak']}** 天（{stats['eff_today'] - timedelta(days=stats['streak'] - 1):%m-%d} → {stats['eff_today']:%m-%d}）"
+        else f"**{stats['streak']}** 天（{stats['eff_today'] - timedelta(days=stats['streak'] - 1):%m-%d} → {stats['eff_today']:%m-%d}）"
     )
-    week_max_str = f"本周最高单日 **{stats['week_max']:,}** 字" if stats["week_max"] > 0 else "本周暂无记录"
-    month_str = f"本月累计 **{stats['month_total']:,}** 字"
+    week_max_str = (
+        f"**{stats['week_max']:,}** 字（{stats['week_max_date']:%m-%d}）"
+        if stats["week_max"] > 0 and stats["week_max_date"]
+        else "暂无记录"
+    )
+    month_str = f"**{stats['month_total']:,}** 字"
 
     parts = [
-        f"### 📋 {person} · 更新热图\n\n",
-        f"> {title}，{streak_str}，{week_max_str}，{month_str}。\n",
+        f"# 🏅 {person} · 更新热图\n\n",
+        "| 📊 成就 | 详情 |\n",
+        "|:--|:--|\n",
+        f"| 🏆 当前称号 | {title} |\n",
+        f"| 🔥 连续更新 | {streak_str} |\n",
+        f"| 📈 本周最高 | {week_max_str} |\n",
+        f"| 📅 本月累计 | {month_str} |\n",
+        "\n",
     ]
     if spark:
-        parts.append(f'> \n> 💡 *"{spark}"*\n')
+        parts.append(f'> 💡 *"{spark}"*\n')
     parts.append("\n---\n\n")
 
     return "".join(parts)
@@ -597,12 +606,16 @@ def _build_header(person: str, stats: dict) -> str:
 
 # %%
 def _build_footer() -> str:
-    """构建热图笔记尾部：规则说明 + 更新信息。"""
+    """构建热图笔记尾部：折叠规则 + 更新时间。"""
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     return (
-        "\n---\n\n"
-        "> 📋 **统计规则**：每天 08:00 起算新一天 · 编辑完 30 分钟后生效 · 按当天标题段落统计字数 · 同一人多篇取当日最高\n"
-        f"> \n> 🤖 轻行动AI自动更新于 {now_str}\n"
+        "<details>\n"
+        "<summary>📋 统计规则</summary>\n\n"
+        "- 每天 08:00 起算新一天 · 编辑完 30 分钟后生效\n"
+        "- 按当天标题段落统计字数 · 同一人多篇取当日最高\n"
+        "- 绿色越深字数越多 · 黄色为有标题无内容 · 灰色虚框为延迟补填\n"
+        "\n</details>\n\n"
+        f"*🤖 轻行动AI自动更新于 {now_str}*\n"
     )
 
 
@@ -667,14 +680,15 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
                 try:
                     alt = f"{person} · {title}每日更新热图"
                     res_id = retry_jp(jpapi.add_resource, img_path, title=alt)
-                    new_body_parts.append(f"![{alt}](:/{res_id})\n")
-
                     valid_days = sum(1 for (wc, _) in daily_counts.values() if wc > 0)
                     total_wc = sum(wc for (wc, _) in daily_counts.values() if wc > 0)
                     avg_wc = total_wc // valid_days if valid_days > 0 else 0
-                    new_body_parts.append(
-                        f"> {title} — 有效 {valid_days} 天，累计 {total_wc:,} 字，日均约 {avg_wc:,} 字\n\n"
-                    )
+                    new_body_parts.append(f"## 📝 {title}\n\n")
+                    new_body_parts.append(f"![{alt}](:/{res_id})\n\n")
+                    new_body_parts.append("| 有效 | 累计 | 日均 |\n")
+                    new_body_parts.append("|:--|:--|:--|\n")
+                    new_body_parts.append(f"| {valid_days} 天 | {total_wc:,} 字 | {avg_wc:,} 字 |\n")
+                    new_body_parts.append("\n---\n\n")
                 except Exception as e:
                     log.critical(f"上传热图资源失败（{title}-{person}）: {e}")
 
