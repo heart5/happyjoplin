@@ -340,8 +340,9 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
                 pass
         temp_date += pd.DateOffset(days=1)
 
-    ax.hlines(month_locs, -0.5, 6.5, colors="gray", linestyles="dashed", linewidth=0.5)
+    ax.hlines(month_locs, 0, 7, colors="gray", linestyles="dashed", linewidth=0.5)
     ax.invert_yaxis()
+    ax.set_xlim(0, 7)
 
     cbar = plt.colorbar(heatmap)
     cbar.set_label("更新字数")
