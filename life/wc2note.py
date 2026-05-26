@@ -31,16 +31,16 @@ from pathlib import Path
 
 # import arrow
 import pandas as pd
-# import xlsxwriter
 
+# import xlsxwriter
 # %%
 import pathmagic
 
 with pathmagic.context():
-    from func.getid import getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.filedatafunc import getfilemtime as getfltime
     from func.first import getdirmain, touchfilepath2depth
+    from func.getid import getdevicename
     from func.jpfuncs import (
         createnote,
         getinivaluefromcloud,
@@ -70,21 +70,28 @@ def items2df(fl: Path) -> pd.DataFrame:
     """读取txt记录文件，格式化拆分并存储至DataFrame返回"""
     try:
         content = open(fl, "r").read()
-        # print(fl, content[:100])
     except Exception as e:
         log.critical(f"文件{fl}读取时出现错误，返回空的pd.DataFrame.{e}")
         return pd.DataFrame()
-    ptn = re.compile(r"(^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\t(True|False)\t([^\t]+)\t(\w+)\t", re.M)
-    itemlst = re.split(ptn, content)
-    # print(itemlst[:5])
-    itemlst = [im.strip() for im in itemlst if len(im) > 0]
-    # print(itemlst[:5])
-    step = 5
-    itemlst4pd1 = [itemlst[i : i + step] for i in range(0, len(itemlst), step)]
-    # print(itemlst4pd1[:5])
-    df2 = pd.DataFrame(itemlst4pd1, columns=["time", "send", "sender", "type", "content"])
+    from life.chat_schema import parse_tsv
+
+    rows = []
+    for line in content.splitlines():
+        if not line.strip():
+            continue
+        parsed = parse_tsv(line)
+        if parsed is None:
+            log.warning(f"跳过格式异常行: {line[:80]}...")
+            continue
+        rows.append(parsed)
+    if not rows:
+        return pd.DataFrame()
+    df2 = pd.DataFrame(rows)
+    df2.rename(
+        columns={"fmTime": "time", "fmSend": "send", "fmSender": "sender", "fmType": "type", "fmText": "content"},
+        inplace=True,
+    )
     df2["time"] = pd.to_datetime(df2["time"])
-    df2["send"] = df2["send"].apply(lambda x: True if x == "True" else False)
     df2["content"] = df2["content"].apply(lambda x: re.sub(r"(\[\w+前\]|\[刚才\])?", "", x))
     # 处理成相对路径，逻辑是准备把所有音频等文件集中到主运行环境
     ptn = re.compile(r"^/.+happyjoplin/")

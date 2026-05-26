@@ -221,13 +221,9 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     # 判断是否延时并增加提示到条目内容中
     if humantimestr := gethumantimedelay(inputformatmsg["fmTime"]):
         inputformatmsg["fmText"] = f"[{humantimestr}]" + inputformatmsg["fmText"]
-    msgcontent = ""
-    for item in inputformatmsg:
-        if item == "fmId":
-            continue
-        msgcontent += f"{inputformatmsg[item]}\t"
-    # 去除最后一个\t
-    msgcontent = msgcontent[:-1]
+    from life.chat_schema import format_tsv
+
+    msgcontent = format_tsv(inputformatmsg)
     print(f"{msgcontent}")
 
     men_wc = getcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_nickname")
