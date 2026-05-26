@@ -54,16 +54,10 @@ from itchat.content import (
     VIDEO,
 )
 
-# from itchat.content import *
-
-
 # %%
 import pathmagic
 
 with pathmagic.context():
-    # from work.weixinzhang import showjinzhang, showshoukuan
-    # import evernote.edam.type.ttypes as ttypes
-    # from work.zymessage import searchcustomer, searchqiankuan, searchpinxiang
     from func.getid import getdeviceid, getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.datatools import readfromtxt, write2txt
@@ -78,9 +72,6 @@ with pathmagic.context():
     from func.logme import log
     from func.nettools import trycounttimes2
 
-    # from life.wccontact import updatectdf, getctdf, showwcsimply
-    # from life.phonecontact import showphoneinfoimg
-    # from etc.battery_manage import showbattinfoimg
     from func.pdtools import db2img
     from func.sysfunc import execcmd, listallloghander, not_IPython, uuid3hexstr
     from func.termuxtools import termux_sms_send
@@ -455,38 +446,6 @@ def sharing_reply(msg):
     print(sendernick)
     innermsg = formatmsg(msg)
 
-    # showmsgexpanddictetc(msg)
-    # 处理火界麻将战绩网页
-    # http://zj.lgmob.com/h5_whmj_qp/fks0_eb81c193dea882941fe13dfa5be24a11.html
-    # ptn = re.compile("h5_whmj_qp/fks0_")
-    # http://s0.lgmob.com/h5_whmj_qp/zhanji/index.php?id=fks0_eb81c193dea882941fe13dfa5be24a11
-    # ptn = re.compile("h5_whmj_qp/zhanji/index.php\\?id=")
-    # men_wc = getcfpoptionvalue('happyjpwebchat', get_host_uuid(), 'host_nickname')
-    #     msgurl = msg['Url']
-    #     print(msgurl)
-    #     if (ulst := splitmjurlfromtext(msgurl)) and (len(ulst) > 0):
-    #         if getinivaluefromcloud("game", "forceupdateexcel"):
-    #             descstr = ''
-    #             for sp in ulst:
-    #                 tmpurl, tmpdescstr = geturlcontentwrite2excel(men_wc, sp)
-    #                 descstr += tmpdescstr
-    #         else:
-    #             descstr = updateurllst(men_wc, ulst)
-    #         outstr = f"【Text】信息中发现新的火界麻将战绩网页链接并处理：\t{descstr}"
-    #         itchat.send_msg(f'({sendernick})' + outstr)
-    #         makemsg2write(innermsg, outstr)
-    #         makemsg2write(innermsg, msgurl)
-
-    #     # 处理开房链接
-    #     # http://s0.lgmob.com/h5_whmj_qp/?d=217426
-    #     ptnfang = re.compile("s0.lgmob.com/h5_whmj_qp/\\?d=(\d+)")
-    #     if re.findall(ptnfang, msgurl):
-    #         if msgurl.startswith('http'):
-    #             outstr = f"【Sharing】信息中发现新的火界麻将开房链接：\t{re.findall(ptnfang, msgurl)[0]}: {msg['Text']}"
-    #             # log.info(outstr)
-    #             itchat.send_msg(f'({sendernick})'  +outstr)
-    #             makemsg2write(innermsg, outstr)
-
     soup, items = soupclean2item(msg["Content"])
 
     # 过滤掉已经研究过属性公众号信息，对于尚未研究过的显示详细信息
@@ -588,24 +547,6 @@ def text_reply(msg):
         log.info("根据指令退出小元宝系统")
         itchat.logout()
 
-    # 处理火界麻将战绩网页
-    #     men_wc = getcfpoptionvalue('happyjpwebchat', get_host_uuid(), 'host_nickname')
-    # #     ptn = re.compile("h5_whmj_qp/(zhanji/index.php\\?id=|fks0_)")
-    #     msgtxt = msg['Text']
-    #     if (ulst := splitmjurlfromtext(msgtxt)) and (len(ulst) > 0):
-    #         if getinivaluefromcloud("game", "forceupdateexcel"):
-    #             descstr = ''
-    #             for sp in ulst:
-    #                 tmpurl, tmpdescstr = geturlcontentwrite2excel(men_wc, sp)
-    #                 descstr += tmpdescstr
-    #         else:
-    #             descstr = updateurllst(men_wc, ulst)
-    #         outstr = f"【Text】信息中发现新的火界麻将战绩网页链接并处理：\t{descstr}"
-    #         # log.info(outstr)
-    #         itchat.send_msg(sendernick + outstr)
-    #         makemsg2write(innermsg, outstr)
-    #         makemsg2write(innermsg, msgtxt)
-
     # 如何不是指定的数据分析中心，则不进行语义分析
     thisid = getdeviceid()
     # print(f"type:{type(thisid)}\t{thisid}")
@@ -616,49 +557,6 @@ def text_reply(msg):
     if thisid != str(houseid) or (men_wc != mainaccount):
         print(f"不是数据分析中心也不是主账号【{mainaccount}】，指令咱不管哦")
         return
-
-    #     # 根据口令显示火界麻将战绩综合统计结果
-    #     if msg['Text'].startswith('火界麻将战果统计') or msg['Text'].startswith('麻果'):
-    #         log.info(f"根据口令显示火界麻将战绩综合统计结果")
-    #         msgtxt = msg['Text']
-    #         recentday = ""
-    #         if msgtxt.find('日') != -1:
-    #             recentday = "日"
-    #         elif msgtxt.find('周') != -1:
-    #             recentday = "周"
-    #         elif msgtxt.find('旬') != -1:
-    #             recentday = "旬"
-    #         elif msgtxt.find('月') != -1:
-    #             recentday = "月"
-    #         elif msgtxt.find('年') != -1:
-    #             recentday = "年"
-    #         elif msgtxt.find('全部') != -1:
-    #             recentday = "全部"
-    #         else:
-    #             recentday = '周'
-
-    #         simpledesc = True
-    #         if msgtxt.find('综合') != -1:
-    #             simpledesc = False
-    #         zhanji = zhanjidesc(men_wc, recentday, simpledesc)
-    #         # 发回给查询者
-    #         itchat.send_msg(f"{zhanji}", toUserName=msg['FromUserName'])
-    #         makemsg2write(innermsg, zhanji)
-    #         imgzhanji = lststr2img(zhanji)
-    #         imgwcrel = os.path.relpath(imgzhanji)
-    #         itchat.send_image(imgwcrel, toUserName=msg['FromUserName'])
-    #         makemsg2write(innermsg, imgwcrel)
-    #         outstr = f"{sendernick}\t查询信息：\n{msgtxt}"
-    #         # 查询记录发给自己一份备档
-    #         itchat.send_msg(outstr)
-    #         makemsg2write(innermsg, outstr)
-
-    #         if msgtxt.find('折线图') != -1:
-    #             _, imgzhanji = showzhanjiimg(men_wc, recentday)
-    #             imgzhanjirel = os.path.relpath(imgzhanji)
-    #             itchat.send_image(imgzhanjirel, toUserName=msg['FromUserName'])
-    #             # 折线图发送记录备档
-    #             makemsg2write(innermsg, imgzhanjirel)
 
     if msg["Text"].find("白异") >= 0:
         qrylst = msg["Text"].split("\n")
