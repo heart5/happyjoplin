@@ -162,6 +162,7 @@ def formatmsg(msg):
     imlst = re.split("[，,]", ignoredmplist)
     ismp = type(msg["User"]) == itchat.storage.MassivePlatform
     if ismp and (showname not in imlst):
+        log.info(f"待配置公众号（不在ignoredmplist）: {showname}")
         showmsgexpanddictetc(msg)
         # print(f"{showname}\t{imlst}")
 
