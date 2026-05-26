@@ -180,6 +180,8 @@ def formatmsg(msg):
         # print(f"\t{msg['Type']}\t{msg['MsgType']}\t{msg['Text']}")
         # print(f"\t{send}\t{msg['Type']}\t{msg['Text']}")
     fmtext = msg["Text"]
+    if not isinstance(fmtext, str):
+        fmtext = str(fmtext)
 
     finnalmsg = {
         "fmId": msg["MsgId"],
