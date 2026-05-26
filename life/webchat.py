@@ -64,6 +64,7 @@ with pathmagic.context():
         createnote,
         deleteresourcesfromnote,
         getinivaluefromcloud,
+        jpapi,
         searchnotes,
         updatenote_body,
         updatenote_title,
@@ -716,7 +717,8 @@ def _run_renew():
     from pathlib import Path
 
     qr_path = str(getdirmain() / "img" / "qrcode.png")
-    guard_file = Path("/tmp/webchat_renewing")
+    _tmp = os.environ.get('TMPDIR', '/tmp')
+    guard_file = Path(_tmp) / "webchat_renewing"
 
     # 1. 设置续期守卫，防止 startwebchatprocess.sh 干预
     guard_file.touch()
@@ -767,12 +769,11 @@ def _run_renew():
     else:
         log.error(f"pkl上传tc失败: {result.stderr}")
 
-    # 6. 远程重启tc上的webchat
+    # 6. 远程重启tc上的webchat（委托保活脚本处理python路径和日志）
     restart_cmd = (
         "pkill -f 'python.*life/webchat.py' 2>/dev/null; "
-        "sleep 1; "
-        "cd ~/codebase/happyjoplin && "
-        "nohup python life/webchat.py >> ~/downloads/lifewebchat_tc.out 2>&1 &"
+        "sleep 2; "
+        "~/codebase/happyjoplin/life/startwebchatprocess.sh"
     )
     result = subprocess.run(
         f"ssh tc '{restart_cmd}'",
@@ -816,12 +817,14 @@ def _upload_qr_to_joplin(qrcode_bytes, local_path=None):
             deleteresourcesfromnote(note_id)
         except Exception:
             pass
-        add_resource_from_bytes(qrcode_bytes, "微信扫码登录二维码.png")
+        res_id = add_resource_from_bytes(qrcode_bytes, "微信扫码登录二维码.png")
+        jpapi.add_resource_to_note(resource_id=res_id, note_id=note_id)
         updatenote_body(
             noteid=note_id,
             bodystr=(
                 "## 微信扫码登录\n\n"
                 "请使用 **Pixel 6 Pro 微信** 扫描下方二维码\n\n"
+                f"![](:/{res_id})\n\n"
                 "---\n\n"
                 "**二维码有效期：5分钟**\n\n"
                 "> 此笔记由 `--renew` 自动更新"
@@ -863,9 +866,11 @@ def _restart_local_webchat():
     import subprocess
     from pathlib import Path
 
+    _tmp = os.environ.get('TMPDIR', '/tmp')
+    log_file = str(Path(_tmp) / "lifewebchat.out")
     subprocess.Popen(
         ["nohup", "python", str(getdirmain() / "life" / "webchat.py")],
-        stdout=open(str(Path.home() / "downloads" / "lifewebchat.out"), "a"),
+        stdout=open(log_file, "a"),
         stderr=subprocess.STDOUT,
         cwd=str(getdirmain()),
         start_new_session=True,
