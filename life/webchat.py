@@ -35,7 +35,6 @@ from collections import deque
 # %%
 import itchat
 import itchat.storage
-from bs4 import BeautifulSoup
 from itchat.content import (
     ATTACHMENT,
     CARD,
@@ -69,6 +68,7 @@ with pathmagic.context():
     from func.sysfunc import execcmd, not_IPython, uuid3hexstr
     from func.termuxtools import termux_sms_send
     from life.wcdelay import inserttimeitem2db
+    from life.webchat_sharing import parse_sharing_content, soupclean2item
 
 
 # %% [markdown]
@@ -400,33 +400,6 @@ def fileetc_reply(msg):
 
 
 # %% [markdown]
-# ### soupclean2item(msgcontent)
-
-
-# %%
-def soupclean2item(msgcontent):
-    rpcontent = msgcontent.replace("<![CDATA[", "").replace("]]>", "")
-    # rpcontent = msgcontent
-    if isinstance(rpcontent, str) and not rpcontent.strip().startswith("<"):
-        # Handle the case where the input is not HTML
-        # log.info("Warning: Input does not appear to be valid HTML.")
-        # Optionally, you can still parse it as plain text
-        soup = BeautifulSoup(rpcontent, "html.parser")  # or just handle it differently
-    else:
-        soup = BeautifulSoup(rpcontent, "lxml")
-    # soup = BeautifulSoup(rpcontent, 'lxml')
-    category = soup.category
-    if category:
-        items = category.find_all("item")
-        if not items:
-            items = []
-    else:
-        items = []
-
-    return soup, items
-
-
-# %% [markdown]
 # ### @itchat.msg_register([SHARING], isFriendChat=True, isGroupChat=True, isMpChat=True)
 
 
@@ -436,56 +409,8 @@ def sharing_reply(msg):
     sendernick = getsendernick(msg)
     log.debug(sendernick)
     innermsg = formatmsg(msg)
-
     soup, items = soupclean2item(msg["Content"])
-
-    # 过滤掉已经研究过属性公众号信息，对于尚未研究过的显示详细信息
-    impimlst = re.split("[，,]", getinivaluefromcloud("webchat", "impmplist"))
-
-    cleansender = re.split("\\(群\\)", innermsg["fmSender"])[0]
-
-    inmtxt = innermsg["fmText"]
-    if cleansender in impimlst:
-        if cleansender == "微信支付" and inmtxt.endswith("转账收款汇总通知"):
-            itms = soup.opitems.find_all("opitem")
-            userfre = [
-                f"{x.weapp_username.string}\t{x.hint_word.string}" for x in itms if x.word.string.find("收款记录") >= 0
-            ][0]
-            innermsg["fmText"] += f"[{soup.des.string}\n[{userfre}]]"
-        # elif innermsg["fmText"].endswith("微信支付凭证"):
-        # innermsg['fmText'] = innermsg['fmText']+f"[{soup.des.string}]"
-        elif cleansender == "微信运动" and (
-            inmtxt.endswith("刚刚赞了你") or inmtxt.endswith("just liked your ranking")
-        ):
-            innermsg["fmText"] += f"[{soup.rankid.string}\t{soup.displayusername.string}]"
-        elif cleansender == "微信运动" and (inmtxt.endswith("排行榜冠军") or inmtxt.startswith("Champion on")):
-            ydlst = []
-            mni = soup.messagenodeinfo
-            minestr = f"heart57479\t{mni.rankinfo.rankid.string}\t{mni.rankinfo.rank.rankdisplay.string}"
-            ydlst.append(minestr)
-            ril = soup.rankinfolist.find_all("rankinfo")
-            for item in ril:
-                istr = f"{item.username.string}\t{item.rank.rankdisplay.string}\t{item.score.scoredisplay.string}"
-                ydlst.append(istr)
-            yundong = "\n".join(ydlst)
-            innermsg["fmText"] += f"[{yundong}]"
-        elif soup.des or soup.digest:
-            valuepart = soup.des or soup.digest
-            innermsg["fmText"] += f"[{valuepart.string}]"
-        else:
-            showmsgexpanddictetc(msg)
-    elif len(items) > 0:
-        itemstr = "\n"
-        for item in [x for x in items if x]:
-            if titlestr := item.title.string:
-                itemstr += titlestr + "\n"
-        # 去掉尾行的回车
-        itemstr = itemstr[:-1]
-        innermsg["fmText"] += itemstr
-    elif type(msg["User"]) == itchat.storage.MassivePlatform:
-        log.info(f"公众号信息\t{msg['User']}")
-        showmsgexpanddictetc(msg)
-
+    parse_sharing_content(soup, items, innermsg, msg)
     writefmmsg2txtandmaybeevernotetoo(innermsg)
 
 
