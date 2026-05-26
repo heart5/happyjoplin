@@ -15,7 +15,7 @@
 # # 微信指令处理
 
 # %%
-"""白异 AI 问答 + 真元信使 业务查询的指令派发"""
+"""轻行动 AI 问答 + 真元宝 工具查询的指令派发"""
 
 # %%
 import math
@@ -29,7 +29,7 @@ import itchat
 import pathmagic
 
 with pathmagic.context():
-    from func.first import dirmainpath, getdirmain, touchfilepath2depth
+    from func.first import getdirmain, touchfilepath2depth
     from func.logme import log
     from func.pdtools import db2img
     from joplin_qa_client import client, qa4joplin
@@ -58,15 +58,15 @@ def _archive_reply(innermsg, inputtext=""):
 
 
 # %% [markdown]
-# ## _handle_baiyi(msg, innermsg, qrylst)
+# ## _handle_qingxingdong(msg, innermsg, qrylst)
 
 # %%
-def _handle_baiyi(msg, innermsg, qrylst):
-    """处理"白异"AI 问答指令：清空/统计/提问"""
+def _handle_qingxingdong(msg, innermsg, qrylst):
+    """处理"轻行动"AI 问答指令：清空/统计/提问"""
     diyihang = qrylst[0].split()
     if len(diyihang) == 1:
         response = (
-            "白异为提示词，加空格后直接跟提问内容，不要在内容中有空格或换行"
+            "轻行动为提示词，加空格后直接跟提问内容，不要在内容中有空格或换行"
         )
         itchat.send_msg(response, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, response)
@@ -95,11 +95,11 @@ def _handle_baiyi(msg, innermsg, qrylst):
 
 
 # %% [markdown]
-# ## _handle_zhenyuan(msg, innermsg, men_wc, qrylst)
+# ## _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst)
 
 # %%
-def _handle_zhenyuan(msg, innermsg, men_wc, qrylst):
-    """处理"真元信使"业务查询指令：延时图/电量图/联系人/连更/连显/欠款/品项/默认搜索"""
+def _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst):
+    """处理"真元宝"工具查询指令：延时图/电量图/联系人/连更/连显/默认搜索"""
     diyihang = qrylst[0].split()
     if len(diyihang) == 1:
         if len(qrylst) == 1 or qrylst[1].strip() == "":
@@ -150,29 +150,10 @@ def _handle_zhenyuan(msg, innermsg, men_wc, qrylst):
         itchat.send_image(imgwcrel, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, imgwcrel)
         return
-    elif diyihang[1] == "欠款":
-        from work.zymessage import searchqiankuan
 
-        qrystr = qrylst[1].strip()
-        rstfile, rst = searchqiankuan(qrystr.split())
-    elif diyihang[1] == "品项":
-        from work.zymessage import searchpinxiang
-
-        qrystr = qrylst[1].strip()
-        rstfile, rst = searchpinxiang(qrystr.split())
-    else:
-        rstfile, rst = None, None
-
+    rst = "未知指令。可用子命令：延时图/电量图/联系人/连更/连显，或不带子命令直接搜索客户"
     itchat.send_msg(rst, toUserName=msg["FromUserName"])
     _archive_reply(innermsg, rst)
-    if rstfile:
-        itchat.send_file(rstfile, toUserName=msg["FromUserName"])
-        _archive_reply(innermsg, rstfile.replace(os.path.abspath(dirmainpath), ""))
-        itchat.send_file(rstfile)
-        infostr = f"成功发送查询结果文件：{os.path.split(rstfile)[1]}给{innermsg['fmSender']}"
-        itchat.send_msg(infostr)
-        _archive_reply(innermsg, infostr)
-        log.info(infostr)
 
 
 # %% [markdown]
@@ -182,7 +163,7 @@ def _handle_zhenyuan(msg, innermsg, men_wc, qrylst):
 def dispatch(msg, innermsg, men_wc):
     """解析消息首行，匹配指令并执行。返回 True 表示已处理，False 表示非指令。
 
-    split() 自动合并连续空白字符，兼容"白异  清空"等多空格输入。
+    split() 自动合并连续空白字符，兼容"轻行动  清空"等多空格输入。
     """
     text = msg["Text"]
     qrylst = [x.strip() for x in text.split("\n")]
@@ -192,10 +173,10 @@ def dispatch(msg, innermsg, men_wc):
     log.debug(f"{qrylst}")
 
     first_word = qrylst[0].split()[0] if qrylst[0].split() else ""
-    if first_word == "白异":
-        _handle_baiyi(msg, innermsg, qrylst)
+    if first_word == "轻行动":
+        _handle_qingxingdong(msg, innermsg, qrylst)
         return True
-    if first_word == "真元信使":
-        _handle_zhenyuan(msg, innermsg, men_wc, qrylst)
+    if first_word == "真元宝":
+        _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst)
         return True
     return False
