@@ -63,13 +63,15 @@ def _get_conn():
 
 # %%
 def _migrate_spark_log(conn: sqlite3.Connection) -> None:
-    """增量迁移：为旧版 spark_log 表补充 person/quote_text 列和唯一约束升级。"""
+    """增量迁移：为旧版 spark_log 表补充 person/quote_text/source_date 列和唯一约束升级。"""
     cur = conn.execute("PRAGMA table_info(spark_log)")
     cols = {r[1] for r in cur.fetchall()}
     if "person" not in cols:
         conn.execute("ALTER TABLE spark_log ADD COLUMN person TEXT NOT NULL DEFAULT ''")
     if "quote_text" not in cols:
         conn.execute("ALTER TABLE spark_log ADD COLUMN quote_text TEXT NOT NULL DEFAULT ''")
+    if "source_date" not in cols:
+        conn.execute("ALTER TABLE spark_log ADD COLUMN source_date TEXT NOT NULL DEFAULT ''")
     # 去重：旧数据 person 全为空字符串，同一天可能有多条记录，只保留 id 最大的一条
     dupes = conn.execute("""
         SELECT used_date, person, MAX(id) as keep_id, COUNT(*) as cnt
@@ -520,12 +522,12 @@ def delete_config(key: str) -> None:
 
 
 # %%
-def add_spark_log(used_date: str, person: str, quote_hash: str, quote_text: str) -> None:
+def add_spark_log(used_date: str, person: str, quote_hash: str, quote_text: str, source_date: str = "") -> None:
     """记录一条已被使用的火花语录（每人每天唯一）。"""
     with _get_conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO spark_log (used_date, person, quote_hash, quote_text) VALUES (?, ?, ?, ?)",
-            (used_date, person, quote_hash, quote_text),
+            "INSERT OR IGNORE INTO spark_log (used_date, person, quote_hash, quote_text, source_date) VALUES (?, ?, ?, ?, ?)",
+            (used_date, person, quote_hash, quote_text, source_date),
         )
 
 
@@ -540,15 +542,17 @@ def get_used_spark_hashes(person: str, days: int = 7) -> set:
         return {r["quote_hash"] for r in rows}
 
 
-def get_person_quote_today(person: str) -> str | None:
-    """获取指定人员今天的火花语录文本（保证同日多次更新返回同一句）。"""
+def get_person_quote_today(person: str) -> dict | None:
+    """获取指定人员今天的火花语录（含文本和来源日期）。返回 {text, source_date} 或 None。"""
     today_str = date.today().strftime("%Y-%m-%d")
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT quote_text FROM spark_log WHERE person=? AND used_date=?",
+            "SELECT quote_text, source_date FROM spark_log WHERE person=? AND used_date=?",
             (person, today_str),
         ).fetchone()
-        return row["quote_text"] if row else None
+        if row:
+            return {"text": row["quote_text"], "source_date": row["source_date"]}
+        return None
 
 
 def cleanup_spark_log(days: int = 7) -> int:

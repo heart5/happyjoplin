@@ -432,11 +432,11 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
 
 
 # %%
-_spark_cache: dict | None = None
+_spark_cache: list | None = None
 
 
-def _get_spark_candidates() -> list[str]:
-    """解析思想火花笔记，返回候选句子。长度上限从云端配置获取，默认50字。模块级缓存避免重复API调用。"""
+def _get_spark_candidates() -> list[dict]:
+    """解析思想火花笔记，返回候选句子列表 [{text, source_date}]。模块级缓存。"""
     global _spark_cache
     if _spark_cache is not None:
         return _spark_cache
@@ -452,18 +452,21 @@ def _get_spark_candidates() -> list[str]:
         if not body:
             return []
 
-        ptn_date = re.compile(r"^###\s+\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号]\s*$", re.M)
+        ptn_date = re.compile(r"^###\s+(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号])\s*$", re.M)
         sections = re.split(ptn_date, body.strip())
+        date_matches = ptn_date.findall(body.strip())
 
         quotes = []
-        for section in sections[1:]:
+        for i, section in enumerate(sections[1:]):
+            source_date_raw = date_matches[i] if i < len(date_matches) else ""
+            source_date = re.sub(r"\s+", "", source_date_raw).replace("号", "日")
             items = re.findall(r"(?:^|\n)\d+[\.\、\)）]\s*(.+?)(?=\n\d+[\.\、\)）]|\n###|\Z)", section, re.S)
             for item in items:
                 clean = item.strip()
                 clean = re.sub(r'["""\']+', "", clean)
                 clean = re.sub(r"（[^）]*$", "", clean)
                 if 10 <= len(clean) <= max_len and not clean.startswith("+"):
-                    quotes.append(clean)
+                    quotes.append({"text": clean, "source_date": source_date})
 
         _spark_cache = quotes
         return quotes
@@ -471,32 +474,34 @@ def _get_spark_candidates() -> list[str]:
         return []
 
 
-def _pick_spark_quote(person: str) -> str:
-    """为指定人员选取火花语录（同日固定、7天按人去重）。
-
-    同一人同一天多次触发报告时，返回同一句摘语。
-    7天内不重复仅针对该人员，不同人员可以同日使用同一摘语。
-    """
-    # 同日固定：若该人员今天已有记录，直接返回
+def _pick_spark_quote(person: str) -> dict:
+    """为指定人员选取火花语录（同日固定、7天按人去重）。返回 {text, source_date} 或 {}。"""
     existing = get_person_quote_today(person)
     if existing:
+        # 旧记录可能没有 source_date，从缓存中补查
+        if not existing.get("source_date"):
+            candidates = _get_spark_candidates()
+            for q in candidates:
+                if q["text"] == existing["text"]:
+                    existing["source_date"] = q["source_date"]
+                    break
         return existing
 
     candidates = _get_spark_candidates()
     if not candidates:
-        return ""
+        return {}
 
     cleanup_spark_log(7)
     used = get_used_spark_hashes(person, 7)
 
-    available = [q for q in candidates if hashlib.md5(q.encode()).hexdigest() not in used]
+    available = [q for q in candidates if hashlib.md5(q["text"].encode()).hexdigest() not in used]
 
     if not available:
-        available = candidates  # 都用过了就重置
+        available = candidates
 
     chosen = random.choice(available)
     today_str = date.today().strftime("%Y-%m-%d")
-    add_spark_log(today_str, person, hashlib.md5(chosen.encode()).hexdigest(), chosen)
+    add_spark_log(today_str, person, hashlib.md5(chosen["text"].encode()).hexdigest(), chosen["text"], chosen["source_date"])
     return chosen
 
 
@@ -598,8 +603,18 @@ def _build_header(person: str, stats: dict) -> str:
         f"{week_part} · {month_part}\n\n",
         "---\n\n",
     ]
-    if spark:
-        parts.append(f'> *"{spark}"*\n\n---\n\n')
+    if spark and spark.get("text"):
+        parts.append(f'> *"{spark["text"]}"*\n')
+        parts.append(">\n")
+        source = spark.get("source_date", "")
+        if source:
+            try:
+                sd = datetime.strptime(source, "%Y年%m月%d日")
+                source = sd.strftime("%m/%d")
+            except ValueError:
+                pass
+        parts.append(f"> — 思想火花{f' · {source}' if source else ''}\n\n")
+        parts.append("---\n\n")
 
     return "".join(parts)
 
