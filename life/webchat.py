@@ -29,8 +29,10 @@ import os
 # import arrow
 import re
 import sys
+import shutil
 import time
 from collections import deque
+from datetime import datetime
 
 # %%
 import itchat
@@ -263,6 +265,60 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
         # print(f"每{updatefre}条信息，再次初始化一次，返回值为：\t{init_info.keys()}")
         updatenote_title(noteid=chatnoteid, titlestr=notetitle)
         updatenote_body(noteid=chatnoteid, bodystr=neirong)
+
+    _backup_pkl()
+
+
+# %% [markdown]
+# ### _backup_pkl()
+
+# %%
+def _backup_pkl():
+    """每50条消息备份itchat.pkl：当天保留3份，3/6/9/12天前各1份"""
+    pkl_path = getdirmain() / "itchat.pkl"
+    if not pkl_path.exists():
+        return
+
+    # 函数属性存储状态，避免模块级全局变量的循环导入问题
+    msg_count = getattr(_backup_pkl, "_msg_count", 0) + 1
+    _backup_pkl._msg_count = msg_count
+    if msg_count % 50 != 0:
+        return
+
+    itchat.dump_login_status()
+    today_str = datetime.now().strftime("%Y%m%d")
+    backup_dir = getdirmain() / "data" / "itchat_backup"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    today_date = getattr(_backup_pkl, "_today_date", "")
+    if today_date != today_str:
+        _backup_pkl._today_date = today_str
+        _backup_pkl._today_seq = 0
+        _cleanup_old_backups(backup_dir, today_str)
+
+    seq = getattr(_backup_pkl, "_today_seq", 0) + 1
+    if seq > 3:
+        seq = 1
+    _backup_pkl._today_seq = seq
+
+    dst = backup_dir / f"{today_str}_{seq}.pkl"
+    shutil.copy2(pkl_path, dst)
+    log.debug(f"pkl备份: {dst.name}")
+
+
+# %%
+def _cleanup_old_backups(backup_dir, today_str):
+    """清理过期备份，仅保留当天3份和3/6/9/12天前各1份"""
+    from datetime import timedelta
+
+    today = datetime.strptime(today_str, "%Y%m%d")
+    keep_dates = {(today - timedelta(days=d)).strftime("%Y%m%d") for d in (0, 3, 6, 9, 12)}
+
+    for f in backup_dir.glob("*.pkl"):
+        date_part = f.stem.split("_")[0]
+        if date_part not in keep_dates:
+            f.unlink()
+            log.debug(f"pkl备份清理: {f.name}")
 
 
 # %% [markdown]
