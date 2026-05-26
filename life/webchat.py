@@ -65,6 +65,7 @@ with pathmagic.context():
         getinivaluefromcloud,
         jpapi,
         searchnotes,
+        searchnotebook,
         updatenote_body,
         updatenote_title,
     )
@@ -764,7 +765,8 @@ def _upload_qr_to_joplin(qrcode_bytes, local_path=None):
         if notes:
             note_id = notes[0].id
         else:
-            note_id = createnote(title="微信扫码登录", body="")
+            parent_id = searchnotebook("ewmobile")
+            note_id = createnote(title="微信扫码登录", body="", parent_id=parent_id)
         try:
             deleteresourcesfromnote(note_id)
         except Exception:
