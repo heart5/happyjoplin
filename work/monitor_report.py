@@ -459,7 +459,12 @@ def _get_spark_candidates() -> list[dict]:
 
         quotes = []
         for i, section in enumerate(sections[1:]):
-            source_date_raw = date_matches[i] if i < len(date_matches) else ""
+            # re.split with capture groups returns: [date_0, content_0, date_1, content_1, ...]
+            # for i%2==0 → date heading (no items), for i%2==1 → content (use date_matches[(i-1)//2])
+            if i % 2 == 0:
+                continue
+            date_idx = (i - 1) // 2
+            source_date_raw = date_matches[date_idx] if date_idx < len(date_matches) else ""
             source_date = re.sub(r"\s+", "", source_date_raw).replace("号", "日")
             items = re.findall(r"(?:^|\n)\d+[\.\、\)）]\s*(.+?)(?=\n\d+[\.\、\)）]|\n###|\Z)", section, re.S)
             for item in items:
@@ -479,12 +484,19 @@ def _pick_spark_quote(person: str) -> dict:
     """为指定人员选取火花语录（同日固定、7天按人去重）。返回 {text, source_date} 或 {}。"""
     existing = get_person_quote_today(person)
     if existing:
-        # 旧记录可能没有 source_date，从缓存中补查
+        # 旧记录可能没有 source_date，从缓存中补查并持久化
         if not existing.get("source_date"):
             candidates = _get_spark_candidates()
             for q in candidates:
                 if q["text"] == existing["text"]:
                     existing["source_date"] = q["source_date"]
+                    add_spark_log(
+                        date.today().strftime("%Y-%m-%d"),
+                        person,
+                        hashlib.md5(existing["text"].encode()).hexdigest(),
+                        existing["text"],
+                        q["source_date"],
+                    )
                     break
         return existing
 

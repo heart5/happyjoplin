@@ -523,10 +523,14 @@ def delete_config(key: str) -> None:
 
 # %%
 def add_spark_log(used_date: str, person: str, quote_hash: str, quote_text: str, source_date: str = "") -> None:
-    """记录一条已被使用的火花语录（每人每天唯一）。"""
+    """记录一条已被使用的火花语录（每人每天唯一）。已存在时更新 hash/text/source_date。"""
     with _get_conn() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO spark_log (used_date, person, quote_hash, quote_text, source_date) VALUES (?, ?, ?, ?, ?)",
+            """INSERT INTO spark_log (used_date, person, quote_hash, quote_text, source_date) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(used_date, person) DO UPDATE SET
+               quote_hash=excluded.quote_hash,
+               quote_text=excluded.quote_text,
+               source_date=excluded.source_date""",
             (used_date, person, quote_hash, quote_text, source_date),
         )
 
