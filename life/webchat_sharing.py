@@ -32,10 +32,10 @@ with pathmagic.context():
 
 
 # %% [markdown]
-# ## soupclean2item(msgcontent)
+# ## _extract_share_item(msgcontent)
 
 # %%
-def soupclean2item(msgcontent):
+def _extract_share_item(msgcontent):
     rpcontent = msgcontent.replace("<![CDATA[", "").replace("]]>", "")
     if isinstance(rpcontent, str) and not rpcontent.strip().startswith("<"):
         soup = BeautifulSoup(rpcontent, "html.parser")
@@ -61,9 +61,9 @@ def parse_sharing_content(soup, items, innermsg, msg):
     impimlst = re.split("[，,]", getinivaluefromcloud("webchat", "impmplist"))
     cleansender = re.split("\\(群\\)", innermsg["fmSender"])[0]
 
-    inmtxt = innermsg["fmText"]
+    inner_text = innermsg["fmText"]
     if cleansender in impimlst:
-        if cleansender == "微信支付" and inmtxt.endswith("转账收款汇总通知"):
+        if cleansender == "微信支付" and inner_text.endswith("转账收款汇总通知"):
             itms = soup.opitems.find_all("opitem")
             userfre = [
                 f"{x.weapp_username.string}\t{x.hint_word.string}"
@@ -72,11 +72,11 @@ def parse_sharing_content(soup, items, innermsg, msg):
             ][0]
             innermsg["fmText"] += f"[{soup.des.string}\n[{userfre}]]"
         elif cleansender == "微信运动" and (
-            inmtxt.endswith("刚刚赞了你") or inmtxt.endswith("just liked your ranking")
+            inner_text.endswith("刚刚赞了你") or inner_text.endswith("just liked your ranking")
         ):
             innermsg["fmText"] += f"[{soup.rankid.string}\t{soup.displayusername.string}]"
         elif cleansender == "微信运动" and (
-            inmtxt.endswith("排行榜冠军") or inmtxt.startswith("Champion on")
+            inner_text.endswith("排行榜冠军") or inner_text.startswith("Champion on")
         ):
             ydlst = []
             mni = soup.messagenodeinfo
@@ -92,9 +92,9 @@ def parse_sharing_content(soup, items, innermsg, msg):
             valuepart = soup.des or soup.digest
             innermsg["fmText"] += f"[{valuepart.string}]"
         else:
-            from life.webchat import showmsgexpanddictetc
+            from life.webchat import _show_msg_detail
 
-            showmsgexpanddictetc(msg)
+            _show_msg_detail(msg)
     elif len(items) > 0:
         itemstr = "\n"
         for item in [x for x in items if x]:
@@ -104,6 +104,6 @@ def parse_sharing_content(soup, items, innermsg, msg):
         innermsg["fmText"] += itemstr
     elif type(msg["User"]) == itchat.storage.MassivePlatform:
         log.info(f"公众号信息\t{msg['User']}")
-        from life.webchat import showmsgexpanddictetc
+        from life.webchat import _show_msg_detail
 
-        showmsgexpanddictetc(msg)
+        _show_msg_detail(msg)

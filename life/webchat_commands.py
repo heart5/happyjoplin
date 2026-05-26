@@ -33,7 +33,7 @@ with pathmagic.context():
     from func.logme import log
     from func.pdtools import db2img
     from joplin_qa_client import client, qa4joplin
-    from life.wcdelay import delayimg2note, showdelayimg
+    from life.wcdelay import delay_img_to_note, showdelayimg
 
 
 # %% [markdown]
@@ -42,11 +42,11 @@ with pathmagic.context():
 # %%
 def _archive_reply(innermsg, inputtext=""):
     """构造合成消息并归档，等价于原 makemsg2write"""
-    from life.webchat import writefmmsg2txtandmaybeevernotetoo
+    from life.webchat import _archive_msg
 
     nowtuple = time.time()
     nowdatetime = datetime.fromtimestamp(nowtuple)
-    finnalmsg = {
+    final_msg = {
         "fmId": math.floor(nowtuple),
         "fmTime": nowdatetime.strftime("%Y-%m-%d %H:%M:%S"),
         "fmSend": True,
@@ -54,30 +54,30 @@ def _archive_reply(innermsg, inputtext=""):
         "fmType": "Text",
         "fmText": f"{inputtext}",
     }
-    writefmmsg2txtandmaybeevernotetoo(finnalmsg)
+    _archive_msg(final_msg)
 
 
 # %% [markdown]
-# ## _handle_qingxingdong(msg, innermsg, qrylst)
+# ## _handle_qingxingdong(msg, innermsg, query_parts)
 
 # %%
-def _handle_qingxingdong(msg, innermsg, qrylst):
+def _handle_qingxingdong(msg, innermsg, query_parts):
     """处理"轻行动"AI 问答指令：清空/统计/提问"""
-    diyihang = qrylst[0].split()
-    if len(diyihang) == 1:
+    first_word = query_parts[0].split()
+    if len(first_word) == 1:
         response = (
             "轻行动为提示词，加空格后直接跟提问内容，不要在内容中有空格或换行"
         )
         itchat.send_msg(response, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, response)
         return
-    if diyihang[1] == "清空":
+    if first_word[1] == "清空":
         result = client.clear_history()
         response = result.get("message") if result.get("success") else result.get("error")
         itchat.send_msg(response, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, response)
         return
-    if diyihang[1] == "统计":
+    if first_word[1] == "统计":
         result = client.get_statistics()
         if result.get("success"):
             stats = result["statistics"]
@@ -89,37 +89,37 @@ def _handle_qingxingdong(msg, innermsg, qrylst):
         itchat.send_msg(response, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, response)
         return
-    response = qa4joplin(diyihang[1])
+    response = qa4joplin(first_word[1])
     itchat.send_msg(response, toUserName=msg["FromUserName"])
     _archive_reply(innermsg, response)
 
 
 # %% [markdown]
-# ## _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst)
+# ## _handle_zhenyuanbao(msg, innermsg, men_wc, query_parts)
 
 # %%
-def _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst):
+def _handle_zhenyuanbao(msg, innermsg, men_wc, query_parts):
     """处理"真元宝"工具查询指令：延时图/电量图/联系人/连更/连显/默认搜索"""
-    diyihang = qrylst[0].split()
-    if len(diyihang) == 1:
-        if len(qrylst) == 1 or qrylst[1].strip() == "":
+    first_word = query_parts[0].split()
+    if len(first_word) == 1:
+        if len(query_parts) == 1 or query_parts[1].strip() == "":
             from work.zymessage import searchcustomer
 
             rstfile, rst = searchcustomer()
         else:
             from work.zymessage import searchcustomer
 
-            qrystr = qrylst[1].strip()
+            qrystr = query_parts[1].strip()
             rstfile, rst = searchcustomer(qrystr.split())
-    elif diyihang[1] == "延时图":
+    elif first_word[1] == "延时图":
         delaydbname = getdirmain() / "data" / "db" / f"wcdelay_{men_wc}.db"
         imgwcdelay, _ = showdelayimg(delaydbname)
         imgwcdelay = os.path.abspath(imgwcdelay)
         itchat.send_image(imgwcdelay, toUserName=msg["FromUserName"])
-        delayimg2note(men_wc)
+        delay_img_to_note(men_wc)
         _archive_reply(innermsg, imgwcdelay)
         return
-    elif diyihang[1] == "电量图":
+    elif first_word[1] == "电量图":
         from etc.battery_manage import showbattinfoimg
 
         delaydbname = touchfilepath2depth(getdirmain() / "data" / "db" / "batteryinfo.db")
@@ -128,7 +128,7 @@ def _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst):
         itchat.send_image(imgbattinforel, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, imgbattinforel)
         return
-    elif diyihang[1] == "联系人":
+    elif first_word[1] == "联系人":
         from life.phonecontact import showphoneinfoimg
 
         contactinfo = showphoneinfoimg()
@@ -136,12 +136,12 @@ def _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst):
         itchat.send_image(imgcontactinforel, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, imgcontactinforel)
         return
-    elif diyihang[1] == "连更":
+    elif first_word[1] == "连更":
         from life.wccontact import updatectdf
 
         updatectdf()
         return
-    elif diyihang[1] == "连显":
+    elif first_word[1] == "连显":
         from life.wccontact import getctdf, showwcsimply
 
         frddfread = getctdf()
@@ -151,7 +151,7 @@ def _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst):
         _archive_reply(innermsg, imgwcrel)
         return
 
-    elif diyihang[1] == "退出":
+    elif first_word[1] == "退出":
         response = "真元宝系统正在退出…"
         itchat.send_msg(response, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, response)
@@ -174,17 +174,17 @@ def dispatch(msg, innermsg, men_wc):
     split() 自动合并连续空白字符，兼容"轻行动  清空"等多空格输入。
     """
     text = msg["Text"]
-    qrylst = [x.strip() for x in text.split("\n")]
-    qrylst = [x for x in qrylst if x]
-    if not qrylst:
+    query_parts = [x.strip() for x in text.split("\n")]
+    query_parts = [x for x in query_parts if x]
+    if not query_parts:
         return False
-    log.debug(f"{qrylst}")
+    log.debug(f"{query_parts}")
 
-    first_word = qrylst[0].split()[0] if qrylst[0].split() else ""
+    first_word = query_parts[0].split()[0] if query_parts[0].split() else ""
     if first_word == "轻行动":
-        _handle_qingxingdong(msg, innermsg, qrylst)
+        _handle_qingxingdong(msg, innermsg, query_parts)
         return True
     if first_word == "真元宝":
-        _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst)
+        _handle_zhenyuanbao(msg, innermsg, men_wc, query_parts)
         return True
     return False

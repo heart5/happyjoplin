@@ -55,7 +55,7 @@ with pathmagic.context():
 
 
 # %%
-def checkwcdelaytable(dbname: str, tablename: str):
+def _ensure_delay_table(dbname: str, tablename: str):
     """
     检查和dbname（绝对路径）相对应的延时数据表是否已经构建，设置相应的ini值避免重复打开关闭数据库文件进行检查
     """
@@ -73,16 +73,16 @@ def checkwcdelaytable(dbname: str, tablename: str):
 
 
 # %% [markdown]
-# ### def inserttimeitem2db(dbname, timestampinput)
+# ### def insert_delay_item(dbname, timestampinput)
 
 
 # %%
-def inserttimeitem2db(dbname: str, timestampinput: int):
+def insert_delay_item(dbname: str, timestampinput: int):
     """
     insert timestamp to wcdelay db whose table name is wcdelay
     """
     tablename = "wcdelaynew"
-    checkwcdelaytable(dbname, tablename)
+    _ensure_delay_table(dbname, tablename)
 
     # timetup = time.strptime(timestr, "%Y-%m-%d %H:%M:%S")
     # timest = time.mktime(timetup)
@@ -115,7 +115,7 @@ def getdelaydb(dbname: str, tablename="wcdelaynew"):
     从延时数据表提取数据（DataFrame），返回最近延时值和df
     """
     #     tablename = "wcdelaynew"
-    checkwcdelaytable(dbname, tablename)
+    _ensure_delay_table(dbname, tablename)
 
     conn = lite.connect(dbname)
     cursor = conn.cursor()
@@ -159,11 +159,11 @@ def getdelaydb(dbname: str, tablename="wcdelaynew"):
                 ),
             ]
         )
-        jujinmins = int(
+        recent_minutes = int(
             (timedfgrp.index[-1] - timedfgrp.index[-2]).total_seconds() / 60
         )
     else:
-        jujinmins = 0
+        recent_minutes = 0
         logstr = f"数据表{tablename}还没有数据呢"
         log.info(logstr)
 
@@ -171,15 +171,15 @@ def getdelaydb(dbname: str, tablename="wcdelaynew"):
     # print(timedf.iloc[:2])
     print(timedf.iloc[-3:])
 
-    return jujinmins, timedfgrp
+    return recent_minutes, timedfgrp
 
 
 # %% [markdown]
-# ### def showdelayimg(dbname, jingdu)
+# ### def showdelayimg(dbname, dpi)
 
 
 # %%
-def showdelayimg(dbname: str, jingdu: int = 300):
+def showdelayimg(dbname: str, dpi: int = 300):
     """
     show the img for wcdelay
     """
@@ -225,7 +225,7 @@ def showdelayimg(dbname: str, jingdu: int = 300):
 
     # convert the plot to a base64 encoded image
     buffer = io.BytesIO()
-    plt.savefig(buffer, format="png", dpi=jingdu)
+    plt.savefig(buffer, format="png", dpi=dpi)
     buffer.seek(0)
     image_base64 = base64.b64encode(buffer.read()).decode()
     # now, 'image_base64' contains the base64 encoded image
@@ -241,18 +241,18 @@ def showdelayimg(dbname: str, jingdu: int = 300):
     with open(imgwcdelaypath, "wb") as f:
         buffer.seek(0)
         f.write(buffer.read())
-    # fig1.savefig(imgwcdelaypath, dpi=jingdu)
+    # fig1.savefig(imgwcdelaypath, dpi=dpi)
     print(os.path.relpath(imgwcdelaypath))
 
     return imgwcdelaypath, image_base64
 
 
 # %% [markdown]
-# ### delayimg2note(image_base64)
+# ### delay_img_to_note(image_base64)
 
 
 # %%
-def delayimg2note(owner):
+def delay_img_to_note(owner):
     dbnameouter = touchfilepath2depth(
         getdirmain() / "data" / "db" / f"wcdelay_{owner}.db"
     )
@@ -281,7 +281,7 @@ if __name__ == "__main__":
     # xinxian, tdf = getdelaydb(dbnameouter)
     # print(tdf.sort_index(ascending=False))
     # imgpath, image_base64 = showdelayimg(dbnameouter)
-    delayimg2note(owner)
+    delay_img_to_note(owner)
     if not_IPython():
         logstrouter = "文件%s运行结束" % __file__
         log.info(logstrouter)

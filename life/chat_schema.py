@@ -23,10 +23,10 @@
 
 # %%
 def format_tsv(fmmsg: dict) -> str:
-    """将 formatmsg 输出 dict 序列化为 TSV 行。
+    """将 format_msg 输出 dict 序列化为 TSV 行。
 
     字段顺序：fmTime, fmSend, fmSender, fmType, fmText
-    与 writefmmsg2txtandmaybeevernotetoo 原手工拼接逐字节一致。
+    与 _archive_msg 原手工拼接逐字节一致。
     """
     return "\t".join(
         [

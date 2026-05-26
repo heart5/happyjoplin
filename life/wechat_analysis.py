@@ -276,11 +276,11 @@ class WeChatAnalysis:
 
 
 # %% [markdown]
-# ### analysis_group(sdf, fromdatestr)
+# ### group_analysis(sdf, from_date_str)
 
 
 # %%
-def analysis_group(sdf, fromdatestr):
+def group_analysis(sdf, from_date_str):
     """
     分析传入的群信息，带起始日期字符串
     """
@@ -298,7 +298,7 @@ def analysis_group(sdf, fromdatestr):
     message_counts = c2df["sender"].value_counts()
     print(message_counts)
 
-    def fre_plot(df):
+    def frequency_plot(df):
         import matplotlib.pyplot as plt
 
         # Convert 'time' column to datetime
@@ -312,18 +312,18 @@ def analysis_group(sdf, fromdatestr):
         plt.ylabel("Number of Messages")
         plt.show()
 
-    fre_plot(c2df)
+    frequency_plot(c2df)
 
     notimg_df = c2df[~c2df.content.str.contains(r"img/webchat", regex=True)]
     tdf = notimg_df[notimg_df.type != "Sharing"]
     tdf = tdf[(tdf.type != "False") & (tdf.type != "True")]
 
-    def cloud_plot(tdf, fromdatestr):
+    def cloud_plot(tdf, from_date_str):
         from wordcloud import WordCloud
 
         # Combine all text content
         text = " ".join(
-            tdf[tdf.time >= arrow.get(fromdatestr).to("Asia/Shanghai").datetime][
+            tdf[tdf.time >= arrow.get(from_date_str).to("Asia/Shanghai").datetime][
                 "content"
             ]
         )
@@ -339,9 +339,9 @@ def analysis_group(sdf, fromdatestr):
         plt.axis("off")
         plt.show()
 
-    if fromdatestr == None:
-        fromdatestr = "2024-10-01"
-    cloud_plot(tdf, fromdatestr)
+    if from_date_str == None:
+        from_date_str = "2024-10-01"
+    cloud_plot(tdf, from_date_str)
 
     def text_plot(df):
         from textblob import TextBlob
