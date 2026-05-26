@@ -3,8 +3,12 @@
 # 适用于 Pixel 6 Pro Termux 和 腾讯云
 # cron: */5 * * * * ~/codebase/happyjoplin/startwebchatprocess.sh
 
-# Termux 用 TMPDIR，标准 Linux 用 /tmp
+# Termux 用 TMPDIR 或 ~/tmp，标准 Linux 用 /tmp
 TMP="${TMPDIR:-/tmp}"
+if [ ! -w "$TMP" ]; then
+    TMP="$HOME/tmp"
+    mkdir -p "$TMP"
+fi
 
 # --renew 续期进行中，不干预
 if [ -f "$TMP/webchat_renewing" ]; then

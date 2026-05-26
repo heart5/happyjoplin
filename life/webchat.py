@@ -717,7 +717,9 @@ def _run_renew():
     from pathlib import Path
 
     qr_path = str(getdirmain() / "img" / "qrcode.png")
-    _tmp = os.environ.get('TMPDIR', '/tmp')
+    _tmp = os.environ.get('TMPDIR') or '/tmp'
+    if not os.path.exists(_tmp):
+        _tmp = str(Path.home() / 'tmp')
     guard_file = Path(_tmp) / "webchat_renewing"
 
     # 1. 设置续期守卫，防止 startwebchatprocess.sh 干预
@@ -866,7 +868,9 @@ def _restart_local_webchat():
     import subprocess
     from pathlib import Path
 
-    _tmp = os.environ.get('TMPDIR', '/tmp')
+    _tmp = os.environ.get('TMPDIR') or '/tmp'
+    if not os.path.exists(_tmp):
+        _tmp = str(Path.home() / 'tmp')
     log_file = str(Path(_tmp) / "lifewebchat.out")
     subprocess.Popen(
         ["nohup", "python", str(getdirmain() / "life" / "webchat.py")],
