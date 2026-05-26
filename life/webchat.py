@@ -498,7 +498,15 @@ def add_friend(msg):
         log.debug(f"不是数据分析中心也不是主账号【{mainaccount}】，不用打招呼哟")
         return
     msg.user.verify()
-    msg.user.send(f"Nice to meet you!\n{helloword1}\n{helloword2}")
+    greeted = getcfpoptionvalue("happyjpwebchat", "greeted_friends", "list") or ""
+    greeted_set = set(greeted.split(",")) if greeted else set()
+    friend_name = msg.user.NickName or msg.user.UserName
+    if friend_name in greeted_set:
+        log.info(f"已打过招呼，跳过: {friend_name}")
+    else:
+        msg.user.send(f"Nice to meet you!\n{helloword1}\n{helloword2}")
+        greeted_set.add(friend_name)
+        setcfpoptionvalue("happyjpwebchat", "greeted_friends", "list", ",".join(greeted_set))
     writefmmsg2txtandmaybeevernotetoo(msg)
     log.info(msg)
 
