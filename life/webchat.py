@@ -773,9 +773,9 @@ def _run_renew():
 
     # 6. 远程重启tc上的webchat（委托保活脚本处理python路径和日志）
     restart_cmd = (
-        "pkill -f 'python.*life/webchat\\.py$' 2>/dev/null; "
+        "pkill -f webchat.py 2>/dev/null; "
         "sleep 2; "
-        "~/codebase/happyjoplin/life/startwebchatprocess.sh"
+        "sh ~/codebase/happyjoplin/life/startwebchatprocess.sh"
     )
     result = subprocess.run(
         f"ssh tc '{restart_cmd}'",
