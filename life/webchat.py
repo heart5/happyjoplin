@@ -725,9 +725,9 @@ def _run_renew():
     # 1. 设置续期守卫，防止 startwebchatprocess.sh 干预
     guard_file.touch()
 
-    # 2. 停掉现有 webchat 进程
+    # 2. 停掉现有 webchat 进程（$锚定避免误杀 --renew 自身）
     log.info("停止现有webchat进程…")
-    subprocess.run("pkill -f 'python.*life/webchat.py' 2>/dev/null", shell=True)
+    subprocess.run("pkill -f 'python.*life/webchat\\.py$' 2>/dev/null", shell=True)
     time.sleep(2)
 
     # 3. QR回调：在itchat生成QR码后立即上传Joplin并通知
@@ -773,7 +773,7 @@ def _run_renew():
 
     # 6. 远程重启tc上的webchat（委托保活脚本处理python路径和日志）
     restart_cmd = (
-        "pkill -f 'python.*life/webchat.py' 2>/dev/null; "
+        "pkill -f 'python.*life/webchat\\.py$' 2>/dev/null; "
         "sleep 2; "
         "~/codebase/happyjoplin/life/startwebchatprocess.sh"
     )
