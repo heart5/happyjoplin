@@ -91,6 +91,14 @@ Scripts store their state in `data/` (`.ini`, `.json`, `.db`), logs go to `log/`
 
 When making significant changes, update `docs/CHANGELOG.md` with the date and changes. When architecture/config changes, update `docs/TECHNICAL_MANUAL.md` accordingly.
 
+### Documentation standards
+
+Docs/analysis reports stored in `docs/` should be:
+
+- **Jupytext-paired**: Use `ipynb,md` format so `.md` is the tracked source and `.ipynb` is generated for JupyterLab viewing. Include standard jupytext frontmatter.
+- **Rich with diagrams**: Prefer mermaid syntax (flowcharts, gitGraph, sequence diagrams) for charts. Use ASCII art as fallback when mermaid can't express the content. Avoid emojis, `Note` reserved word, and `=` in mermaid labels.
+- **Sync before commit**: Run `jupytext --sync <file>.md` to generate/update the `.ipynb` before committing.
+
 ## Commits
 
 Commits are in Chinese. Follow the existing style: short, descriptive, feature-focused.
