@@ -45,6 +45,7 @@ with pathmagic.context():
         getnote,
         searchnotes,
         updatenote_body,
+        updatenote_title,
     )
     from func.logme import log
     from func.sysfunc import not_IPython
@@ -114,11 +115,11 @@ def ensure_heatmap_note(person: str) -> str:
     if note_id and len(note_id) > 30:
         return str(note_id)
 
-    results = searchnotes(f"四件套更新热图（{person}）")
+    results = searchnotes(f"日更动态（{person}）")
     if results:
         note_id = results[0].id
     else:
-        note_id = createnote(title=f"四件套更新热图（{person}）", body="热图笔记已创建。")
+        note_id = createnote(title=f"日更动态（{person}）", body="日更笔记已创建。")
     set_config(f"heatmap_note_{person}", note_id)
     return note_id
 
@@ -572,35 +573,33 @@ def _compute_person_stats(person: str, active_note_ids: list[str]) -> dict:
 
 # %%
 def _build_header(person: str, stats: dict) -> str:
-    """构建热图笔记头部：称号 + 成就表格 + 火花摘语。"""
+    """构建热图笔记头部：称号 + 成就叙述 + 火花摘语。"""
     spark = _pick_spark_quote(person)
     title = _get_person_title(stats["streak"])
+    weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
-    streak_str = (
-        "今天有望恢复"
-        if stats["streak"] == 0
-        else f"**{stats['streak']}** 天（{stats['eff_today'] - timedelta(days=stats['streak'] - 1):%m-%d} → {stats['eff_today']:%m-%d}）"
-    )
-    week_max_str = (
-        f"**{stats['week_max']:,}** 字（{stats['week_max_date']:%m-%d}）"
-        if stats["week_max"] > 0 and stats["week_max_date"]
-        else "暂无记录"
-    )
-    month_str = f"**{stats['month_total']:,}** 字"
+    if stats["streak"] == 0:
+        streak_line = f"{title} —— 今天有望恢复\n\n"
+    else:
+        start = stats["eff_today"] - timedelta(days=stats["streak"] - 1)
+        streak_line = f"{title} —— 已连续更新 **{stats['streak']}** 天，从 {start:%m-%d} 到 {stats['eff_today']:%m-%d}\n\n"
+
+    if stats["week_max"] > 0 and stats["week_max_date"]:
+        wd = weekday_names[stats["week_max_date"].weekday()]
+        week_part = f"本周最高单日 **{stats['week_max']:,}** 字（{wd}）"
+    else:
+        week_part = "本周暂无记录"
+
+    month_part = f"本月累计 **{stats['month_total']:,}** 字"
 
     parts = [
-        f"# 🏅 {person} · 更新热图\n\n",
-        "| 📊 成就 | 详情 |\n",
-        "|:--|:--|\n",
-        f"| 🏆 当前称号 | {title} |\n",
-        f"| 🔥 连续更新 | {streak_str} |\n",
-        f"| 📈 本周最高 | {week_max_str} |\n",
-        f"| 📅 本月累计 | {month_str} |\n",
-        "\n",
+        f"# {person} · 日更动态\n\n",
+        streak_line,
+        f"{week_part} · {month_part}\n\n",
+        "---\n\n",
     ]
     if spark:
-        parts.append(f'> 💡 *"{spark}"*\n')
-    parts.append("\n---\n\n")
+        parts.append(f'> *"{spark}"*\n\n---\n\n')
 
     return "".join(parts)
 
@@ -621,7 +620,6 @@ def _build_backfill_summary(data: dict) -> str:
     entries.sort(key=lambda x: x[1], reverse=True)
 
     lines = [
-        "---\n\n",
         "### 延期补填记录\n\n",
         "> 截止时间：次日 07:30，超时补填将记录于此。\n\n",
         "| 笔记 | 日期 | 应完成于 | 记录时间 | 字数 |\n",
@@ -711,6 +709,9 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
             header = _build_header(person, stats)
             heatmap_id = ensure_heatmap_note(person)
             old_note = getnote(heatmap_id)
+            expected_title = f"日更动态（{person}）"
+            if getattr(old_note, "title", "") != expected_title:
+                retry_jp(updatenote_title, heatmap_id, expected_title)
             new_body_parts = [header]
 
             for title, daily_counts in data.items():
@@ -721,11 +722,11 @@ def generate_all_reports(dirty_only: bool = True) -> dict:
                     valid_days = sum(1 for (wc, *_) in daily_counts.values() if wc > 0)
                     total_wc = sum(wc for (wc, *_) in daily_counts.values() if wc > 0)
                     avg_wc = total_wc // valid_days if valid_days > 0 else 0
-                    new_body_parts.append(f"## 📝 {title}\n\n")
+                    new_body_parts.append(f"## {title}\n\n")
+                    new_body_parts.append(
+                        f"近三月有效记录 **{valid_days}** 天，累计 **{total_wc:,}** 字，日均约 **{avg_wc:,}** 字\n\n"
+                    )
                     new_body_parts.append(f"![{alt}](:/{res_id})\n\n")
-                    new_body_parts.append("| 有效 | 累计 | 日均 |\n")
-                    new_body_parts.append("|:--|:--|:--|\n")
-                    new_body_parts.append(f"| {valid_days} 天 | {total_wc:,} 字 | {avg_wc:,} 字 |\n")
                     new_body_parts.append("\n---\n\n")
                 except Exception as e:
                     log.critical(f"上传热图资源失败（{title}-{person}）: {e}")
