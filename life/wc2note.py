@@ -110,7 +110,12 @@ def getownerfromfilename(fn: str) -> str:
         str: 账号
     """
     ptn = re.compile(r"\((\w*)\)")
-    ac = ac if (ac := re.search(ptn, fn).groups()[0]) not in ["", "None"] else "白晔峰"
+    m = re.search(ptn, fn)
+    if m is None:
+        return getinivaluefromcloud("wcitems", "default_account") or ""
+    ac = m.group(1)
+    if ac in ("", "None"):
+        return getinivaluefromcloud("wcitems", "default_account") or ""
     return ac
 
 
@@ -300,11 +305,11 @@ def df2db(name: str, df4name: pd.DataFrame, wcpath: Path) -> None:
             if len(tb) != itemnum:
                 sqldel = f"delete from {tablename} where datetime(time, 'unixepoch', 'localtime') between '{starttime}' and '{endtime}';"
                 cursor.execute(sqldel)
+                df4name.to_sql(tablename, conn, if_exists="append", index=False)
                 conn.commit()
                 if cursor.rowcount != 0:
                     print(sqldel)
                     log.info(f"从数据库文件《{dbname}》的表《{tablename}》中删除{cursor.rowcount}条记录")
-                df4name.to_sql(tablename, conn, if_exists="append", index=False)
                 setcfpoptionvalue("happyjpwcitems", dftfilename, "itemsnum_db", str(itemnum))
                 log.info(
                     f"{dftfilename}的数据写入数据库文件（{dbname}）的（{tablename}）表中，并在ini登记数量（{itemnum}）"

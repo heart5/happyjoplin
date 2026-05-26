@@ -328,7 +328,10 @@ def note_reply(msg):
     # showmsgexpanddictetc(msg)
     innermsg = formatmsg(msg)
     if ("撤回了一条消息" in msg["Content"]) or ("recalled a message" in msg["Content"]):
-        old_msg_id = re.search(r"\<msgid\>(.*?)\<\/msgid\>", msg["Content"]).group(1)
+        if (msgid_match := re.search(r"\<msgid\>(.*?)\<\/msgid\>", msg["Content"])) is None:
+            log.warning(f"撤回消息中未找到msgid，原始信息：{msg}")
+            return
+        old_msg_id = msgid_match.group(1)
         msg_information = deque2dict(recentmsg_deque)
         old_msg = msg_information.get(old_msg_id)
         print(old_msg)
