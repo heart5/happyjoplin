@@ -72,7 +72,7 @@ The root-level `pathmagic.py` is an older version kept for reference; it is not 
 
 - **Monitor (`work/monitor4.py`)**: Tracks 4 daily-update notes. Checks word count changes, content freshness, writes summary back to Joplin.
 - **Monitor heatmap (`work/monitor2map.py`)**: Generates heatmap visualizations from monitor data, uploads to Joplin. Uses `retry_jp()` with exponential backoff for Joplin API resilience.
-- **WeChat bridge (`life/webchat.py`)**: `itchat`-based WeChat client. Production deployment: Pixel 6 Pro (Termux, scan-login entry point + SMS notifications) + 腾讯云 (cloud server), dual-run with shared `itchat.pkl` for redundancy. Archives messages to txt, syncs periodic summaries to Joplin, responds to custom commands. pkl auto-backup every 50 messages to `data/itchat_backup/` (3 copies today + 3/6/9/12 days ago). pkl expires ~1 month, requires re-scan on Pixel 6 Pro. Related: `wc2note.py` (chat archive pipeline, txt→xlsx→SQLite→Joplin), `wcdelay.py` (message delay analysis), `wccontact.py` (contact tracking).
+- **WeChat bridge (`life/webchat.py`)**: `itchat`-based WeChat client. Production deployment: Pixel 6 Pro (Termux, scan-login entry point + SMS notifications) + 腾讯云 (cloud server), dual-run with shared `itchat.pkl` for redundancy. Archives messages to txt, syncs periodic summaries to Joplin, responds to custom commands. **Session renewal**: `--renew` flag for one-click QR→Joplin→tc sync→SMS→scan→distribute→restart (doc: `docs/WEBCHAT_RENEWAL.md`). **Keepalive**: `startwebchatprocess.sh` via cron every 5min on both machines, guarded by `/tmp/webchat_renewing` during renewal. pkl auto-backup every 50 messages to `data/itchat_backup/` (3 copies today + 3/6/9/12 days ago). pkl expires ~1 month, requires re-scan on Pixel 6 Pro. Session age tracking with throttled SMS alerts at day 25/28. Related: `wc2note.py` (chat archive pipeline, txt→xlsx→SQLite→Joplin), `wcdelay.py` (message delay analysis), `wccontact.py` (contact tracking).
 - **Health dashboard (`life/health.py`)**: Parses structured Joplin notes for steps/sleep/beer/notes, generates multi-panel matplotlib charts, writes analysis back.
 - **Location tracking (`life/footstrack.py`, `life/footsshow.py`)**: GPS data collection (Termux) and multi-level report generation (weekly through yearly). footsshow generates 6 chart types per report at 8×8"/150DPI with `_safe_add_resource()` retry uploads. Large binary downloads use direct HTTP fallback to avoid charset_normalizer bugs in joppy.
 - **Cloud config sync**: `jpfuncs.readinifromcloud()` pulls config from a Joplin note named "happyjoplin云端配置" into local `.ini` files. All devices stay in sync this way.
@@ -81,6 +81,14 @@ The root-level `pathmagic.py` is an older version kept for reference; it is not 
 ### Data flow convention
 
 Scripts store their state in `data/` (`.ini`, `.json`, `.db`), logs go to `log/`, images to `img/`. This project is designed to run on Termux (Android), so `func/termuxtools.py` provides SMS and GPS access.
+
+### Joplin operations must reuse func submodule
+
+All Joplin note CRUD operations **must** use the existing wrappers in `func/` — never call `joppy` directly or use `requests` to hit the Joplin REST API. The func submodule handles auth flow (remote/local fallback), lazy loading, error handling, and logging.
+
+Key wrappers: `jpfuncs.getapi()`, `createnote()`, `searchnotes()`, `updatenote_body()`, `updatenote_title()`, `getinivaluefromcloud()`, `readinifromcloud()`, `add_resource_from_bytes()`, `configpr.getcfpoptionvalue()`.
+
+Before writing any Joplin code, check `func/jpfuncs.py` for existing helpers.
 
 ## Documentation
 

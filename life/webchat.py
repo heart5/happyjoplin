@@ -60,8 +60,11 @@ with pathmagic.context():
     from func.first import getdirmain, touchfilepath2depth
     from func.getid import getdeviceid, getdevicename
     from func.jpfuncs import (
+        add_resource_from_bytes,
         createnote,
+        deleteresourcesfromnote,
         getinivaluefromcloud,
+        searchnotes,
         updatenote_body,
         updatenote_title,
     )
@@ -305,6 +308,8 @@ def _backup_pkl():
     shutil.copy2(pkl_path, dst)
     log.debug(f"pkl备份: {dst.name}")
 
+    _check_session_age()
+
 
 # %%
 def _cleanup_old_backups(backup_dir, today_str):
@@ -319,6 +324,45 @@ def _cleanup_old_backups(backup_dir, today_str):
         if date_part not in keep_dates:
             f.unlink()
             log.debug(f"pkl备份清理: {f.name}")
+
+
+# %%
+def _check_session_age():
+    """检查会话年龄，25天/28天时通过SMS提醒续期（同日不重复）"""
+    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
+
+    login_date_str = getcfpoptionvalue("happyjpwebchat", "session", "login_date")
+    if not login_date_str:
+        return
+    try:
+        login_date = datetime.strptime(login_date_str, "%Y-%m-%d")
+    except ValueError:
+        return
+    age = (datetime.now() - login_date).days
+    if age < 25:
+        return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    if age < 28:
+        key = "last_sms_day25"
+        msg = "微信pkl会话已25天，请抽空在Termux运行: python life/webchat.py --renew"
+    elif age < 30:
+        key = "last_sms_day28"
+        msg = f"微信pkl已{age}天即将过期，请尽快运行 --renew 续期"
+    else:
+        return  # 30天及以上由 after_logout 通知
+
+    last_sms = getcfpoptionvalue("happyjpwebchat", "session", key) or ""
+    if last_sms == today:
+        return  # 今天已发过，节流
+    try:
+        from func.termuxtools import termux_sms_send
+
+        termux_sms_send(msg)
+        setcfpoptionvalue("happyjpwebchat", "session", key, today)
+        log.info(f"会话年龄{age}天，已发送SMS续期提醒")
+    except Exception:
+        log.debug(f"会话年龄{age}天，SMS发送失败（非Termux环境）")
 
 
 # %% [markdown]
@@ -570,6 +614,12 @@ def add_friend(msg):
 def after_login():
     men_wc = getcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_nickname")
     log.info(f"登入《{men_wc}》的微信服务")
+    today = datetime.now().strftime("%Y-%m-%d")
+    setcfpoptionvalue("happyjpwebchat", "session", "login_date", today)
+    # 重置SMS哨兵
+    setcfpoptionvalue("happyjpwebchat", "session", "last_sms_day25", "")
+    setcfpoptionvalue("happyjpwebchat", "session", "last_sms_day28", "")
+    setcfpoptionvalue("happyjpwebchat", "session", "last_sms_expired", "")
 
 
 # %% [markdown]
@@ -579,11 +629,15 @@ def after_login():
 # %%
 def after_logout():
     men_wc = getcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_nickname")
-    try:
-        termux_sms_send(f"微信({men_wc})登录已退出，如有必要请重新启动")
-    except Exception as e:
-        log.critical(f"尝试发送退出提醒短信失败。{e}")
-        log.error("", exc_info=True)
+    today = datetime.now().strftime("%Y-%m-%d")
+    last_sms = getcfpoptionvalue("happyjpwebchat", "session", "last_sms_expired") or ""
+    if last_sms != today:
+        try:
+            termux_sms_send(f"微信({men_wc})web协议已退出，请运行 --renew 重新扫码")
+            setcfpoptionvalue("happyjpwebchat", "session", "last_sms_expired", today)
+        except Exception as e:
+            log.critical(f"尝试发送退出提醒短信失败。{e}")
+            log.error("", exc_info=True)
     log.critical(f"itchat微信web协议登录已退出({men_wc})")
 
 
@@ -651,12 +705,185 @@ def keepliverun():
 
 
 # %% [markdown]
+# ### _run_renew() —— 一键续期
+
+
+# %%
+def _run_renew():
+    """--renew 模式：生成QR→上传Joplin→同步tc→SMS通知→等扫码→分发pkl→重启双机"""
+    import subprocess
+    import threading
+    from pathlib import Path
+
+    qr_path = str(getdirmain() / "img" / "qrcode.png")
+    guard_file = Path("/tmp/webchat_renewing")
+
+    # 1. 设置续期守卫，防止 startwebchatprocess.sh 干预
+    guard_file.touch()
+
+    # 2. 停掉现有 webchat 进程
+    log.info("停止现有webchat进程…")
+    subprocess.run("pkill -f 'python.*life/webchat.py' 2>/dev/null", shell=True)
+    time.sleep(2)
+
+    # 3. QR回调：在itchat生成QR码后立即上传Joplin并通知
+    qr_event = threading.Event()
+
+    def _qr_callback(uuid=None, status=None, qrcode=None):
+        if qrcode and not qr_event.is_set():
+            _upload_qr_to_joplin(qrcode, qr_path)
+            _sync_tc_joplin()
+            _notify_renew_qr()
+            qr_event.set()
+
+    log.info("生成二维码，等待扫码…")
+    try:
+        itchat.auto_login(
+            hotReload=False,
+            picDir=qr_path,
+            qrCallback=_qr_callback,
+        )
+    except Exception as e:
+        log.error(f"auto_login 异常: {e}")
+        # 恢复：用旧pkl重启
+        _restart_local_webchat()
+        guard_file.unlink()
+        print(f"[--renew] 登录失败: {e}")
+        return
+
+    # 4. 扫码成功，保存新pkl
+    itchat.dump_login_status()
+    log.info("扫码成功，新pkl已保存")
+
+    # 5. 分发pkl到腾讯云
+    pkl_src = str(getdirmain() / "itchat.pkl")
+    pkl_dst = "tc:~/codebase/happyjoplin/itchat.pkl"
+    result = subprocess.run(
+        f"scp {pkl_src} {pkl_dst}",
+        shell=True, capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode == 0:
+        log.info("pkl已上传至腾讯云")
+    else:
+        log.error(f"pkl上传tc失败: {result.stderr}")
+
+    # 6. 远程重启tc上的webchat
+    restart_cmd = (
+        "pkill -f 'python.*life/webchat.py' 2>/dev/null; "
+        "sleep 1; "
+        "cd ~/codebase/happyjoplin && "
+        "nohup python life/webchat.py >> ~/downloads/lifewebchat_tc.out 2>&1 &"
+    )
+    result = subprocess.run(
+        f"ssh tc '{restart_cmd}'",
+        shell=True, capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode == 0:
+        log.info("tc webchat 已重启")
+    else:
+        log.error(f"tc webchat 重启失败: {result.stderr}")
+
+    # 7. 更新会话日期，重置SMS哨兵
+    today = datetime.now().strftime("%Y-%m-%d")
+    setcfpoptionvalue("happyjpwebchat", "session", "login_date", today)
+    setcfpoptionvalue("happyjpwebchat", "session", "last_sms_day25", "")
+    setcfpoptionvalue("happyjpwebchat", "session", "last_sms_day28", "")
+    setcfpoptionvalue("happyjpwebchat", "session", "last_sms_expired", "")
+
+    # 8. 删除守卫，重启本地webchat
+    guard_file.unlink()
+    _restart_local_webchat()
+    log.info("--renew 续期完成")
+    print("[--renew] 续期完成！新pkl已分发至tc，双机均已重启。")
+
+
+def _upload_qr_to_joplin(qrcode_bytes, local_path=None):
+    """将二维码上传到Joplin笔记「微信扫码登录」"""
+    from pathlib import Path
+
+    try:
+        if local_path:
+            Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(local_path, "wb") as f:
+                f.write(qrcode_bytes)
+
+        notes = searchnotes("微信扫码登录")
+        if notes:
+            note_id = notes[0].id
+        else:
+            note_id = createnote(title="微信扫码登录", body="")
+        try:
+            deleteresourcesfromnote(note_id)
+        except Exception:
+            pass
+        add_resource_from_bytes(qrcode_bytes, "微信扫码登录二维码.png")
+        updatenote_body(
+            noteid=note_id,
+            bodystr=(
+                "## 微信扫码登录\n\n"
+                "请使用 **Pixel 6 Pro 微信** 扫描下方二维码\n\n"
+                "---\n\n"
+                "**二维码有效期：5分钟**\n\n"
+                "> 此笔记由 `--renew` 自动更新"
+            ),
+        )
+        log.info(f"QR已上传Joplin笔记 {note_id}")
+        return note_id
+    except Exception as e:
+        log.error(f"QR上传Joplin失败: {e}")
+        return None
+
+
+def _sync_tc_joplin():
+    """SSH到tc同步Joplin"""
+    import subprocess
+
+    try:
+        subprocess.run(
+            "ssh tc 'source /usr/miniconda3/bin/activate newlsp && "
+            "conda activate newlsp && joplin sync'",
+            shell=True, timeout=30, capture_output=True,
+        )
+        log.info("tc Joplin同步完成")
+    except Exception as e:
+        log.error(f"tc Joplin同步失败: {e}")
+
+
+def _notify_renew_qr():
+    """SMS通知用户扫码"""
+    try:
+        termux_sms_send("微信续期二维码已更新至Joplin笔记，请5分钟内打开Joplin扫码")
+        log.info("已发送扫码SMS通知")
+    except Exception:
+        log.debug("SMS发送失败（非Termux环境？）")
+
+
+def _restart_local_webchat():
+    """后台启动本地webchat"""
+    import subprocess
+    from pathlib import Path
+
+    subprocess.Popen(
+        ["nohup", "python", str(getdirmain() / "life" / "webchat.py")],
+        stdout=open(str(Path.home() / "downloads" / "lifewebchat.out"), "a"),
+        stderr=subprocess.STDOUT,
+        cwd=str(getdirmain()),
+        start_new_session=True,
+    )
+
+
+# %% [markdown]
 # ## main 主函数
 
 # %%
 if __name__ == "__main__":
     if not_IPython():
         log.info(f"运行文件\t{__file__}")
+
+    # --renew 一键续期模式
+    if len(sys.argv) > 1 and sys.argv[1] == "--renew":
+        _run_renew()
+        sys.exit(0)
 
     # listallloghander()
     # console = logging.StreamHandler()
