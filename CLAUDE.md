@@ -98,6 +98,7 @@ Docs/analysis reports stored in `docs/` should be:
 - **Jupytext-paired**: Use `ipynb,md` format so `.md` is the tracked source and `.ipynb` is generated for JupyterLab viewing. Include standard jupytext frontmatter.
 - **Rich with diagrams**: Prefer mermaid syntax (flowcharts, gitGraph, sequence diagrams) for charts. Use ASCII art as fallback when mermaid can't express the content. Avoid emojis, `Note` reserved word, and `=` in mermaid labels.
 - **Sync before commit**: Run `jupytext --sync <file>.md` to generate/update the `.ipynb` before committing.
+- **Update log dates unique**: In technical docs (e.g. MONITOR_SYSTEM.md), the "更新维护记录" section at the bottom must not repeat dates — group all same-day entries under one date heading. This does NOT apply to the project-level CHANGELOG.md.
 
 ## Commits
 
