@@ -492,11 +492,6 @@ def text_reply(msg):
 
     writefmmsg2txtandmaybeevernotetoo(innermsg)
 
-    # 特定指令则退出
-    if msg["Text"] == "退出小元宝系统":
-        log.info("根据指令退出小元宝系统")
-        itchat.logout()
-
     # 如何不是指定的数据分析中心，则不进行语义分析
     thisid = getdeviceid()
     # print(f"type:{type(thisid)}\t{thisid}")
@@ -589,7 +584,7 @@ def after_logout():
     except Exception as e:
         log.critical(f"尝试发送退出提醒短信失败。{e}")
         log.error("", exc_info=True)
-    log.critical(f"退出微信({men_wc})登录")
+    log.critical(f"itchat微信web协议登录已退出({men_wc})")
 
 
 # %% [markdown]

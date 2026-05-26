@@ -151,7 +151,15 @@ def _handle_zhenyuanbao(msg, innermsg, men_wc, qrylst):
         _archive_reply(innermsg, imgwcrel)
         return
 
-    rst = "未知指令。可用子命令：延时图/电量图/联系人/连更/连显，或不带子命令直接搜索客户"
+    elif diyihang[1] == "退出":
+        response = "真元宝系统正在退出…"
+        itchat.send_msg(response, toUserName=msg["FromUserName"])
+        _archive_reply(innermsg, response)
+        log.info("根据指令「真元宝 退出」登出itchat微信web协议")
+        itchat.logout()
+        return
+
+    rst = "未知指令。可用子命令：延时图/电量图/联系人/连更/连显/退出，或不带子命令直接搜索客户"
     itchat.send_msg(rst, toUserName=msg["FromUserName"])
     _archive_reply(innermsg, rst)
 
