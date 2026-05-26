@@ -225,7 +225,7 @@ def writefmmsg2txtandmaybeevernotetoo(inputformatmsg):
     onedict[inputformatmsg["fmId"]] = {item: inputformatmsg[item] for item in inputformatmsg if item != "fmId"}
     recentmsg_deque.append(onedict)
     if (recentnum := len(recentmsg_deque)) != 30:
-        print(f"缓存聊天记录数量为：\t{recentnum}，fmId号列表\t{list(deque2dict(recentmsg_deque))}")
+        log.debug(f"缓存聊天记录数量为：\t{recentnum}，fmId号列表\t{list(deque2dict(recentmsg_deque))}")
     # 判断是否延时并增加提示到条目内容中
     if humantimestr := gethumantimedelay(inputformatmsg["fmTime"]):
         inputformatmsg["fmText"] = f"[{humantimestr}]" + inputformatmsg["fmText"]
@@ -325,10 +325,9 @@ def note_reply(msg):
         old_msg_id = msgid_match.group(1)
         msg_information = deque2dict(recentmsg_deque)
         old_msg = msg_information.get(old_msg_id)
-        print(old_msg)
+        log.warning(f"撤回消息缓存查找结果：{old_msg}")
         if old_msg is None:
-            print(f"未找到有效msg_id，直接返回。原始信息如下：")
-            print(msg)
+            log.warning(f"未找到有效msg_id，直接返回。原始信息如下：{msg}")
             return
 
         msg_body = f"{old_msg.get('fmSender')}撤回了 {old_msg.get('fmType')} 消息\n{old_msg.get('fmTime')}\
@@ -355,7 +354,7 @@ def note_reply(msg):
         recentmsg_deque.clear()
         for k, v in msg_information.items():
             recentmsg_deque.append({k: v})
-        print(
+        log.warning(
             f"处理该撤回记录后缓存记录数量为：\t{len(recentmsg_deque)}，fmId列表\t{list(deque2dict(recentmsg_deque))}"
         )
 
@@ -401,7 +400,7 @@ def fileetc_reply(msg):
     filepath = filepath / f"{innermsg['fmSender']}_{msg['FileName']}"
     touchfilepath2depth(filepath)
     # log.info(f"保存文件（{innermsg['fmType']}）：\t{str(filepath)}")
-    print(f"保存文件（{innermsg['fmType']}）：\t{str(filepath)}")
+    log.info(f"保存文件（{innermsg['fmType']}）：\t{str(filepath)}")
     msg["Text"](str(filepath))
     innermsg["fmText"] = str(filepath)
 
@@ -443,7 +442,7 @@ def soupclean2item(msgcontent):
 @itchat.msg_register([SHARING], isFriendChat=True, isGroupChat=True, isMpChat=True)
 def sharing_reply(msg):
     sendernick = getsendernick(msg)
-    print(sendernick)
+    log.debug(sendernick)
     innermsg = formatmsg(msg)
 
     soup, items = soupclean2item(msg["Content"])
@@ -555,7 +554,7 @@ def text_reply(msg):
     # print(f"type:{type(houseid)}\t{houseid}")
     men_wc = getcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_nickname")
     if thisid != str(houseid) or (men_wc != mainaccount):
-        print(f"不是数据分析中心也不是主账号【{mainaccount}】，指令咱不管哦")
+        log.debug(f"不是数据分析中心也不是主账号【{mainaccount}】，指令咱不管哦")
         return
 
     if msg["Text"].find("白异") >= 0:
@@ -710,7 +709,7 @@ def add_friend(msg):
     helloword2 = getinivaluefromcloud("webchat", "helloword2")
     men_wc = getcfpoptionvalue("happyjpwebchat", get_host_uuid(), "host_nickname")
     if thisid != str(houseid) or (men_wc != mainaccount):
-        print(f"不是数据分析中心也不是主账号【{mainaccount}】，不用打招呼哟")
+        log.debug(f"不是数据分析中心也不是主账号【{mainaccount}】，不用打招呼哟")
         return
     msg.user.verify()
     msg.user.send(f"Nice to meet you!\n{helloword1}\n{helloword2}")

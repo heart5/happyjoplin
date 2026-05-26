@@ -137,7 +137,7 @@ def txtfiles2dfdict(dpath: Path, newfileonly: bool = False) -> dict:
     """
     fllst = [f for f in os.listdir(dpath) if f.startswith("chatitems")]
     names = list(set([getownerfromfilename(nm) for nm in fllst]))
-    print(names)
+    log.info(f"账号列表：{names}")
     # 如果设置为new，则找到每个账号的两个最新文本文件处理，否则则处理全部文本文件
     if newfileonly:
         fl3lst = [[getownerfromfilename(fl), fl, getfltime(dpath / fl)] for fl in fllst]
@@ -157,18 +157,14 @@ def txtfiles2dfdict(dpath: Path, newfileonly: bool = False) -> dict:
             continue
         account = getownerfromfilename(fl)
         dfin = items2df(dpath / fl)
-        print(
-            f"{fl}\t{getfltime(dpath / fl).strftime('%F %T')}\t {account}\t{dfin.shape[0]}",
-            end="\t",
-        )
         if account in dfdict.keys():
             dfall = pd.concat([dfdict[account], dfin])
             dfall = dfall.drop_duplicates().sort_values(["time"])
-            print(f"{dfall.shape[0]}")
+            log.info(f"{fl}\t{getfltime(dpath / fl).strftime('%F %T')}\t{account}\t{dfin.shape[0]}\t合并后{dfall.shape[0]}")
             dfdict.update({account: dfall})
         else:
             dfall = dfin
-            print(f"{dfall.shape[0]}")
+            log.info(f"{fl}\t{getfltime(dpath / fl).strftime('%F %T')}\t{account}\t{dfall.shape[0]}")
             dfdict[account] = dfall
 
     return dfdict
@@ -264,9 +260,9 @@ def txtdfsplit2xlsx(name: str, df: pd.DataFrame, dpath: Path, newfileonly: bool 
                         dfpall.to_excel(fna, engine="xlsxwriter", index=False)
                         setcfpoptionvalue("happyjpwcitems", fn, "itemsnumfromtxt", str(len(dfp)))
                     else:
-                        print(f"{fn}已经存在，且文本文件中记录数量没有变化。")
-                print(i, ny, dr[i], dr[i + 1], len(dfp))
-            print(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tDone!\t{'-' * 15}")
+                        log.debug(f"{fn}已经存在，且文本文件中记录数量没有变化。")
+                log.debug(f"{i} {ny} {dr[i]} {dr[i + 1]} {len(dfp)}")
+            log.debug(f"{'-' * 15}\t{name}\t【{i + 1}/{len(dr) - 1}】\tDone!\t{'-' * 15}")
 
     except Exception as e:
         log.error(f"在处理 {name} 的数据时发生错误: {e}")
@@ -308,7 +304,7 @@ def df2db(name: str, df4name: pd.DataFrame, wcpath: Path) -> None:
                 df4name.to_sql(tablename, conn, if_exists="append", index=False)
                 conn.commit()
                 if cursor.rowcount != 0:
-                    print(sqldel)
+                    log.info(f"SQL: {sqldel}")
                     log.info(f"从数据库文件《{dbname}》的表《{tablename}》中删除{cursor.rowcount}条记录")
                 setcfpoptionvalue("happyjpwcitems", dftfilename, "itemsnum_db", str(itemnum))
                 log.info(
@@ -330,7 +326,7 @@ def updatewcitemsxlsx2note(name: str, df4name: pd.DataFrame, wcpath: Path, noteb
     dftfilename = f"wcitems_{name}_{ny}.xlsx"
     dftallpath = wcpath / dftfilename
     dftallpathabs = os.path.abspath(dftallpath)
-    print(dftallpathabs)
+    log.debug(dftallpathabs)
     loginstr = "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"，登录用户：{whoami}"
     timenowstr = pd.to_datetime(datetime.now()).strftime("%F %T")
     first_note_tail = f"\n本笔记创建于{timenowstr}，来自于主机：{getdevicename()}{loginstr}"
@@ -513,7 +509,7 @@ def getnotelist(name: str, wcpath: Path, notebookguid: str) -> list:
     finditems = re.findall(ptn, nrlst[1])
     finditems = sorted(finditems, key=lambda x: x[0], reverse=True)
     #     print(finditems)
-    print(numinnotedesc, numatlocal, len(finditems))
+    log.info(f"notelist计数: numinnotedesc={numinnotedesc}, numatlocal={numatlocal}, finditems={len(finditems)}")
     if numinnotedesc == numatlocal == len(finditems):
         log.info(f"《{notelisttitle}》中数量无更新，跳过。")
         return finditems
@@ -553,7 +549,7 @@ def merge2note(dfdict: dict, wcpath: Path, notebookguid: str, newfileonly: bool 
         ptn = f"wcitems_{name}_" + r"\d{4}.xlsx"  # wcitems_heart5_2201.xlsx
         xlsxfllstfromlocal = [fl for fl in os.listdir(wcpath) if re.search(ptn, fl)]
         if len(fllstfromnote) != len(xlsxfllstfromlocal):
-            print(
+            log.warning(
                 f"{name}的数据文件本地数量\t{len(xlsxfllstfromlocal)}，云端笔记列表中为\t{len(fllstfromnote)}，"
                 "两者不等，先把本地缺的从网上拉下来"
             )
@@ -574,16 +570,15 @@ def merge2note(dfdict: dict, wcpath: Path, notebookguid: str, newfileonly: bool 
                         log.info(f"文件《{fl}》在本地不存在，从云端获取存入并更新ini（section：{fl}，guid：{guid}）")
 
         xlsxfllst = sorted([fl for fl in os.listdir(wcpath) if re.search(ptn, fl)])
-        print(f"{name}的数据文件数量\t{len(xlsxfllst)}", end="，")
         if newfileonly:
             xlsxfllst = xlsxfllst[-2:]
         xflen = len(xlsxfllst)
-        print(f"本次处理的数量为\t{xflen}")
+        log.info(f"{name}的数据文件数量\t{len(xlsxfllst)}，本次处理的数量为\t{xflen}")
         for xfl in xlsxfllst:
-            print(f"{'-' * 15}\t{name}\t【{xlsxfllst.index(xfl) + 1}/{xflen}】\tBegin\t{'-' * 15}")
+            log.info(f"{'-' * 15}\t{name}\t【{xlsxfllst.index(xfl) + 1}/{xflen}】\tBegin\t{'-' * 15}")
             dftest = pd.read_excel(wcpath / xfl, engine="openpyxl").drop_duplicates()
             updatewcitemsxlsx2note(name, dftest, wcpath, notebookguid)
-            print(f"{'-' * 15}\t{name}\t【{xlsxfllst.index(xfl) + 1}/{xflen}】\tDone!\t{'-' * 15}")
+            log.info(f"{'-' * 15}\t{name}\t【{xlsxfllst.index(xfl) + 1}/{xflen}】\tDone!\t{'-' * 15}")
 
 
 # %% [markdown]
@@ -598,11 +593,11 @@ def refreshres(wcpath: Path) -> None:
     if (new := getinivaluefromcloud("wcitems", "txtfilesonlynew")) is None:
         new = False
     #     new = True
-    print(f"是否只处理新的文本文件：\t{new}")
+    log.info(f"是否只处理新的文本文件：\t{new}")
     dfdict = txtfiles2dfdict(wcpath, newfileonly=new)
     for k in dfdict:
         dfinner = dfdict[k]
-        print(f"{k}\t{dfinner.shape[0]}", end="\n\n")
+        log.info(f"{k}\t{dfinner.shape[0]}")
         txtdfsplit2xlsx(k, dfinner, wcpath, newfileonly=new)
 
     merge2note(dfdict, wcpath, notebookguid, newfileonly=new)
@@ -618,7 +613,7 @@ def alldfdesc2note(wcpath: Path) -> dict:
     """读取本地所有资源文件的聊天记录到DataFrame中，输出描述性信息到相应笔记中"""
     ptn4name = r"wcitems_(\w+)_(\d{4}.xlsx)"
     names = list(set([re.search(ptn4name, fl).groups()[0] for fl in os.listdir(wcpath) if re.search(ptn4name, fl)]))
-    print(names)
+    log.info(f"alldfdesc2note账号列表：{names}")
     loginstr = "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
     dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
     dbname = wcpath / dbfilename
@@ -642,7 +637,7 @@ def alldfdesc2note(wcpath: Path) -> dict:
             )
             finnaldf["send"] = finnaldf["send"].astype(bool)
             resultdict[name] = finnaldf
-            print(f"{name}\t{finnaldf.shape[0]}")
+            log.info(f"{name}\t{finnaldf.shape[0]}")
 
     return resultdict
 
