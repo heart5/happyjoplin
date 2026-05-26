@@ -23,11 +23,7 @@
 
 
 # %%
-import datetime
-import logging
-import math
 import os
-
 
 # %%
 # import arrow
@@ -35,7 +31,6 @@ import re
 import sys
 import time
 from collections import deque
-
 
 # %%
 import itchat
@@ -58,11 +53,11 @@ from itchat.content import (
 import pathmagic
 
 with pathmagic.context():
-    from func.getid import getdeviceid, getdevicename
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.datatools import readfromtxt, write2txt
     from func.datetimetools import gethumantimedelay
-    from func.first import dirmainpath, getdirmain, touchfilepath2depth
+    from func.first import getdirmain, touchfilepath2depth
+    from func.getid import getdeviceid, getdevicename
     from func.jpfuncs import (
         createnote,
         getinivaluefromcloud,
@@ -71,12 +66,9 @@ with pathmagic.context():
     )
     from func.logme import log
     from func.nettools import trycounttimes2
-
-    from func.pdtools import db2img
-    from func.sysfunc import execcmd, listallloghander, not_IPython, uuid3hexstr
+    from func.sysfunc import execcmd, not_IPython, uuid3hexstr
     from func.termuxtools import termux_sms_send
-    from joplin_qa_client import client, qa4joplin
-    from life.wcdelay import delayimg2note, inserttimeitem2db, showdelayimg
+    from life.wcdelay import inserttimeitem2db
 
 
 # %% [markdown]
@@ -498,33 +490,12 @@ def sharing_reply(msg):
 
 
 # %% [markdown]
-# ### makemsg2write(innermsg, inputext='')
-
-
-# %%
-def makemsg2write(innermsg, inputtext=""):
-    """Make record then write to items for chatitems"""
-    nowtuple = time.time()
-    nowdatetime = datetime.datetime.fromtimestamp(nowtuple)
-    finnalmsg = {
-        "fmId": math.floor(nowtuple),
-        "fmTime": nowdatetime.strftime("%Y-%m-%d %H:%M:%S"),
-        "fmSend": True,
-        "fmSender": innermsg["fmSender"],
-        "fmType": "Text",
-        "fmText": f"{inputtext}",
-    }
-    writefmmsg2txtandmaybeevernotetoo(finnalmsg)
-
-
-# %% [markdown]
 # ### @itchat.msg_register([TEXT], isFriendChat=True, isGroupChat=True, isMpChat=True)
 
 
 # %%
 @itchat.msg_register([TEXT], isFriendChat=True, isGroupChat=True, isMpChat=True)
 def text_reply(msg):
-    sendernick = getsendernick(msg)
     innermsg = formatmsg(msg)
     soup, items = soupclean2item(msg["Content"])
 
@@ -557,119 +528,10 @@ def text_reply(msg):
         log.debug(f"不是数据分析中心也不是主账号【{mainaccount}】，指令咱不管哦")
         return
 
-    if msg["Text"].find("白异") >= 0:
-        qrylst = msg["Text"].split("\n")
-        # 去除某行首位空格
-        qrylst = [x.strip() for x in qrylst]
-        # 去掉空行
-        qrylst = [x.strip() for x in qrylst if len(x.strip()) != 0]
-        print(f"{qrylst}")
-        diyihang = qrylst[0].split()
-        if diyihang[0].strip() == "白异":
-            if len(diyihang) == 1:
-                response = "“白异”为提示词，加空格后面就直接是提问内容，注意不要在内容中有空格或换行"
-                itchat.send_msg(response, toUserName=msg["FromUserName"])
-                makemsg2write(innermsg, response)
-                return
-            elif diyihang[1] == "清空":
-                clear_result = client.clear_history()
-                if clear_result.get("success"):
-                    response = clear_result["message"]
-                else:
-                    response = clear_result.get("error")
-                itchat.send_msg(response, toUserName=msg["FromUserName"])
-                makemsg2write(innermsg, response)
-                return
-            elif diyihang[1] == "统计":
-                stats_result = client.get_statistics()
-                if stats_result.get("success"):
-                    stats = stats_result["statistics"]
-                    response = f"数据库笔记数: {stats.get('total_notes_in_db')}"
-                    response += f"对话历史数: {stats.get('conversation_history_count')}"
-                    response += f"使用模型: {stats.get('config', {}).get('chat_model')}"
-                else:
-                    response = f"获取统计失败: {stats_result.get('error')}"
-                itchat.send_msg(response, toUserName=msg["FromUserName"])
-                makemsg2write(innermsg, response)
-                return
-            response = qa4joplin(diyihang[1])
-            itchat.send_msg(response, toUserName=msg["FromUserName"])
-            makemsg2write(innermsg, response)
-            return
-    if msg["Text"].find("真元信使") >= 0:
-        qrylst = msg["Text"].split("\n")
-        # 去除某行首位空格
-        qrylst = [x.strip() for x in qrylst]
-        # 去掉空行
-        qrylst = [x.strip() for x in qrylst if len(x.strip()) != 0]
-        print(f"{qrylst}")
-        diyihang = qrylst[0].split()
-        if diyihang[0].strip() == "真元信使":
-            if len(diyihang) == 1:
-                if (len(qrylst) == 1) or (qrylst[1].strip == ""):
-                    rstfile, rst = searchcustomer()
-                else:
-                    qrystr = qrylst[1].strip()
-                    rstfile, rst = searchcustomer(qrystr.split())
-            elif diyihang[1] == "延时图":
-                delaydbname = getdirmain() / "data" / "db" / f"wcdelay_{men_wc}.db"
-                imgwcdelay, image_base64 = showdelayimg(delaydbname)
-                # imgwcdelayrel = os.path.relpath(imgwcdelay)
-                imgwcdelay = os.path.abspath(imgwcdelay)
-                itchat.send_image(imgwcdelay, toUserName=msg["FromUserName"])
-                delayimg2note(men_wc)
-                makemsg2write(innermsg, imgwcdelay)
-                # 延时图发送记录备档
-                return
-            elif diyihang[1] == "电量图":
-                delaydbname = touchfilepath2depth(getdirmain() / "data" / "db" / "batteryinfo.db")
-                imgbattinfo = showbattinfoimg(delaydbname)
-                imgbattinforel = os.path.relpath(imgbattinfo)
-                itchat.send_image(imgbattinforel, toUserName=msg["FromUserName"])
-                makemsg2write(innermsg, imgbattinforel)
-                # 延时图发送记录备档
-                return
-            elif diyihang[1] == "联系人":
-                contactinfo = showphoneinfoimg()
-                imgcontactinforel = os.path.relpath(contactinfo)
-                itchat.send_image(imgcontactinforel, toUserName=msg["FromUserName"])
-                makemsg2write(innermsg, imgcontactinforel)
-                # 延时图发送记录备档
-                return
-            elif diyihang[1] == "连更":
-                updatectdf()
-                return
-            elif diyihang[1] == "连显":
-                frddfread = getctdf()
-                imgwc = db2img(showwcsimply(frddfread))
-                imgwcrel = os.path.relpath(imgwc)
-                itchat.send_image(imgwcrel, toUserName=msg["FromUserName"])
-                makemsg2write(innermsg, imgwcrel)
-                return
-            elif diyihang[1] == "欠款":
-                qrystr = qrylst[1].strip()
-                rstfile, rst = searchqiankuan(qrystr.split())
-            elif diyihang[1] == "品项":
-                qrystr = qrylst[1].strip()
-                rstfile, rst = searchpinxiang(qrystr.split())
-            else:
-                rstfile, rst = None, None
+    from life.webchat_commands import dispatch
 
-            itchat.send_msg(rst, toUserName=msg["FromUserName"])
-            # 查询结果文件路径备档
-            makemsg2write(innermsg, rst)
-
-            if rstfile:
-                # rstfile必须是绝对路径，并且不能包含中文字符
-                itchat.send_file(rstfile, toUserName=msg["FromUserName"])
-                # 发给自己一份存档
-                makemsg2write(innermsg, rstfile.replace(os.path.abspath(dirmainpath), ""))
-                itchat.send_file(rstfile)
-                infostr = f"成功发送查询结果文件：{os.path.split(rstfile)[1]}给{innermsg['fmSender']}"
-                itchat.send_msg(infostr)
-                makemsg2write(innermsg, infostr)
-                log.info(infostr)
-            # return rst
+    if dispatch(msg, innermsg, men_wc):
+        return
 
 
 # %% [markdown]
