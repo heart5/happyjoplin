@@ -610,7 +610,7 @@ def _build_header(person: str, stats: dict) -> str:
         if source:
             try:
                 sd = datetime.strptime(source, "%Y年%m月%d日")
-                source = sd.strftime("%m/%d")
+                source = f"{sd.year}年{sd.month}月{sd.day}日"
             except ValueError:
                 pass
         parts.append(f"> — 思想火花{f' · {source}' if source else ''}\n\n")
