@@ -414,12 +414,14 @@ def updatewcitemsxlsx2note(name: str, df4name: pd.DataFrame, wcpath: Path, noteb
                 log.info(
                     f"本地数据文件记录有{itemnum}条，笔记中资源文件记录数为{itemsnumfromnet}条，合并后总记录数量{dfcombinedone.shape[0]}没变化，跳过"
                 )
+                os.remove(str(filetmp))
                 return
         log.info(
             f"本地数据文件记录数有{itemnum}条，笔记资源文件记录数为{itemsnumfromnet}条"
             f"，合并后记录总数为：\t{dfcombinedone.shape[0]}"
         )
         df4name = dfcombinedone
+        os.remove(str(filetmp))
     df2db(name, df4name, wcpath)
     note_desc = f"### 账号\t{name}\n### 记录数量\t{df4name.shape[0]}"
     df4name_desc = (
