@@ -89,6 +89,14 @@ def _migrate_spark_log(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_notes_updated_time(conn: sqlite3.Connection) -> None:
+    """增量迁移：为 notes 表补充 last_updated_time 列，记录 Joplin 侧最后修改时间。"""
+    cur = conn.execute("PRAGMA table_info(notes)")
+    cols = {r[1] for r in cur.fetchall()}
+    if "last_updated_time" not in cols:
+        conn.execute("ALTER TABLE notes ADD COLUMN last_updated_time TEXT")
+
+
 def init_db() -> None:
     with _get_conn() as conn:
         conn.executescript("""
@@ -173,6 +181,8 @@ CREATE INDEX IF NOT EXISTS idx_content_alerts_note_id ON content_alerts(note_id)
 """)
         # 增量迁移：确保 spark_log 新列存在
         _migrate_spark_log(conn)
+        # 增量迁移：notes 表增加 last_updated_time 列（记录 Joplin 侧最后修改时间）
+        _migrate_notes_updated_time(conn)
         # 确保索引存在（CREATE INDEX IF NOT EXISTS 在 execscript 外单独执行更安全）
         conn.execute("CREATE INDEX IF NOT EXISTS idx_spark_log_date ON spark_log(used_date)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_spark_log_person ON spark_log(person)")
@@ -238,6 +248,26 @@ def get_person_set() -> set[str]:
     with _get_conn() as conn:
         rows = conn.execute("SELECT DISTINCT person FROM notes WHERE person!='' AND is_active=1").fetchall()
         return {r["person"] for r in rows}
+
+
+def update_note_updated_time(note_id: str, updated_time: datetime) -> None:
+    """更新笔记的 Joplin 侧最后修改时间。"""
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE notes SET last_updated_time=? WHERE note_id=?",
+            (updated_time.isoformat(), note_id),
+        )
+
+
+def get_note_updated_time(note_id: str) -> datetime | None:
+    """获取笔记上次记录的 Joplin 修改时间。"""
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT last_updated_time FROM notes WHERE note_id=?", (note_id,)
+        ).fetchone()
+        if row and row["last_updated_time"]:
+            return datetime.fromisoformat(row["last_updated_time"])
+        return None
 
 
 # %% [markdown]

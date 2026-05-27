@@ -24,11 +24,12 @@ from datetime import datetime, timedelta
 import pathmagic
 
 with pathmagic.context():
+    from func.datatools import compute_content_hash
     from func.first import getdirmain
-    from func.jpfuncs import content_hash, getnote, searchnotes
+    from func.jpfuncs import getnote, searchnotes
     from func.logme import log
-    from func.sysfunc import not_IPython
     from func.nettools import ifttt_notify
+    from func.sysfunc import not_IPython
     from work.monitor_store import (
         MAX_PENDING_WAIT_HOURS,
         STABILITY_COOLDOWN_MINUTES,
@@ -36,6 +37,7 @@ with pathmagic.context():
         get_last_snapshot_hash,
         get_latest_snapshot,
         get_note_info,
+        get_note_updated_time,
         get_pending_change,
         get_previous_snapshot,
         init_db,
@@ -43,6 +45,7 @@ with pathmagic.context():
         insert_snapshot,
         mark_note_inactive,
         mark_report_dirty,
+        update_note_updated_time,
         upsert_daily_stat,
         upsert_note,
         upsert_pending_change,
@@ -130,14 +133,12 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
     """采集单篇笔记。返回 True 表示触发了稳定快照（需要更新报告）。
 
     逻辑：
-    1. 计算 content_hash，与上次快照对比
-    2. 相同 → 清理pending，返回False
-    3. 不同 → 管理pending_changes
-       - 首次不同：创建pending
-       - 继续不同：更新pending
-       - 相同(hash稳定)：检查冷却期
-         - 冷却达标或超时 → 正式快照 → 标记dirty → 返回True
-         - 冷却不足 → 返回False
+    1. getnote() 一次获取 body/title/updated_time
+    2. 本地计算 hash（消除 content_hash 的二次 getnote）
+    3. updated_time 未变且无 pending → 快速跳过
+    4. hash 未变 → 仅更新元数据（updated_time），清理 pending
+    5. hash 变化 → pending/冷却机制
+    6. 快照 captured_at 使用 note.updated_time（Joplin 实际修改时间）
     """
     if current_time is None:
         current_time = datetime.now()
@@ -146,10 +147,8 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
         note = getnote(note_id)
     except Exception as e:
         log.critical(f"获取笔记 {note_id} 失败: {e}")
-        # 检测笔记是否被删除：notes表中有记录且之前活跃则告警
         info = get_note_info(note_id)
         if info and info.get("is_active"):
-            # 从最近快照获取字数作为prev_word_count
             latest = get_latest_snapshot(note_id)
             prev_wc = latest["word_count"] if latest else 0
             insert_alert(
@@ -169,8 +168,11 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
 
     title = getattr(note, "title", "")
     body = getattr(note, "body", "")
-    current_hash = content_hash(note_id)
+    note_updated = getattr(note, "updated_time", None)
+
+    current_hash = compute_content_hash(body)
     last_hash = get_last_snapshot_hash(note_id)
+    stored_updated = get_note_updated_time(note_id)
 
     # 提取 person（从标题中正则匹配）
     person = ""
@@ -182,32 +184,37 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
 
     pending = get_pending_change(note_id)
 
-    # 情况A: hash与上次快照相同，且没有pending → 无变化
-    if current_hash == last_hash and pending is None:
-        return False
+    # 快速跳过：Joplin 修改时间未变，且无待确认变更
+    if note_updated is not None and stored_updated is not None:
+        if note_updated.isoformat() == stored_updated.isoformat() and pending is None:
+            return False
 
-    # 情况B: hash与上次快照相同，但有pending → 用户可能回滚了，清理pending
-    if current_hash == last_hash and pending is not None:
-        log.info(f"笔记《{title}》hash回退到已快照版本，清理pending")
-        delete_pending_change(note_id)
+    # 情况A: hash与上次快照相同 → 无内容变化
+    if current_hash == last_hash:
+        if pending is not None:
+            log.info(f"笔记《{title}》hash回退到已快照版本，清理pending")
+            delete_pending_change(note_id)
+        # 更新元数据时间（可能仅有标题/tag等非内容变更）
+        if note_updated is not None:
+            update_note_updated_time(note_id, note_updated)
         return False
 
     # hash不同 → 有变化
     log.info(f"笔记《{title}》检测到变化: {last_hash[:8] if last_hash else 'None'}... → {current_hash[:8]}...")
 
-    # 情况C: 首次变化 → 新建pending
+    # 情况B: 首次变化 → 新建pending
     if pending is None:
         upsert_pending_change(note_id, current_hash, current_time, current_time)
         log.info(f"笔记《{title}》进入待确认状态，等待冷却...")
         return False
 
-    # 情况D: hash与pending不同 → 还在编辑中
+    # 情况C: hash与pending不同 → 还在编辑中
     if current_hash != pending["content_hash"]:
         upsert_pending_change(note_id, current_hash, pending["first_seen"], current_time)
         log.info(f"笔记《{title}》仍在编辑中，更新pending...")
         return False
 
-    # 情况E: hash与pending相同 → 检查冷却期
+    # 情况D: hash与pending相同 → 检查冷却期
     last_seen = (
         datetime.fromisoformat(pending["last_seen"]) if isinstance(pending["last_seen"], str) else pending["last_seen"]
     )
@@ -232,14 +239,15 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
         )
         return False
 
-    # 正式快照
+    # 正式快照 — captured_at 使用 Joplin 实际修改时间
+    snap_time = note_updated if note_updated is not None else current_time
     word_count = len(body.strip())
-    # 补填参考时间：以内容稳定时刻（pending.last_seen）为准，而非快照拍摄时刻，
-    # 避免冷却期导致的延迟被误判为补填
-    backfill_ref = _parse_pending_time(pending["last_seen"]) if pending else current_time
+    backfill_ref = note_updated if note_updated is not None else (
+        _parse_pending_time(pending["last_seen"]) if pending else current_time
+    )
     snapshot_id = insert_snapshot(
         note_id=note_id,
-        captured_at=current_time,
+        captured_at=snap_time,
         content_hash=current_hash,
         word_count=word_count,
         body_fulltext=body,
@@ -247,6 +255,8 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
     )
 
     delete_pending_change(note_id)
+    if note_updated is not None:
+        update_note_updated_time(note_id, note_updated)
 
     # 解析每日条目
     daily = parse_daily_entries(body, current_time)
