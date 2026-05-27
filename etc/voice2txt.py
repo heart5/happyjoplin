@@ -48,7 +48,7 @@ with pathmagic.context():
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
-    from life.wc2note import items2df
+    from life.wc2note import items_to_df
 
 
 # %% [markdown]

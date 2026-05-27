@@ -59,7 +59,7 @@ with pathmagic.context():
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
-    from life.wc2note import items2df
+    from life.wc2note import items_to_df
 
 # %% [markdown]
 # ## 功能函数集
@@ -145,7 +145,7 @@ def all2df(name, wcdatapath):
     从最新的文本和数据库中读取聊天记录，合并，去重
     为了和sqlite3数据格式统一，将time字段转换为timestamp(int类型)
     """
-    wc_txt_df = items2df(wcdatapath / f"chatitems({owner}).txt")
+    wc_txt_df = items_to_df(wcdatapath / f"chatitems({owner}).txt")
     # 为了适应sqlite3的存储类型，将bool转换为01，将日期时间转换为整数
     wc_txt_df["send"] = wc_txt_df["send"].apply(lambda x: 1 if x else 0)
     wc_txt_df["time"] = wc_txt_df["time"].apply(
@@ -479,7 +479,7 @@ def txtfiles2dfdict(dpath, newfileonly=False):
             log.critical(f"记录文件《{fl}》的文件名不符合规范，跳过")
             continue
         account = getownerfromfilename(fl)
-        dfin = items2df(dpath / fl)
+        dfin = items_to_df(dpath / fl)
         print(
             f"{fl}\t{getfltime(dpath / fl).strftime('%F %T')}\t {account}\t{dfin.shape[0]}",
             end="\t",
