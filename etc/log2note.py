@@ -67,6 +67,11 @@ def log2note(noteid, loglimit, levelstr="", notetitle="happyjp日志信息"):
     # 查找log目录下所有有效日志文件并根据levelstrinner集合相应行
     pathlog = getdirmain() / "log"
     files = [f for f in os.listdir(str(pathlog)) if not f.startswith(".")]
+    # 日常日志只看当前 + 最近 2 个备份（含大量 levelstr="" 扫描时会快很多）
+    if levelstrinner == "":
+        files = sorted(files)[-3:]
+
+    charsnum2showinline = getinivaluefromcloud(namestr, "charsnum2showinline")
     loglines = []
     for fname in files[::-1]:
         # log.info(fname)
@@ -74,8 +79,6 @@ def log2note(noteid, loglimit, levelstr="", notetitle="happyjp日志信息"):
             log.warning(f"文件《{fname}》不是合法的日志文件，跳过。")
             continue
         with open(pathlog / fname, "r", encoding="utf-8", errors="replace") as flog:
-            charsnum2showinline = getinivaluefromcloud(namestr, "charsnum2showinline")
-            # print(f"log行最大显示字符数量为：\t{charsnum2showinline}")
             loglines = loglines + [
                 line.strip()[:charsnum2showinline]
                 for line in flog
