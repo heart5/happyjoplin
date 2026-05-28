@@ -63,7 +63,11 @@ def _get_conn():
 
 # %%
 def _migrate_spark_log(conn: sqlite3.Connection) -> None:
-    """增量迁移：为旧版 spark_log 表补充 person/quote_text/source_date 列和唯一约束升级。"""
+    """增量迁移：补列、去重，并确保唯一约束为 (used_date, person)。
+
+    历史库中建表 SQL 可能为 UNIQUE(used_date, quote_hash)，与业务语义
+    （每人每天一条）不一致，需检测并重建为 UNIQUE(used_date, person)。
+    """
     cur = conn.execute("PRAGMA table_info(spark_log)")
     cols = {r[1] for r in cur.fetchall()}
     if "person" not in cols:
@@ -72,7 +76,7 @@ def _migrate_spark_log(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE spark_log ADD COLUMN quote_text TEXT NOT NULL DEFAULT ''")
     if "source_date" not in cols:
         conn.execute("ALTER TABLE spark_log ADD COLUMN source_date TEXT NOT NULL DEFAULT ''")
-    # 去重：旧数据 person 全为空字符串，同一天可能有多条记录，只保留 id 最大的一条
+    # 去重：同一天同一人多条记录，只保留 id 最大的一条
     dupes = conn.execute("""
         SELECT used_date, person, MAX(id) as keep_id, COUNT(*) as cnt
         FROM spark_log
@@ -84,9 +88,35 @@ def _migrate_spark_log(conn: sqlite3.Connection) -> None:
             "DELETE FROM spark_log WHERE used_date=? AND person=? AND id != ?",
             (due_date, due_person, keep_id),
         )
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_spark_log_date_person ON spark_log(used_date, person)"
-    )
+
+    # 检测并修正 UNIQUE 约束：应为 (used_date, person)，历史可能为 (used_date, quote_hash)
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='spark_log'"
+    ).fetchone()
+    if ddl and "UNIQUE(used_date, quote_hash)" in ddl[0]:
+        conn.execute("DROP INDEX IF EXISTS idx_spark_log_date_person")
+        conn.execute("ALTER TABLE spark_log RENAME TO spark_log_old")
+        conn.execute("""
+            CREATE TABLE spark_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                used_date DATE NOT NULL,
+                quote_hash TEXT NOT NULL,
+                person TEXT NOT NULL DEFAULT '',
+                quote_text TEXT NOT NULL DEFAULT '',
+                source_date TEXT NOT NULL DEFAULT '',
+                UNIQUE(used_date, person)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO spark_log (id, used_date, quote_hash, person, quote_text, source_date)
+            SELECT id, used_date, quote_hash, person, quote_text, source_date
+            FROM spark_log_old
+        """)
+        conn.execute("DROP TABLE spark_log_old")
+    else:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_spark_log_date_person ON spark_log(used_date, person)"
+        )
 
 
 def _migrate_notes_updated_time(conn: sqlite3.Connection) -> None:
