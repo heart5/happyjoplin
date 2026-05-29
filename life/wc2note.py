@@ -320,7 +320,6 @@ def df_to_db(name: str, df4name: pd.DataFrame, wc_path: Path) -> None:
 # %%
 def update_wcitems_to_note(name: str, df4name: pd.DataFrame, wc_path: Path, notebook_id: str) -> None:
     """处理从本地资源文件读取生成的df，如果和ini登记数量相同，则返回；如果不同，则从笔记端读取相应登记数量再次对比，相同，则跳过，如果不同，则拉取笔记资源文件和本地资源文件融合，更新笔记端资源文件并更新ini登记数量（用融合后的记录数量）"""
-
     forcerefresh = getinivaluefromcloud("wcitems", "forcerefresh")
     ny = df4name["time"].iloc[0].strftime("%y%m")
     xlsx_name = f"wcitems_{name}_{ny}.xlsx"
@@ -631,14 +630,10 @@ if __name__ == "__main__":
         log.info(f"运行文件\t{__file__}")
 
     wcpath = getdirmain() / "data" / "webchat"
-    refresh_resources(wc_path)
-    mydict = all_df_desc_to_note(wc_path)
+    refresh_resources(wcpath)
+    mydict = all_df_desc_to_note(wcpath)
 
     if not_IPython():
         log.info(f"文件\t{__file__}\t运行结束。")
 
 
-# %%
-def explode_df(mydict: dict) -> None:
-    mydf = mydict["heart5"]
-    mydf[mydf.time >= "2022-10-01"].sort_values("time")
