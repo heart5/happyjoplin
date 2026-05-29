@@ -433,51 +433,87 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
 
 
 # %%
-_spark_cache: list | None = None
+_spark_cache: dict | None = None  # {note_id: {"updated": "iso_str", "quotes": [...]}}
+
+
+def _merge_cached_quotes(cache: dict) -> list[dict]:
+    """合并所有笔记的 quotes 列表。"""
+    all_quotes = []
+    for entry in cache.values():
+        all_quotes.extend(entry.get("quotes", []))
+    return all_quotes
+
+
+def _parse_spark_note(body: str, title: str, max_len: int, ptn_date, item_ptn) -> list[dict]:
+    """解析单条思想火花笔记的 body，返回 [{text, source_date}]。"""
+    sections = re.split(ptn_date, body.strip())
+    date_matches = ptn_date.findall(body.strip())
+
+    quotes = []
+    for i, section in enumerate(sections[1:]):
+        if i % 2 == 0:
+            continue
+        date_idx = (i - 1) // 2
+        source_date_raw = date_matches[date_idx] if date_idx < len(date_matches) else ""
+        source_date = re.sub(r"\s+", "", source_date_raw).replace("号", "日")
+        items = item_ptn.findall(section)
+        for item in items:
+            clean = item.strip()
+            clean = re.sub(r'["""\']+', "", clean)
+            clean = re.sub(r"（[^）]*$", "", clean)
+            if 10 <= len(clean) <= max_len and not clean.startswith("+"):
+                quotes.append({"text": clean, "source_date": source_date})
+
+    return quotes
 
 
 def _get_spark_candidates() -> list[dict]:
-    """解析思想火花笔记，返回候选句子列表 [{text, source_date}]。模块级缓存。"""
+    """搜所有"思想火花"笔记，校验结构、增量更新，返回候选句子列表。模块级缓存。"""
     global _spark_cache
     if _spark_cache is not None:
-        return _spark_cache
+        return _merge_cached_quotes(_spark_cache)
 
     max_len_str = getinivaluefromcloud("monitor", "spark_max_len")
     max_len = int(max_len_str) if max_len_str else 60
 
     try:
-        results = searchnotes("思想火花-（白晔峰）")
+        results = searchnotes("思想火花")
         if not results:
             return []
-        body = getattr(getnote(results[0].id), "body", "")
-        if not body:
-            return []
-
-        ptn_date = re.compile(r"^###\s+(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号])\s*$", re.M)
-        sections = re.split(ptn_date, body.strip())
-        date_matches = ptn_date.findall(body.strip())
-
-        quotes = []
-        for i, section in enumerate(sections[1:]):
-            # re.split with capture groups returns: [date_0, content_0, date_1, content_1, ...]
-            # for i%2==0 → date heading (no items), for i%2==1 → content (use date_matches[(i-1)//2])
-            if i % 2 == 0:
-                continue
-            date_idx = (i - 1) // 2
-            source_date_raw = date_matches[date_idx] if date_idx < len(date_matches) else ""
-            source_date = re.sub(r"\s+", "", source_date_raw).replace("号", "日")
-            items = re.findall(r"(?:^|\n)\d+[\.\、\)）]\s*(.+?)(?=\n\d+[\.\、\)）]|\n###|\Z)", section, re.S)
-            for item in items:
-                clean = item.strip()
-                clean = re.sub(r'["""\']+', "", clean)
-                clean = re.sub(r"（[^）]*$", "", clean)
-                if 10 <= len(clean) <= max_len and not clean.startswith("+"):
-                    quotes.append({"text": clean, "source_date": source_date})
-
-        _spark_cache = quotes
-        return quotes
     except Exception:
         return []
+
+    ptn_date = re.compile(r"^###\s+(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号])\s*$", re.M)
+    item_ptn = re.compile(r"(?:^|\n)\d+[\.\、\)）]\s*(.+?)(?=\n\d+[\.\、\)）]|\n###|\Z)", re.S)
+
+    prev_cache = _spark_cache or {}
+    new_cache = {}
+
+    for r in results:
+        note_id = r.id
+        note_updated = getattr(r, "updated_time", None)
+        utc_str = note_updated.isoformat() if note_updated else ""
+
+        # change detection: 该笔记未修改，直接用缓存
+        if note_id in prev_cache:
+            if prev_cache[note_id].get("updated") == utc_str:
+                new_cache[note_id] = prev_cache[note_id]
+                continue
+
+        body = getattr(r, "body", "") or ""
+        if not body:
+            continue
+
+        if not ptn_date.search(body):
+            log.warning(f"思想火花笔记《{r.title}》无有效三级标题日期分割，跳过")
+            new_cache[note_id] = {"updated": utc_str, "quotes": []}
+            continue
+
+        quotes = _parse_spark_note(body, r.title, max_len, ptn_date, item_ptn)
+        new_cache[note_id] = {"updated": utc_str, "quotes": quotes}
+
+    _spark_cache = new_cache
+    return _merge_cached_quotes(_spark_cache)
 
 
 def _pick_spark_quote(person: str) -> dict:
