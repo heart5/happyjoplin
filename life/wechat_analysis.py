@@ -35,7 +35,7 @@ import pathmagic
 with pathmagic.context():
     from func.getid import getdevicename
     from etc.voice2txt import batch_v4txt, query_v4txt
-    from filedatafunc import getfilemtime as getfltime
+    from func.filedatafunc import getfilemtime as getfltime
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain, touchfilepath2depth
     from func.jpfuncs import (
