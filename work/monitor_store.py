@@ -93,7 +93,7 @@ def _migrate_spark_log(conn: sqlite3.Connection) -> None:
     ddl = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='spark_log'"
     ).fetchone()
-    if ddl and "UNIQUE(used_date, quote_hash)" in ddl[0]:
+    if ddl and "UNIQUE(used_date, person)" not in ddl[0]:
         conn.execute("DROP INDEX IF EXISTS idx_spark_log_date_person")
         conn.execute("ALTER TABLE spark_log RENAME TO spark_log_old")
         conn.execute("""
@@ -191,7 +191,10 @@ CREATE TABLE IF NOT EXISTS spark_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     used_date DATE NOT NULL,
     quote_hash TEXT NOT NULL,
-    UNIQUE(used_date)
+    person TEXT NOT NULL DEFAULT '',
+    quote_text TEXT NOT NULL DEFAULT '',
+    source_date TEXT NOT NULL DEFAULT '',
+    UNIQUE(used_date, person)
 );
 
 CREATE TABLE IF NOT EXISTS content_alerts (
