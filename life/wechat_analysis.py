@@ -321,6 +321,8 @@ def group_analysis(sdf, from_date_str):
     def cloud_plot(tdf, from_date_str):
         from wordcloud import WordCloud
 
+        font_path = fm.findfont(fm.FontProperties())
+
         # Combine all text content
         text = " ".join(
             tdf[tdf.time >= arrow.get(from_date_str).to("Asia/Shanghai").datetime][
@@ -339,7 +341,7 @@ def group_analysis(sdf, from_date_str):
         plt.axis("off")
         plt.show()
 
-    if from_date_str == None:
+    if from_date_str is None:
         from_date_str = "2024-10-01"
     cloud_plot(tdf, from_date_str)
 
