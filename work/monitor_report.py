@@ -43,6 +43,7 @@ with pathmagic.context():
         getapi,
         getinivaluefromcloud,
         getnote,
+        searchnotebook,
         searchnotes,
         updatenote_body,
         updatenote_title,
@@ -434,6 +435,7 @@ def plot_word_counts(daily_counts: dict, title: str) -> str:
 
 # %%
 _spark_cache: dict | None = None  # {note_id: {"updated": "iso_str", "quotes": [...]}}
+_spark_notebook_id: str | None = None  # 日新白异笔记本 ID，用 ID 而非名称以免疫重命名
 
 
 def _merge_cached_quotes(cache: dict) -> list[dict]:
@@ -468,16 +470,19 @@ def _parse_spark_note(body: str, title: str, max_len: int, ptn_date, item_ptn) -
 
 
 def _get_spark_candidates() -> list[dict]:
-    """搜所有"思想火花"笔记，校验结构、增量更新，返回候选句子列表。模块级缓存。"""
-    global _spark_cache
+    """搜「日新白异」笔记本中所有"思想火花"笔记，校验结构、增量更新，返回候选句子列表。模块级缓存。"""
+    global _spark_cache, _spark_notebook_id
     if _spark_cache is not None:
         return _merge_cached_quotes(_spark_cache)
 
     max_len_str = getinivaluefromcloud("monitor", "spark_max_len")
     max_len = int(max_len_str) if max_len_str else 60
 
+    if _spark_notebook_id is None:
+        _spark_notebook_id = searchnotebook("日新白异")
+
     try:
-        results = searchnotes("思想火花")
+        results = searchnotes("思想火花", parent_id=_spark_notebook_id)
         if not results:
             return []
     except Exception:
