@@ -29,7 +29,7 @@ import itchat
 import pathmagic
 
 with pathmagic.context():
-    from func.first import getdirmain, touchfilepath2depth
+    from func.first import getdirmain
     from func.logme import log
     from func.pdtools import db2img
     from joplin_qa_client import client, qa4joplin
@@ -99,10 +99,10 @@ def _handle_qingxingdong(msg, innermsg, query_parts):
 
 # %%
 def _handle_zhenyuanbao(msg, innermsg, men_wc, query_parts):
-    """处理"真元宝"工具查询指令：延时图/电量图/联系人/连更/连显"""
+    """处理"真元宝"工具查询指令：延时图/联系人/连更/连显"""
     first_word = query_parts[0].split()
     if len(first_word) == 1:
-        rst = "真元宝可用子命令：延时图/电量图/联系人/连更/连显/退出"
+        rst = "真元宝可用子命令：延时图/联系人/连更/连显/退出"
         itchat.send_msg(rst, toUserName=msg["FromUserName"])
         _archive_reply(innermsg, rst)
         return
@@ -113,15 +113,6 @@ def _handle_zhenyuanbao(msg, innermsg, men_wc, query_parts):
         itchat.send_image(imgwcdelay, toUserName=msg["FromUserName"])
         delay_img_to_note(men_wc)
         _archive_reply(innermsg, imgwcdelay)
-        return
-    elif first_word[1] == "电量图":
-        from etc.battery_manage import showbattinfoimg
-
-        delaydbname = touchfilepath2depth(getdirmain() / "data" / "db" / "batteryinfo.db")
-        imgbattinfo = showbattinfoimg(delaydbname)
-        imgbattinforel = os.path.relpath(imgbattinfo)
-        itchat.send_image(imgbattinforel, toUserName=msg["FromUserName"])
-        _archive_reply(innermsg, imgbattinforel)
         return
     elif first_word[1] == "联系人":
         from life.phonecontact import showphoneinfoimg
@@ -154,7 +145,7 @@ def _handle_zhenyuanbao(msg, innermsg, men_wc, query_parts):
         itchat.logout()
         return
 
-    rst = "未知指令。可用子命令：延时图/电量图/联系人/连更/连显/退出"
+    rst = "未知指令。可用子命令：延时图/联系人/连更/连显/退出"
     itchat.send_msg(rst, toUserName=msg["FromUserName"])
     _archive_reply(innermsg, rst)
 
