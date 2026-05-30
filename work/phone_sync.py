@@ -98,11 +98,15 @@ def save_cursor(cursor_file, last_id):
         json.dump({"last_id": last_id, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
 
 
-def push_records(db_path, account, api_url, limit=2000, full=False):
-    """推送增量记录到 hcx。自动跳过重复区间，累计到 limit 条实际写入后停。
+# 每次 SQL SELECT 取多少行发 HTTP，内部常量，与 --limit 无关
+_CHUNK = 2000
+
+
+def push_records(db_path, account, api_url, target=2000, full=False):
+    """推送增量记录到 hcx。自动跳过重复区间，累计写入 target 条后停。
 
     Args:
-        limit: 实际写入 hcx 的目标条数（也是每次 HTTP 取多少行）
+        target: 实际写入 hcx 的目标条数（--limit 传入）
         full: True=重置游标全量推送
     """
     table = f"wc_{account}"
@@ -124,11 +128,11 @@ def push_records(db_path, account, api_url, limit=2000, full=False):
     total_inserted = 0
     total_processed = 0
 
-    while total_inserted < limit:
+    while total_inserted < target:
         conn = sqlite3.connect(db_path)
         rows = conn.execute(
             f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
-            (since_id, limit),
+            (since_id, _CHUNK),
         ).fetchall()
         conn.close()
 
@@ -163,8 +167,8 @@ def push_records(db_path, account, api_url, limit=2000, full=False):
 
                 if inserted > 0:
                     total_inserted += inserted
-                    print(f"  [{pct:.1f}%] +{inserted} 条写入 (累计 {total_inserted}/{limit})")
-                elif total_processed % (limit * 25) == 0:
+                    print(f"  [{pct:.1f}%] +{inserted} 条写入 (累计 {total_inserted}/{target})")
+                elif total_processed % (_CHUNK * 10) == 0:
                     print(f"  [{pct:.1f}%] 已处理 {total_processed}/{total_pending}")
             else:
                 print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
@@ -188,7 +192,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="手机端聊天记录推送同步")
     parser.add_argument("--account", default="白晔峰", help="微信账号")
-    parser.add_argument("--limit", type=int, default=2000, help="实际写入目标条数")
+    parser.add_argument("--limit", type=int, default=2000, help="每轮至少写入多少条后停（目标值）")
     parser.add_argument("--full", action="store_true", help="全量重推")
     parser.add_argument("--db", default="", help="数据库路径")
     parser.add_argument("--stats", action="store_true", help="展示数据库概况")
@@ -212,4 +216,4 @@ if __name__ == "__main__":
     if args.stats:
         show_stats(db_path, args.account)
     else:
-        push_records(db_path, args.account, args.api, limit=args.limit, full=args.full)
+        push_records(db_path, args.account, args.api, target=args.limit, full=args.full)
