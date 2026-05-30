@@ -137,7 +137,7 @@ def v2t_funasr(vfilelst):
 
 # %%
 @timethis
-def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.strcoder.com/voice"):
+def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.strcoder.com/voice", source=None):
     """单文件语音转文字，POST 到 hcx voice API。
 
     转录后服务端自动写入 v4txt_v2，客户端无需缓存。
@@ -145,6 +145,8 @@ def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.st
     """
     import requests
 
+    if source is None:
+        source = getdevicename()
     msg_time = _normalize_time(msg_time)
     log.info(f"转录: {filepath}")
     try:
@@ -152,7 +154,7 @@ def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.st
             resp = requests.post(
                 f"{voice_url}/transcribe",
                 files={"file": (os.path.basename(filepath), fh)},
-                data={"account": account, "msg_time": msg_time, "sender": sender},
+                data={"account": account, "msg_time": msg_time, "sender": sender, "source": source},
                 timeout=120,
             )
         if resp.ok:
@@ -176,7 +178,7 @@ def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.st
 
 # %%
 @timethis
-def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.com/voice", limit=50, skip_existing=True):
+def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.com/voice", limit=50, skip_existing=True, source=None):
     """扫描 wc_表 Recording 行，上传 mp3 至 voice API 转录。
 
     1. 从 wc_{account} 查 type='Recording' 的行（按 id DESC，优先新数据）
@@ -195,6 +197,8 @@ def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.
     """
     import requests
 
+    if source is None:
+        source = getdevicename()
     table = f"wc_{account}"
     conn = lite.connect(db_path)
     rows = conn.execute(
@@ -268,7 +272,7 @@ def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.
         fpath = os.path.join(proot, content) if not content.startswith("/") else content
         if not os.path.exists(fpath):
             continue
-        text = v2t_ollama(fpath, account, orig_time, sender, voice_url)
+        text = v2t_ollama(fpath, account, orig_time, sender, voice_url, source)
         if text and not text.startswith("语音转换失败"):
             transcribed += 1
         if (i + 1) % 10 == 0:
