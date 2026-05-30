@@ -264,7 +264,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
     already_scanned = 0
 
     while already_done < write_target:
-        fetch_size = min(_FETCH_CAP, (write_target - already_done) * 3)  # 留余量，因为有文件缺失/已转录跳过
+        fetch_size = min(_FETCH_CAP, max(write_target - already_done, 20))
         rows = conn.execute(
             f"SELECT id, time, sender, content FROM [{table}] "
             f"WHERE type='Recording' AND id > ? ORDER BY id LIMIT ?",
