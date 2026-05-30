@@ -20,35 +20,20 @@
 import json
 import os
 import sqlite3 as lite
-import sys
 import wave
+
 # import vosk
 # from pydub import AudioSegment
-
 # %%
 import pathmagic
 
 with pathmagic.context():
+    from func.first import getdirmain
     from func.getid import getdevicename
-    from filedatafunc import getfilemtime as getfltime
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.first import getdirmain, touchfilepath2depth
-    from func.jpfuncs import (
-        createnote,
-        getapi,
-        getinivaluefromcloud,
-        getnote,
-        getreslst,
-        searchnotebook,
-        searchnotes,
-        updatenote_body,
-        updatenote_title,
-    )
-    from func.litetools import convert_intstr_datetime, ifnotcreate, showtablesindb
+    from func.litetools import ifnotcreate
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
-    from life.wc2note import items_to_df
 
 
 # %% [markdown]
@@ -143,13 +128,52 @@ def v2t_funasr(vfilelst):
 
 
 # %% [markdown]
+# ### v2t_ollama(vfilelst, voice_url)
+
+
+# %%
+@timethis
+def v2t_ollama(vfilelst, voice_url="https://ollama.strcoder.com/voice"):
+    """通过远程 Ollama faster-whisper 服务将 mp3 转为文字。
+
+    每个文件单独 POST 到 voice_url/transcribe，返回文字列表。
+    转录结果加【语音转录】标记以区分普通文本消息。
+    """
+    import requests
+
+    txtlst = []
+    for vfile in vfilelst:
+        log.info(f"【{vfilelst.index(vfile)}/{len(vfilelst)}】\t{vfile}")
+        try:
+            with open(vfile, "rb") as fh:
+                resp = requests.post(
+                    f"{voice_url}/transcribe",
+                    files={"file": (os.path.basename(vfile), fh)},
+                    timeout=120,
+                )
+            if resp.ok:
+                data = resp.json()
+                text = data.get("text", "")
+                lang = data.get("language", "?")
+                prob = data.get("probability", 0)
+                log.info(f"  → {text[:50]}... (lang={lang}, p={prob:.2f})")
+            else:
+                text = f"语音转换失败：HTTP {resp.status_code}"
+                log.error(f"  → {text}")
+        except Exception as e:
+            text = f"语音转换失败：{e}"
+            log.error(f"  → {text}")
+        txtlst.append("【语音转录】" + text)
+    return txtlst
+
+
+# %% [markdown]
 # ### v4txt(vfile, dbn)
 
 
 # %%
 def v4txt(vfile, dbn):
-    """
-    根据传入的文件路径在数据表中查询结果，如果不存在则执行语音转换并存入数据表
+    """根据传入的文件路径在数据表中查询结果，如果不存在则执行语音转换并存入数据表
     """
     # 检查v4txt数据表是否已经存在，不存在则构建之
     createsql = "CREATE TABLE v4txt ( id INTEGER PRIMARY KEY AUTOINCREMENT, filepath TEXT NOT NULL UNIQUE, text TEXT NOT NULL );"
@@ -188,8 +212,7 @@ def v4txt(vfile, dbn):
 # %%
 @timethis
 def batch_v4txt(vfilelst, dbn, batch_size=100):
-    """
-    批量转换文件路径列表并存入数据库
+    """批量转换文件路径列表并存入数据库
     """
     # 检查v4txt数据表是否已经存在，不存在则构建之
     createsql = "CREATE TABLE IF NOT EXISTS v4txt (id INTEGER PRIMARY KEY AUTOINCREMENT, filepath TEXT NOT NULL UNIQUE, text TEXT NOT NULL);"
