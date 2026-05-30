@@ -13,7 +13,7 @@ echo "========================================"
 echo "phone_transcribe @ $NOW  host=$(hostname)"
 
 START=$(date +%s)
-python work/wc_sync.py --transcribe --limit 50
+python work/wc_sync.py --transcribe --limit 300
 RET=$?
 ELAPSED=$(($(date +%s) - START))
 

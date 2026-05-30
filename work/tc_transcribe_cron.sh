@@ -12,7 +12,7 @@ echo "========================================"
 echo "tc_transcribe @ $NOW  host=$(hostname)"
 
 START=$(date +%s)
-/usr/miniconda3/envs/newlsp/bin/python3 work/wc_sync.py --transcribe --limit 50
+/usr/miniconda3/envs/newlsp/bin/python3 work/wc_sync.py --transcribe --limit 300
 RET=$?
 ELAPSED=$(($(date +%s) - START))
 
