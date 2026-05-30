@@ -90,14 +90,17 @@ def show_stats(db_path, account, debug_mp3=False):
     ).fetchall()
     sample_n = len(samples)
 
-    # 尝试多个根目录
+    # 尝试多个根目录（Android 存储路径多样，不过滤 isdir）
     roots = [os.path.dirname(os.path.dirname(os.path.dirname(db_path)))]
     home = os.path.expanduser("~")
-    for d in [f"{home}/storage/shared/happyjoplin",
-              f"{home}/happyjoplin",
-              f"{home}/codebase/happyjoplin"]:
-        if os.path.isdir(d) and d not in roots:
-            roots.append(d)
+    roots += [
+        f"{home}/storage/shared/happyjoplin",
+        f"{home}/storage/shared/0code/happyjoplin",
+        "/storage/emulated/0/happyjoplin",
+        "/storage/emulated/0/0code/happyjoplin",
+        "/sdcard/happyjoplin",
+        "/sdcard/0code/happyjoplin",
+    ]
 
     exist = 0
     found_root = None
