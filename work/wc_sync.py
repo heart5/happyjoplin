@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Pixel 6 Pro → hcx 聊天记录推送同步。
+"""全平台聊天记录推送同步（手机/tc/Linux 通用） → hcx 合并库。
 
 轻量级，只需 sqlite3 + json + requests（均为标准库或常用库）。
 用本地 JSON 文件存同步游标，HTTP POST 至 hcx 的 /chat/sync 端点。
 
 使用：
-    python work/phone_sync.py                          # 增量推送（自动跳过重复）
-    python work/phone_sync.py --full                   # 全量重推（重置游标）
-    python work/phone_sync.py --stats                  # 查看数据库概况
-    python work/phone_sync.py --stats --debug-mp3      # 查看概况 + mp3 路径调试
-    python work/phone_sync.py --limit 10000            # 每轮写满10000条后停
-    python work/phone_sync.py --transcribe --limit 50  # 上传 mp3 至 hcx 语音转文字
-    python work/phone_sync.py --clean --dry-run        # 查看可清理的已转录 mp3
-    python work/phone_sync.py --clean                  # 删除本地已转录 mp3
+    python work/wc_sync.py                          # 增量推送（自动跳过重复）
+    python work/wc_sync.py --full                   # 全量重推（重置游标）
+    python work/wc_sync.py --stats                  # 查看数据库概况
+    python work/wc_sync.py --stats --debug-mp3      # 查看概况 + mp3 路径调试
+    python work/wc_sync.py --limit 10000            # 每轮写满10000条后停
+    python work/wc_sync.py --transcribe --limit 50  # 上传 mp3 至 hcx 语音转文字
+    python work/wc_sync.py --clean --dry-run        # 查看可清理的已转录 mp3
+    python work/wc_sync.py --clean                  # 删除本地已转录 mp3
 """
 
 import json
@@ -166,7 +166,7 @@ def show_stats(db_path, account, debug_mp3=False):
 
     # 游标 + 进度（COUNT(*)，非稀疏 id 范围）
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
-    cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
+    cursor_file = os.path.join(cursor_dir, f".wc_sync_cursor_{account}.json")
     cursor = load_cursor(cursor_file)
     scanned = conn.execute(
         f"SELECT COUNT(*) FROM [{table}] WHERE id <= ?", (cursor,)
@@ -256,7 +256,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
         return
 
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
-    cursor_file = os.path.join(cursor_dir, f".phone_transcribe_cursor_{account}.json")
+    cursor_file = os.path.join(cursor_dir, f".wc_transcribe_cursor_{account}.json")
     cursor_id = load_cursor(cursor_file)
 
     roots = _get_mp3_roots(db_path)
@@ -476,7 +476,7 @@ def push_records(db_path, account, api_url, write_target=2000, record_type=None,
 
     # --- 游标 ---
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
-    cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
+    cursor_file = os.path.join(cursor_dir, f".wc_sync_cursor_{account}.json")
     cursor_id = 0 if full else load_cursor(cursor_file)
 
     # --- 待处理行数（进度条分母，按过滤类型） ---

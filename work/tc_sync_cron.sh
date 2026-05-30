@@ -12,7 +12,7 @@ echo "========================================"
 echo "tc_sync @ $NOW  host=$(hostname)"
 
 START=$(date +%s)
-/usr/miniconda3/envs/newlsp/bin/python3 work/phone_sync.py --account 白晔峰 --limit 5000
+/usr/miniconda3/envs/newlsp/bin/python3 work/wc_sync.py --account 白晔峰 --limit 5000
 RET=$?
 ELAPSED=$(($(date +%s) - START))
 
