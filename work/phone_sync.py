@@ -98,7 +98,7 @@ def save_cursor(cursor_file, last_id):
         json.dump({"last_id": last_id, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
 
 
-def push_records(db_path, account, api_url, limit=200, full=False):
+def push_records(db_path, account, api_url, limit=2000, full=False):
     """推送增量记录到 hcx。自动跳过重复区间，累计到 limit 条实际写入后停。
 
     Args:
@@ -188,7 +188,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="手机端聊天记录推送同步")
     parser.add_argument("--account", default="白晔峰", help="微信账号")
-    parser.add_argument("--limit", type=int, default=200, help="实际写入目标条数")
+    parser.add_argument("--limit", type=int, default=2000, help="实际写入目标条数")
     parser.add_argument("--full", action="store_true", help="全量重推")
     parser.add_argument("--db", default="", help="数据库路径")
     parser.add_argument("--stats", action="store_true", help="展示数据库概况")
