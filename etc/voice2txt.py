@@ -145,6 +145,7 @@ def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.st
     """
     import requests
 
+    msg_time = _normalize_time(msg_time)
     log.info(f"转录: {filepath}")
     try:
         with open(filepath, "rb") as fh:
@@ -167,6 +168,97 @@ def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.st
     except Exception as e:
         log.error(f"  → {e}")
         return f"语音转换失败：{e}"
+
+
+# %% [markdown]
+# ### batch_transcribe_voice(db_path, account, voice_url, limit, skip_existing)
+
+
+# %%
+@timethis
+def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.com/voice", limit=50, skip_existing=True):
+    """扫描 wc_表 Recording 行，上传 mp3 至 voice API 转录。
+
+    1. 从 wc_{account} 查 type='Recording' 的行（按 id DESC，优先新数据）
+    2. skip_existing 时先批量查已转录的跳过
+    3. 逐个上传未转录 mp3 至 voice API
+    4. 幂等：voice API 端 INSERT OR IGNORE，重复上传无害
+
+    Args:
+        db_path: wcitemsall 数据库路径
+        account: 微信账号名
+        voice_url: voice API 地址
+        limit: 每次最多处理 N 条（None=全量）
+        skip_existing: 是否先查已转录记录跳过
+    Returns:
+        {"total": N, "already": N, "sent": N, "success": N}
+    """
+    import requests
+
+    table = f"wc_{account}"
+    conn = lite.connect(db_path)
+    rows = conn.execute(
+        f"SELECT time, sender, content FROM [{table}] WHERE type='Recording' ORDER BY id DESC"
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        log.info("无 Recording 记录")
+        return {"total": 0, "already": 0, "sent": 0, "success": 0}
+
+    if limit:
+        rows = rows[:limit]
+
+    # 构建去重的 (norm_time, sender) 对，保留第一个 mp3 路径
+    records = []
+    rows_map = {}
+    for msg_time, sender, content in rows:
+        nt = _normalize_time(msg_time)
+        if not nt:
+            continue
+        key = (nt, sender)
+        if key not in rows_map:
+            records.append(key)
+            rows_map[key] = (msg_time, sender, content)
+
+    # 批量查询已转录的
+    already = set()
+    if skip_existing:
+        try:
+            resp = requests.post(
+                f"{voice_url}/transcriptions/batch",
+                json={"account": account, "records": [[t, s] for t, s in records]},
+                timeout=30,
+            )
+            if resp.ok:
+                data = resp.json()
+                for key in data.get("results", {}):
+                    t, s = key.split("#", 1)
+                    already.add((t, s))
+        except Exception as e:
+            log.warning(f"查询已转录记录失败，将重新上传: {e}")
+
+    to_transcribe = [(t, s) for t, s in records if (t, s) not in already]
+    log.info(f"batch_transcribe: {len(records)} 条录音, 已转录 {len(already)}, 待转录 {len(to_transcribe)}")
+
+    proot = str(getdirmain())
+    transcribed = 0
+    for i, (nt, sender) in enumerate(to_transcribe):
+        orig_time, sender, content = rows_map[(nt, sender)]
+        if not content or not content.endswith(".mp3"):
+            continue
+        fpath = os.path.join(proot, content) if not content.startswith("/") else content
+        if not os.path.exists(fpath):
+            log.info(f"  跳过不存在的文件: {fpath}")
+            continue
+        text = v2t_ollama(fpath, account, orig_time, sender, voice_url)
+        if text and not text.startswith("语音转换失败"):
+            transcribed += 1
+        if (i + 1) % 10 == 0:
+            log.info(f"转录进度: {i+1}/{len(to_transcribe)}")
+
+    log.info(f"batch_transcribe 完成: 发送 {len(to_transcribe)} 条, 成功 {transcribed}")
+    return {"total": len(records), "already": len(already), "sent": len(to_transcribe), "success": transcribed}
 
 
 # %% [markdown]
@@ -451,29 +543,40 @@ def query_v4txt(vfile, dbn):
 
 # %%
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="语音转文字工具")
+    parser.add_argument("--transcribe", action="store_true", help="运行批量转录（扫描 Recording、上传 mp3）")
+    parser.add_argument("--all", action="store_true", help="全量处理（不限条数，默认每次50条）")
+    parser.add_argument("--account", default="白晔峰", help="微信账号")
+    parser.add_argument("--limit", type=int, default=50, help="每次最多处理条数")
+    parser.add_argument("--voice-url", default="https://ollama.strcoder.com/voice", help="voice API 地址")
+    args = parser.parse_args()
+
     if not_IPython():
         log.info(f"运行文件\t{__file__}")
+
     loginstr = (
         "" if (whoami := execcmd("whoami")) and (len(whoami) == 0) else f"{whoami}"
     )
     dbfilename = f"wcitemsall_({getdevicename()})_({loginstr}).db".replace(" ", "_")
     wcdatapath = getdirmain() / "data" / "webchat"
     dbname = os.path.abspath(wcdatapath / dbfilename)
-    # vfile = str(getdirmain()) + "/img/webchat/20241108/蒲苇_241108-213337.mp3"
-    # outtxt = v2t_vosk(vfile)
-    # outtxt = v2t_vosk(vfile, quick=True)
-    vfilelst = [
-        "/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241108-092025.mp3",
-        "/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241109-011903.mp3",
-        "/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241108-213337.mp3",
-        "/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241109-011903.mp3",
-        "/home/baiyefeng/codebase/happyjoplin/img/webchat/20241108/蒲苇_241108-213452.mp3",
-    ]
-    vfilelst_filter = [vfile for vfile in vfilelst if os.path.exists(vfile)]
-    print(vfilelst_filter)
-    # batch_v4txt(vfilelst_filter, dbname)
-    for file in vfilelst_filter:
-        print(f"{file}\t{query_v4txt(file, dbname)}")
+
+    if args.transcribe:
+        run_limit = None if args.all else args.limit
+        log.info(f"开始批量转录: account={args.account}, limit={run_limit}")
+        result = batch_transcribe_voice(dbname, args.account, args.voice_url, limit=run_limit)
+        log.info(f"转录结果: {result}")
+    else:
+        # 默认：显示状态
+        conn = lite.connect(dbname)
+        total = conn.execute(f"SELECT COUNT(*) FROM [wc_{args.account}]").fetchone()[0]
+        recording = conn.execute(
+            f"SELECT COUNT(*) FROM [wc_{args.account}] WHERE type='Recording'"
+        ).fetchone()[0]
+        conn.close()
+        log.info(f"账号 {args.account}: 总记录 {total}, Recording {recording}")
 
     if not_IPython():
         log.info(f"文件\t{__file__}\t运行结束。")
