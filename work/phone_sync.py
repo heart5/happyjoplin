@@ -182,9 +182,10 @@ def push_records(db_path, account, api_url, write_target=2000, full=False):
 
     already_written = 0     # 累计实际写入 hcx 的数量
     already_scanned = 0     # 累计已扫描（发送）的行数
-    fetch_size = min(_FETCH_CAP, write_target)  # 单次 SQL 取多少行
 
     while already_written < write_target:
+        # 还剩多少达标，就取多少行，避免最后一枪大幅超标
+        fetch_size = min(_FETCH_CAP, write_target - already_written)
         conn = sqlite3.connect(db_path)
         rows = conn.execute(
             f"SELECT id, time, send, sender, type, content FROM [{table}] "
