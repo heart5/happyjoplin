@@ -128,11 +128,13 @@ def push_records(db_path, account, api_url, target=2000, full=False):
     total_inserted = 0
     total_processed = 0
 
+    chunk = min(_CHUNK, target)  # 批大小不能超过目标，否则一枪就超了
+
     while total_inserted < target:
         conn = sqlite3.connect(db_path)
         rows = conn.execute(
             f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
-            (since_id, _CHUNK),
+            (since_id, chunk),
         ).fetchall()
         conn.close()
 
@@ -168,7 +170,7 @@ def push_records(db_path, account, api_url, target=2000, full=False):
                 if inserted > 0:
                     total_inserted += inserted
                     print(f"  [{pct:.1f}%] +{inserted} 条写入 (累计 {total_inserted}/{target})")
-                elif total_processed % (_CHUNK * 10) == 0:
+                elif total_processed % (chunk * 10) == 0:
                     print(f"  [{pct:.1f}%] 已处理 {total_processed}/{total_pending}")
             else:
                 print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
