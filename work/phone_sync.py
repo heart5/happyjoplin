@@ -135,7 +135,7 @@ def show_stats(db_path, account, debug_mp3=False):
         print(f"匹配根目录: {found_root}")
         print("---\n")
 
-    # 游标 + 待处理实际行数（COUNT(*)，非稀疏 id 范围）
+    # 游标 + 进度（COUNT(*)，非稀疏 id 范围）
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
     cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
     cursor = load_cursor(cursor_file)
@@ -145,17 +145,19 @@ def show_stats(db_path, account, debug_mp3=False):
     pending = conn.execute(
         f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (cursor,)
     ).fetchone()[0]
-
+    rec_scanned = conn.execute(
+        f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording' AND id <= ?", (cursor,)
+    ).fetchone()[0]
     conn.close()
 
     pct_done = scanned / total * 100 if total > 0 else 0
+    rec_pct = rec_scanned / rec_total * 100 if rec_total > 0 else 0
 
     print(f"=== {account} 数据库概况 ===")
     print(f"总记录:       {total:,}")
     print(f"已同步:       {scanned:,} 行 ({pct_done:.1f}%)")
-    print(f"Recording:    {rec_total:,}")
-    print(f"mp3 存在率:   {exist}/{sample_n} ({rate:.0f}%)")
-    print(f"估算 mp3 数: ~{estimated:,}")
+    print(f"Recording:    {rec_total:,}  (已同步 {rec_scanned:,}, {rec_pct:.1f}%)")
+    print(f"mp3 存在率:   {exist}/{sample_n} ({rate:.0f}%)  估算 ~{estimated:,} 个")
     print(f"游标:         id={cursor:,}")
     print(f"待处理:       {pending:,} 行 (实际)")
     return {"total": total, "recording": rec_total, "mp3_estimate": estimated,
