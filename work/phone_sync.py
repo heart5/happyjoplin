@@ -76,19 +76,7 @@ def save_cursor(cursor_file, last_id):
 # ---------------------------------------------------------------------------
 # 核心功能
 # ---------------------------------------------------------------------------
-def _resolve_path(content, db_path):
-    """将数据库 content 转为绝对路径。相对路径补 happyjoplin 根目录。"""
-    if not content:
-        return ""
-    if content.startswith("/"):
-        return content
-    # 相对路径如 img/webchat/xxx → 从 db_path 推导 happyjoplin 根
-    # db_path 形如 .../happyjoplin/data/webchat/wcitemsall_xxx.db
-    root = os.path.dirname(os.path.dirname(os.path.dirname(db_path)))
-    return os.path.join(root, content)
-
-
-def show_stats(db_path, account):
+def show_stats(db_path, account, debug_mp3=False):
     """展示数据库概况：总记录 / Recording 数 / mp3 存在率估算 / 游标 / 待处理行数。"""
     table = f"wc_{account}"
     conn = sqlite3.connect(db_path)
@@ -96,14 +84,53 @@ def show_stats(db_path, account):
     total = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
     rec_total = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'").fetchone()[0]
 
-    # 抽检 mp3 文件实际存在率
+    # --- mp3 存在率 ---
     samples = conn.execute(
         f"SELECT content FROM [{table}] WHERE type='Recording' LIMIT 500"
     ).fetchall()
-    exist = sum(1 for (c,) in samples if c and os.path.exists(_resolve_path(c, db_path)))
     sample_n = len(samples)
+
+    # 尝试多个根目录
+    roots = [os.path.dirname(os.path.dirname(os.path.dirname(db_path)))]
+    home = os.path.expanduser("~")
+    for d in [f"{home}/storage/shared/happyjoplin",
+              f"{home}/happyjoplin",
+              f"{home}/codebase/happyjoplin"]:
+        if os.path.isdir(d) and d not in roots:
+            roots.append(d)
+
+    exist = 0
+    found_root = None
+    for (c,) in samples:
+        if not c:
+            continue
+        if c.startswith("/"):
+            if os.path.exists(c):
+                exist += 1
+        else:
+            for r in roots:
+                if os.path.exists(os.path.join(r, c)):
+                    exist += 1
+                    found_root = r
+                    break
+
     rate = exist / sample_n * 100 if sample_n else 0
     estimated = rec_total * exist // sample_n if sample_n else 0
+
+    # 调试：打印前几条路径解析
+    if debug_mp3:
+        print("\n--- mp3 路径调试 (前5条) ---")
+        for (c,) in samples[:5]:
+            if not c:
+                continue
+            print(f"\nDB: {c}")
+            if c.startswith("/"):
+                print(f"  abs → {os.path.exists(c)}")
+            else:
+                for r in roots:
+                    print(f"  {r}/... → {os.path.exists(os.path.join(r, c))}")
+        print(f"匹配根目录: {found_root}")
+        print("---\n")
 
     # 游标 + 待处理实际行数（COUNT(*)，非稀疏 id 范围）
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
@@ -230,6 +257,7 @@ if __name__ == "__main__":
     parser.add_argument("--full", action="store_true", help="全量重推（重置游标）")
     parser.add_argument("--db", default="", help="数据库路径")
     parser.add_argument("--stats", action="store_true", help="查看数据库概况")
+    parser.add_argument("--debug-mp3", action="store_true", help="(with --stats) 调试 mp3 路径解析")
     parser.add_argument(
         "--api",
         default="https://ollama.strcoder.com/voice/chat/sync",
@@ -248,6 +276,6 @@ if __name__ == "__main__":
         print(f"自动检测数据库: {db_path}")
 
     if args.stats:
-        show_stats(db_path, args.account)
+        show_stats(db_path, args.account, debug_mp3=args.debug_mp3)
     else:
         push_records(db_path, args.account, args.api, target=args.limit, full=args.full)
