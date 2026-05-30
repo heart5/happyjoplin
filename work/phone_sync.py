@@ -86,7 +86,7 @@ def show_stats(db_path, account, debug_mp3=False):
 
     # --- mp3 存在率 ---
     samples = conn.execute(
-        f"SELECT content FROM [{table}] WHERE type='Recording' LIMIT 500"
+        f"SELECT content FROM [{table}] WHERE type='Recording' ORDER BY id DESC LIMIT 500"
     ).fetchall()
     sample_n = len(samples)
 
