@@ -40,8 +40,9 @@ with pathmagic.context():
     from func.logme import log
 
 # %%
+# 合并库统一集中在 joplinai/data/ 下（hcx 全局数据中心）
 MERGED_DB = str(
-    getdirmain() / "data" / "webchat" / "merged" / "wcitemsall_merged.db"
+    getdirmain().parent / "joplinai" / "data" / "wcitemsall_merged.db"
 )
 
 # tc 端配置
