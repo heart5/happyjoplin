@@ -8,4 +8,15 @@ HAPPYJOPLIN_DIR="$HOME/codebase/happyjoplin"
 
 cd "$HAPPYJOPLIN_DIR" || exit 1
 
+NOW=$(date "+%Y-%m-%d %H:%M:%S")
+echo "========================================"
+echo "phone_sync @ $NOW  host=$(hostname)  user=$(whoami)"
+
+START=$(date +%s)
 python work/phone_sync.py --limit 2000
+RET=$?
+ELAPSED=$(($(date +%s) - START))
+
+echo "结束: exit=$RET 耗时=${ELAPSED}s"
+echo "========================================"
+echo ""
