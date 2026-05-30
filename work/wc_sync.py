@@ -273,7 +273,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
     while already_done < write_target:
         fetch_size = min(_FETCH_CAP, max(write_target - already_done, 20))
         rows = conn.execute(
-            f"SELECT id, time, sender, content FROM [{table}] "
+            f"SELECT id, time, sender, send, content FROM [{table}] "
             f"WHERE type='Recording' AND id > ? ORDER BY id LIMIT ?",
             (cursor_id, fetch_size),
         ).fetchall()
@@ -287,10 +287,10 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
         # 解析 mp3 路径
         mp3_records = []
         for r in rows:
-            rid, msg_time, sender, content = r
+            rid, msg_time, sender, send_val, content = r
             fpath = _resolve_mp3(content, roots)
             if fpath:
-                mp3_records.append((rid, msg_time, sender, fpath))
+                mp3_records.append((rid, msg_time, sender, send_val, fpath))
 
         already_scanned += len(rows)
 
@@ -301,7 +301,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
 
         # 批量查已转录（最多重试2次）
         already_set = set()
-        check_records = [(_normalize_time(t), str(s)) for _, t, s, _ in mp3_records]
+        check_records = [(_normalize_time(t), str(s)) for _, t, s, _, _ in mp3_records]
         for attempt in range(2):
             try:
                 resp = requests.post(
@@ -321,7 +321,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
                     print(f"  ⚠ 查询已转录失败: {e}")
 
         # 逐个上传
-        for rid, msg_time, sender, fpath in mp3_records:
+        for rid, msg_time, sender, send_val, fpath in mp3_records:
             if already_done >= write_target:
                 break
 
@@ -336,7 +336,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
                         resp = requests.post(
                             f"{voice_url}/transcribe",
                             files={"file": (fname, fh)},
-                            data={"account": account, "msg_time": nt, "sender": str(sender), "source": get_device_id()},
+                            data={"account": account, "msg_time": nt, "sender": str(sender), "send": str(send_val), "source": get_device_id()},
                             timeout=120,
                         )
                     if resp.ok:
