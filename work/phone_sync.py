@@ -78,7 +78,7 @@ def push_records(db_path, account, api_url, limit=200, full=False):
         return
 
     rows = conn.execute(
-        f"SELECT time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
+        f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
         (since_id, limit),
     ).fetchall()
     conn.close()
@@ -91,14 +91,15 @@ def push_records(db_path, account, api_url, limit=200, full=False):
     records = []
     for r in rows:
         records.append({
-            "time": str(r[0]) if r[0] else "",
-            "send": bool(r[1]),
-            "sender": str(r[2]) if r[2] else "",
-            "type": str(r[3]) if r[3] else "",
-            "content": str(r[4]) if r[4] else "",
+            "time": str(r[1]) if r[1] else "",
+            "send": bool(r[2]),
+            "sender": str(r[3]) if r[3] else "",
+            "type": str(r[4]) if r[4] else "",
+            "content": str(r[5]) if r[5] else "",
         })
 
-    print(f"推送 {len(records)} 条记录 (id {since_id+1}→{since_id+rows[-1][0] if rows else since_id})")
+    last_id = rows[-1][0]
+    print(f"推送 {len(records)} 条记录 (id {since_id+1}→{last_id})")
 
     # 发送
     try:
@@ -111,15 +112,8 @@ def push_records(db_path, account, api_url, limit=200, full=False):
             data = resp.json()
             inserted = data.get("inserted", 0)
             print(f"  → 成功: 接收 {data.get('received', 0)}, 写入 {inserted}")
-            # 更新游标
-            last_row = rows[-1]
-            # 取最后一条的 id（需要单独查）
-            conn2 = sqlite3.connect(db_path)
-            new_max = conn2.execute(
-                f"SELECT MAX(id) FROM [{table}] WHERE id > ?", (since_id,)
-            ).fetchone()[0] or max_id
-            conn2.close()
-            save_cursor(cursor_file, new_max)
+            # 更新游标（用本次推送的最后一条 id）
+            save_cursor(cursor_file, last_id)
             return {"pushed": len(records), "inserted": inserted}
         else:
             print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
