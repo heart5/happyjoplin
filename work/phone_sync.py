@@ -116,13 +116,19 @@ def push_records(db_path, account, api_url, limit=200, full=False):
     cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
     since_id = 0 if full else load_cursor(cursor_file)
 
+    # 获取总范围用于进度
+    conn = sqlite3.connect(db_path)
+    global_max = conn.execute(f"SELECT MAX(id) FROM [{table}]").fetchone()[0] or 0
+    conn.close()
+    start_id = since_id
+    id_span = global_max - start_id
+
     total_inserted = 0
     total_skipped = 0
 
     while total_inserted < limit:
         conn = sqlite3.connect(db_path)
-        max_id = conn.execute(f"SELECT MAX(id) FROM [{table}]").fetchone()[0] or 0
-        if since_id >= max_id:
+        if since_id >= global_max:
             conn.close()
             break
 
@@ -146,6 +152,7 @@ def push_records(db_path, account, api_url, limit=200, full=False):
             })
 
         last_id = rows[-1][0]
+        pct = (last_id - start_id) / id_span * 100 if id_span > 0 else 100
 
         try:
             resp = requests.post(
@@ -161,11 +168,11 @@ def push_records(db_path, account, api_url, limit=200, full=False):
 
                 if inserted > 0:
                     total_inserted += inserted
-                    print(f"  +{inserted} 条写入 (累计 {total_inserted}/{limit}, id→{last_id})")
+                    print(f"  [{pct:.0f}%] +{inserted} 条写入 (累计 {total_inserted}/{limit})")
                 else:
                     total_skipped += len(records)
                     if total_skipped % (BATCH * 5) == 0:
-                        print(f"  ... 已跳过 {total_skipped} 条重复")
+                        print(f"  [{pct:.0f}%] 已跳过 {total_skipped} 条重复")
             else:
                 print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
                 break
