@@ -139,21 +139,27 @@ def show_stats(db_path, account, debug_mp3=False):
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
     cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
     cursor = load_cursor(cursor_file)
+    scanned = conn.execute(
+        f"SELECT COUNT(*) FROM [{table}] WHERE id <= ?", (cursor,)
+    ).fetchone()[0]
     pending = conn.execute(
         f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (cursor,)
     ).fetchone()[0]
 
     conn.close()
 
+    pct_done = scanned / total * 100 if total > 0 else 0
+
     print(f"=== {account} 数据库概况 ===")
     print(f"总记录:       {total:,}")
+    print(f"已同步:       {scanned:,} 行 ({pct_done:.1f}%)")
     print(f"Recording:    {rec_total:,}")
     print(f"mp3 存在率:   {exist}/{sample_n} ({rate:.0f}%)")
     print(f"估算 mp3 数: ~{estimated:,}")
     print(f"游标:         id={cursor:,}")
     print(f"待处理:       {pending:,} 行 (实际)")
     return {"total": total, "recording": rec_total, "mp3_estimate": estimated,
-            "cursor": cursor, "pending": pending}
+            "cursor": cursor, "scanned": scanned, "pending": pending}
 
 
 def push_records(db_path, account, api_url, write_target=2000, full=False):
