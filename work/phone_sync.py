@@ -76,6 +76,18 @@ def save_cursor(cursor_file, last_id):
 # ---------------------------------------------------------------------------
 # 核心功能
 # ---------------------------------------------------------------------------
+def _resolve_path(content, db_path):
+    """将数据库 content 转为绝对路径。相对路径补 happyjoplin 根目录。"""
+    if not content:
+        return ""
+    if content.startswith("/"):
+        return content
+    # 相对路径如 img/webchat/xxx → 从 db_path 推导 happyjoplin 根
+    # db_path 形如 .../happyjoplin/data/webchat/wcitemsall_xxx.db
+    root = os.path.dirname(os.path.dirname(os.path.dirname(db_path)))
+    return os.path.join(root, content)
+
+
 def show_stats(db_path, account):
     """展示数据库概况：总记录 / Recording 数 / mp3 存在率估算 / 游标 / 待处理行数。"""
     table = f"wc_{account}"
@@ -88,7 +100,7 @@ def show_stats(db_path, account):
     samples = conn.execute(
         f"SELECT content FROM [{table}] WHERE type='Recording' LIMIT 500"
     ).fetchall()
-    exist = sum(1 for (c,) in samples if c and os.path.exists(c))
+    exist = sum(1 for (c,) in samples if c and os.path.exists(_resolve_path(c, db_path)))
     sample_n = len(samples)
     rate = exist / sample_n * 100 if sample_n else 0
     estimated = rec_total * exist // sample_n if sample_n else 0
