@@ -9,7 +9,9 @@
     python work/phone_sync.py                          # 增量推送（自动跳过重复）
     python work/phone_sync.py --full                   # 全量重推（重置游标）
     python work/phone_sync.py --stats                  # 查看数据库概况
+    python work/phone_sync.py --stats --debug-mp3      # 查看概况 + mp3 路径调试
     python work/phone_sync.py --limit 10000            # 每轮写满10000条后停
+    python work/phone_sync.py --transcribe --limit 50  # 上传 mp3 至 hcx 语音转文字
 """
 
 import json
@@ -120,9 +122,9 @@ def show_stats(db_path, account, debug_mp3=False):
     rate = exist / sample_n * 100 if sample_n else 0
     estimated = rec_total * exist // sample_n if sample_n else 0
 
-    # 调试：打印前几条路径解析
+    # 调试：前几条路径解析 + 4-6月专项检查
     if debug_mp3:
-        print("\n--- mp3 路径调试 (前5条) ---")
+        print("\n--- mp3 路径调试 (前5条最新) ---")
         for (c,) in samples[:5]:
             if not c:
                 continue
@@ -133,6 +135,17 @@ def show_stats(db_path, account, debug_mp3=False):
                 for r in roots:
                     print(f"  {r}/... → {os.path.exists(os.path.join(r, c))}")
         print(f"匹配根目录: {found_root}")
+
+        # 4-6月旧语音专项检查（手机独有数据的日期范围）
+        old_samples = conn.execute(
+            f"SELECT content FROM [{table}] WHERE type='Recording' "
+            f"AND (content LIKE 'img/webchat/202504%' OR content LIKE 'img/webchat/202505%' OR content LIKE 'img/webchat/202506%') "
+            f"ORDER BY id DESC LIMIT 100"
+        ).fetchall()
+        old_exist = sum(1 for (c,) in old_samples if c and any(
+            os.path.exists(os.path.join(r, c)) for r in roots
+        ))
+        print(f"\n4-6月旧语音抽查100条: {old_exist}/{len(old_samples)} 存在")
         print("---\n")
 
     # 游标 + 进度（COUNT(*)，非稀疏 id 范围）
@@ -162,6 +175,169 @@ def show_stats(db_path, account, debug_mp3=False):
     print(f"待处理:       {pending:,} 行 (实际)")
     return {"total": total, "recording": rec_total, "mp3_estimate": estimated,
             "cursor": cursor, "scanned": scanned, "pending": pending}
+
+
+def _normalize_time(val):
+    """将各种时间值统一转为 unix 时间戳字符串，匹配 v4txt_v2.msg_time。"""
+    if val is None:
+        return ""
+    if isinstance(val, (int, float)):
+        return str(int(val))
+    try:
+        return str(int(val.timestamp()))
+    except Exception:
+        pass
+    if isinstance(val, str):
+        try:
+            return str(int(float(val)))
+        except (ValueError, OverflowError):
+            pass
+    return str(val)
+
+
+def _get_mp3_roots(db_path):
+    """获取手机端 mp3 文件的可能根目录列表。"""
+    roots = [os.path.dirname(os.path.dirname(os.path.dirname(db_path)))]
+    home = os.path.expanduser("~")
+    roots += [
+        f"{home}/storage/shared/happyjoplin",
+        f"{home}/storage/shared/0code/happyjoplin",
+        "/storage/emulated/0/happyjoplin",
+        "/storage/emulated/0/0code/happyjoplin",
+        "/sdcard/happyjoplin",
+        "/sdcard/0code/happyjoplin",
+    ]
+    return roots
+
+
+def _resolve_mp3(content, roots):
+    """解析 mp3 相对路径为绝对路径，文件不存在返回 None。"""
+    if not content or not content.endswith(".mp3"):
+        return None
+    if content.startswith("/"):
+        return content if os.path.exists(content) else None
+    for r in roots:
+        fpath = os.path.join(r, content)
+        if os.path.exists(fpath):
+            return fpath
+    return None
+
+
+def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/voice", write_target=50):
+    """上传手机端 mp3 至 hcx 语音转文字。
+
+    1. 扫描 Recording 记录，解析 mp3 文件路径
+    2. 批量查 hcx 已转录记录，跳过
+    3. 逐个上传未转录 mp3 至 /transcribe
+    4. 本地 JSON 游标记录进度
+
+    Args:
+        write_target: 实际转录成功多少条后停（非扫描数）
+    """
+    table = f"wc_{account}"
+    if not os.path.exists(db_path):
+        print(f"数据库不存在: {db_path}")
+        return
+
+    cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
+    cursor_file = os.path.join(cursor_dir, f".phone_transcribe_cursor_{account}.json")
+    cursor_id = load_cursor(cursor_file)
+
+    roots = _get_mp3_roots(db_path)
+
+    conn = sqlite3.connect(db_path)
+    total_pending = conn.execute(
+        f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording' AND id > ?", (cursor_id,)
+    ).fetchone()[0]
+    print(f"待转录 Recording: {total_pending} 条 (游标 id={cursor_id})")
+
+    already_done = 0
+    already_scanned = 0
+
+    while already_done < write_target:
+        fetch_size = min(_FETCH_CAP, (write_target - already_done) * 3)  # 留余量，因为有文件缺失/已转录跳过
+        rows = conn.execute(
+            f"SELECT id, time, sender, content FROM [{table}] "
+            f"WHERE type='Recording' AND id > ? ORDER BY id LIMIT ?",
+            (cursor_id, fetch_size),
+        ).fetchall()
+
+        if not rows:
+            print("无更多 Recording 记录")
+            break
+
+        last_id = rows[-1][0]
+
+        # 解析 mp3 路径
+        mp3_records = []
+        for r in rows:
+            rid, msg_time, sender, content = r
+            fpath = _resolve_mp3(content, roots)
+            if fpath:
+                mp3_records.append((rid, msg_time, sender, fpath))
+
+        already_scanned += len(rows)
+
+        if not mp3_records:
+            save_cursor(cursor_file, last_id)
+            cursor_id = last_id
+            continue
+
+        # 批量查已转录
+        already_set = set()
+        try:
+            check_records = [(_normalize_time(t), str(s)) for _, t, s, _ in mp3_records]
+            resp = requests.post(
+                f"{voice_url}/transcriptions/batch",
+                json={"account": account, "records": [[t, s] for t, s in check_records]},
+                timeout=30,
+            )
+            if resp.ok:
+                for key in resp.json().get("results", {}):
+                    t, s = key.split("#", 1)
+                    already_set.add((t, s))
+        except Exception as e:
+            print(f"  ⚠ 查询已转录失败: {e}")
+
+        # 逐个上传
+        for rid, msg_time, sender, fpath in mp3_records:
+            if already_done >= write_target:
+                break
+
+            nt = _normalize_time(msg_time)
+            if (nt, str(sender)) in already_set:
+                continue
+
+            try:
+                fname = os.path.basename(fpath)
+                with open(fpath, "rb") as fh:
+                    resp = requests.post(
+                        f"{voice_url}/transcribe",
+                        files={"file": (fname, fh)},
+                        data={"account": account, "msg_time": nt, "sender": str(sender), "source": get_device_id()},
+                        timeout=120,
+                    )
+                if resp.ok:
+                    data = resp.json()
+                    text = data.get("text", "")
+                    if text:
+                        already_done += 1
+                        print(f"  ✓ [{already_done}/{write_target}] {fname} → {text[:60]}...")
+                    else:
+                        print(f"  ⚠ [{already_done}/{write_target}] {fname} 转录为空")
+                        already_done += 1  # 空结果也算已处理
+                else:
+                    print(f"  ✗ {fname}: HTTP {resp.status_code}")
+            except Exception as e:
+                print(f"  ✗ {fname}: {e}")
+
+        save_cursor(cursor_file, last_id)
+        cursor_id = last_id
+
+    conn.close()
+    pct = already_scanned / total_pending * 100 if total_pending > 0 else 100
+    print(f"转录完成: 成功 {already_done} 条, 扫描 {already_scanned}/{total_pending} ({pct:.1f}%)")
+    return {"transcribed": already_done, "scanned": already_scanned}
 
 
 def push_records(db_path, account, api_url, write_target=2000, record_type=None, full=False):
@@ -294,6 +470,12 @@ if __name__ == "__main__":
         default="https://ollama.strcoder.com/voice/chat/sync",
         help="hcx 推送接口",
     )
+    parser.add_argument("--transcribe", action="store_true", help="上传 mp3 至 hcx 语音转文字")
+    parser.add_argument(
+        "--voice-url",
+        default="https://ollama.strcoder.com/voice",
+        help="hcx voice API 地址",
+    )
     args = parser.parse_args()
 
     # 数据库路径
@@ -308,6 +490,8 @@ if __name__ == "__main__":
 
     if args.stats:
         show_stats(db_path, args.account, debug_mp3=args.debug_mp3)
+    elif args.transcribe:
+        transcribe_records(db_path, args.account, voice_url=args.voice_url, write_target=args.limit)
     else:
         push_records(db_path, args.account, args.api, write_target=args.limit,
                      record_type=args.record_type, full=args.full)
