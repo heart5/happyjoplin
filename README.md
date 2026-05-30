@@ -31,7 +31,7 @@ HappyJoplin 是一个以 Joplin 笔记应用为中心枢纽的个人自动化系
 | 位置追踪 | `life/footstrack.py` | GPS 采集、轨迹图、停留点分析 |
 | 主机配置 | `etc/hostconfig.py` | 多设备配置收集、对比、Joplin 同步 |
 | IP 监控 | `etc/ipupdate.py` | 设备 IP/WiFi 变化检测与记录 |
-| 空闲内存 | `etc/freemem.py` | 内存占用趋势监测 |
+
 | 语音转文字 | `etc/voice2txt.py` | 微信语音消息转文本 |
 | 日志上云 | `etc/log2note.py` | 本地日志推送到 Joplin 笔记 |
 
