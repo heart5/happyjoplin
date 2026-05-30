@@ -52,6 +52,11 @@ def get_device_id():
             return model.replace(" ", "")
     except Exception:
         pass
+    # Linux 回退
+    try:
+        return os.uname().nodename.split(".")[0]
+    except Exception:
+        pass
     return "phone"
 
 
