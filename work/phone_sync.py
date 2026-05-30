@@ -41,6 +41,15 @@ def get_device_id():
         val = os.environ.get(env, "")
         if val:
             return val
+    try:
+        import subprocess
+        model = subprocess.run(
+            ["getprop", "ro.product.model"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        if model:
+            return model.replace(" ", "")
+    except Exception:
+        pass
     return "phone"
 
 
