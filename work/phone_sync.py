@@ -12,6 +12,8 @@
     python work/phone_sync.py --stats --debug-mp3      # 查看概况 + mp3 路径调试
     python work/phone_sync.py --limit 10000            # 每轮写满10000条后停
     python work/phone_sync.py --transcribe --limit 50  # 上传 mp3 至 hcx 语音转文字
+    python work/phone_sync.py --clean --dry-run        # 查看可清理的已转录 mp3
+    python work/phone_sync.py --clean                  # 删除本地已转录 mp3
 """
 
 import json
@@ -360,6 +362,100 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
     return {"transcribed": already_done, "scanned": already_scanned}
 
 
+def clean_transcribed_mp3(db_path, account, voice_url="https://ollama.strcoder.com/voice", dry_run=True):
+    """删除本地已转录的 mp3 文件。
+
+    1. 扫描 Recording 记录，找到 mp3 存在的
+    2. 批量查 hcx /transcriptions/batch 确认已转录
+    3. dry_run=True 时只报告，不删除
+
+    Returns: {"scanned": N, "hit": N, "deleted": N, "missing": N, "freed_mb": N}
+    """
+    table = f"wc_{account}"
+    if not os.path.exists(db_path):
+        print(f"数据库不存在: {db_path}")
+        return
+
+    roots = _get_mp3_roots(db_path)
+    conn = sqlite3.connect(db_path)
+
+    # 查所有 Recording 记录数
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'"
+    ).fetchone()[0]
+    print(f"Recording 总数: {total:,}")
+
+    scanned, hit, deleted, missing, freed = 0, 0, 0, 0, 0
+    batch_size = 200
+
+    offset_id = 0
+    while True:
+        rows = conn.execute(
+            f"SELECT id, time, sender, content FROM [{table}] "
+            f"WHERE type='Recording' AND id > ? ORDER BY id LIMIT ?",
+            (offset_id, batch_size),
+        ).fetchall()
+
+        if not rows:
+            break
+
+        # 解析 mp3 路径
+        mp3_map = {}
+        for rid, msg_time, sender, content in rows:
+            fpath = _resolve_mp3(content, roots)
+            if fpath:
+                mp3_map[(rid, msg_time, sender)] = fpath
+
+        scanned += len(rows)
+        offset_id = rows[-1][0]
+
+        if not mp3_map:
+            continue
+
+        # 批量查已转录
+        transcribed = set()
+        try:
+            check_records = [(_normalize_time(t), str(s)) for _, t, s in mp3_map]
+            resp = requests.post(
+                f"{voice_url}/transcriptions/batch",
+                json={"account": account, "records": [[t, s] for t, s in check_records]},
+                timeout=60,
+            )
+            if resp.ok:
+                for key in resp.json().get("results", {}):
+                    t, s = key.split("#", 1)
+                    transcribed.add((t, s))
+        except Exception as e:
+            print(f"  ⚠ 查询已转录失败: {e}")
+
+        # 删除命中文件
+        for (rid, msg_time, sender), fpath in mp3_map.items():
+            nt = _normalize_time(msg_time)
+            if (nt, str(sender)) not in transcribed:
+                continue
+            hit += 1
+            if os.path.exists(fpath):
+                fsize_mb = os.path.getsize(fpath) / (1024 * 1024)
+                if not dry_run:
+                    os.remove(fpath)
+                deleted += 1
+                freed += fsize_mb
+            else:
+                missing += 1
+
+        pct = scanned / total * 100 if total > 0 else 100
+        action = "可删" if dry_run else "已删"
+        print(f"  [{pct:.1f}%] {action} {deleted} 个, 已命中 {hit}, 缺失 {missing}, 释放 {freed:.1f}MB")
+
+    conn.close()
+
+    if dry_run:
+        print(f"\n[DRY-RUN] 扫描 {scanned:,} 条, 命中转录 {hit} 条, 可删除 {deleted} 个文件 ({freed:.1f}MB), 已缺失 {missing}")
+    else:
+        print(f"\n清理完成: 删除 {deleted} 个文件, 释放 {freed:.1f}MB, 已缺失 {missing}")
+    return {"scanned": scanned, "hit": hit, "deleted": deleted, "missing": missing, "freed_mb": round(freed, 1)}
+
+
 def push_records(db_path, account, api_url, write_target=2000, record_type=None, full=False):
     """推送增量记录到 hcx。自动跳过重复，累计「实际写入」write_target 条后停。
 
@@ -498,6 +594,8 @@ if __name__ == "__main__":
         help="hcx 推送接口",
     )
     parser.add_argument("--transcribe", action="store_true", help="上传 mp3 至 hcx 语音转文字")
+    parser.add_argument("--clean", action="store_true", help="删除本地已转录的 mp3 文件")
+    parser.add_argument("--dry-run", action="store_true", help="(with --clean) 仅报告不删除")
     parser.add_argument(
         "--voice-url",
         default="https://ollama.strcoder.com/voice",
@@ -519,6 +617,8 @@ if __name__ == "__main__":
         show_stats(db_path, args.account, debug_mp3=args.debug_mp3)
     elif args.transcribe:
         transcribe_records(db_path, args.account, voice_url=args.voice_url, write_target=args.limit)
+    elif args.clean:
+        clean_transcribed_mp3(db_path, args.account, voice_url=args.voice_url, dry_run=args.dry_run)
     else:
         push_records(db_path, args.account, args.api, write_target=args.limit,
                      record_type=args.record_type, full=args.full)
