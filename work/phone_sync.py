@@ -421,19 +421,26 @@ def push_records(db_path, account, api_url, write_target=2000, record_type=None,
         already_scanned += len(records)
         pct = already_scanned / total_pending * 100 if total_pending > 0 else 100
 
-        # HTTP 推送
-        try:
-            resp = requests.post(
-                api_url,
-                json={"account": account, "records": records, "source": get_device_id()},
-                timeout=120,
-            )
-        except Exception as e:
-            print(f"  → 推送失败: {e}")
-            break
-
-        if not resp.ok:
-            print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
+        # HTTP 推送（最多重试3次）
+        for attempt in range(3):
+            try:
+                resp = requests.post(
+                    api_url,
+                    json={"account": account, "records": records, "source": get_device_id()},
+                    timeout=120,
+                )
+                if resp.ok:
+                    break
+                print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:
+                print(f"  → 推送失败 (尝试{attempt+1}/3): {e}")
+                if attempt < 2:
+                    wait = (attempt + 1) * 5
+                    print(f"     等待{wait}s后重试...")
+                    time.sleep(wait)
+        else:
+            # 3次全部失败，保留游标不推进，下次从断点继续
+            print("  → 3次重试均失败，游标未推进，下次从断点继续")
             break
 
         data = resp.json()
