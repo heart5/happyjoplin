@@ -9,7 +9,7 @@
     python work/phone_sync.py                          # 增量推送（自动跳过重复）
     python work/phone_sync.py --full                   # 全量重推（重置游标）
     python work/phone_sync.py --stats                  # 查看数据库概况
-    python work/phone_sync.py --account 白晔峰 --limit 10000
+    python work/phone_sync.py --limit 10000            # 每轮写满10000条后停
 """
 
 import json
@@ -24,7 +24,15 @@ except ImportError:
     print("需要安装 requests: pip install requests")
     sys.exit(1)
 
+# ---------------------------------------------------------------------------
+# 内部常量
+# ---------------------------------------------------------------------------
+_FETCH_CAP = 2000  # 单次 HTTP 最多取多少行（手机内存/网络平衡点）
 
+
+# ---------------------------------------------------------------------------
+# 工具函数
+# ---------------------------------------------------------------------------
 def get_device_id():
     """获取设备标识，用于游标文件和上报。"""
     for env in ["HOSTNAME", "USER"]:
@@ -50,39 +58,6 @@ def find_db_path():
     return None
 
 
-def show_stats(db_path, account):
-    """展示数据库概况：总记录 / Recording 数 / mp3 存在率估算。"""
-    table = f"wc_{account}"
-    conn = sqlite3.connect(db_path)
-    total = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
-    rec_total = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'").fetchone()[0]
-
-    # 抽样检查 mp3 文件实际存在率
-    samples = conn.execute(
-        f"SELECT content FROM [{table}] WHERE type='Recording' LIMIT 500"
-    ).fetchall()
-    exist = sum(1 for (c,) in samples if c and os.path.exists(c))
-    sample_n = len(samples)
-    rate = exist / sample_n * 100 if sample_n else 0
-    estimated = rec_total * exist // sample_n if sample_n else 0
-
-    # 游标
-    cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
-    cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
-    cursor = load_cursor(cursor_file)
-    max_id = conn.execute(f"SELECT MAX(id) FROM [{table}]").fetchone()[0] or 0
-    conn.close()
-
-    print(f"=== {account} 数据库概况 ===")
-    print(f"总记录:       {total:,}")
-    print(f"Recording:    {rec_total:,}")
-    print(f"mp3 存在率:   {exist}/{sample_n} ({rate:.0f}%)")
-    print(f"估算 mp3 数: ~{estimated:,}")
-    print(f"同步游标:     {cursor:,} / 最大 id {max_id:,}")
-    print(f"待同步:       {max_id - cursor:,} 条")
-    return {"total": total, "recording": rec_total, "mp3_estimate": estimated, "cursor": cursor, "pending": max_id - cursor}
-
-
 def load_cursor(cursor_file):
     """读取游标文件。"""
     if os.path.exists(cursor_file):
@@ -98,15 +73,52 @@ def save_cursor(cursor_file, last_id):
         json.dump({"last_id": last_id, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
 
 
-# 每次 SQL SELECT 取多少行发 HTTP，内部常量，与 --limit 无关
-_CHUNK = 2000
+# ---------------------------------------------------------------------------
+# 核心功能
+# ---------------------------------------------------------------------------
+def show_stats(db_path, account):
+    """展示数据库概况：总记录 / Recording 数 / mp3 存在率估算 / 游标 / 待处理行数。"""
+    table = f"wc_{account}"
+    conn = sqlite3.connect(db_path)
+
+    total = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
+    rec_total = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'").fetchone()[0]
+
+    # 抽检 mp3 文件实际存在率
+    samples = conn.execute(
+        f"SELECT content FROM [{table}] WHERE type='Recording' LIMIT 500"
+    ).fetchall()
+    exist = sum(1 for (c,) in samples if c and os.path.exists(c))
+    sample_n = len(samples)
+    rate = exist / sample_n * 100 if sample_n else 0
+    estimated = rec_total * exist // sample_n if sample_n else 0
+
+    # 游标 + 待处理实际行数（COUNT(*)，非稀疏 id 范围）
+    cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
+    cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
+    cursor = load_cursor(cursor_file)
+    pending = conn.execute(
+        f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (cursor,)
+    ).fetchone()[0]
+
+    conn.close()
+
+    print(f"=== {account} 数据库概况 ===")
+    print(f"总记录:       {total:,}")
+    print(f"Recording:    {rec_total:,}")
+    print(f"mp3 存在率:   {exist}/{sample_n} ({rate:.0f}%)")
+    print(f"估算 mp3 数: ~{estimated:,}")
+    print(f"游标:         id={cursor:,}")
+    print(f"待处理:       {pending:,} 行 (实际)")
+    return {"total": total, "recording": rec_total, "mp3_estimate": estimated,
+            "cursor": cursor, "pending": pending}
 
 
 def push_records(db_path, account, api_url, target=2000, full=False):
-    """推送增量记录到 hcx。自动跳过重复区间，累计写入 target 条后停。
+    """推送增量记录到 hcx。自动跳过重复，累计实际写入 target 条后停。
 
     Args:
-        target: 实际写入 hcx 的目标条数（--limit 传入）
+        target: 实际写入目标条数（--limit 传入）
         full: True=重置游标全量推送
     """
     table = f"wc_{account}"
@@ -114,33 +126,35 @@ def push_records(db_path, account, api_url, target=2000, full=False):
         print(f"数据库不存在: {db_path}")
         return
 
+    # --- 游标 ---
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
     cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
-    since_id = 0 if full else load_cursor(cursor_file)
+    cursor = 0 if full else load_cursor(cursor_file)
 
-    # 获取实际待处理行数用于真实进度
+    # --- 待处理行数（真实分母） ---
     conn = sqlite3.connect(db_path)
     total_pending = conn.execute(
-        f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (since_id,)
+        f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (cursor,)
     ).fetchone()[0]
     conn.close()
 
-    total_inserted = 0
-    total_processed = 0
+    written = 0     # 累计实际写入 hcx 的条数
+    sent = 0        # 累计已发送的行数
+    batch = min(_FETCH_CAP, target)  # 每轮取行上限
 
-    chunk = min(_CHUNK, target)  # 批大小不能超过目标，否则一枪就超了
-
-    while total_inserted < target:
+    while written < target:
         conn = sqlite3.connect(db_path)
         rows = conn.execute(
-            f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
-            (since_id, chunk),
+            f"SELECT id, time, send, sender, type, content FROM [{table}] "
+            f"WHERE id > ? ORDER BY id LIMIT ?",
+            (cursor, batch),
         ).fetchall()
         conn.close()
 
         if not rows:
             break
 
+        # 组装 JSON
         records = []
         for r in rows:
             records.append({
@@ -152,52 +166,58 @@ def push_records(db_path, account, api_url, target=2000, full=False):
             })
 
         last_id = rows[-1][0]
-        total_processed += len(records)
-        pct = total_processed / total_pending * 100 if total_pending > 0 else 100
+        sent += len(records)
+        pct = sent / total_pending * 100 if total_pending > 0 else 100
 
+        # HTTP 推送
         try:
             resp = requests.post(
                 api_url,
                 json={"account": account, "records": records, "source": get_device_id()},
                 timeout=120,
             )
-            if resp.ok:
-                data = resp.json()
-                inserted = data.get("inserted", 0)
-                save_cursor(cursor_file, last_id)
-                since_id = last_id
-
-                if inserted > 0:
-                    total_inserted += inserted
-                    print(f"  [{pct:.1f}%] +{inserted} 条写入 (累计 {total_inserted}/{target})")
-                elif total_processed % (chunk * 10) == 0:
-                    print(f"  [{pct:.1f}%] 已处理 {total_processed}/{total_pending}")
-            else:
-                print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
-                break
         except Exception as e:
             print(f"  → 推送失败: {e}")
             break
 
-    if total_inserted == 0:
-        if total_processed > 0:
-            print(f"无新数据，已处理 {total_processed} 条均为重复")
+        if not resp.ok:
+            print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
+            break
+
+        data = resp.json()
+        inserted = data.get("inserted", 0)
+        save_cursor(cursor_file, last_id)
+        cursor = last_id
+
+        if inserted > 0:
+            written += inserted
+            print(f"  [{pct:.1f}%] +{inserted} 条写入 (累计 {written}/{target})")
+        elif sent % (batch * 10) == 0:
+            print(f"  [{pct:.1f}%] 重复跳过，已扫描 {sent}/{total_pending}")
+
+    # --- 最终报告 ---
+    if written == 0:
+        if sent > 0:
+            print(f"本轮无新数据，扫描 {sent} 行均为重复")
         else:
             print("无新数据")
     else:
-        print(f"完成: 写入 {total_inserted} 条，已处理 {total_processed}/{total_pending}")
-    return {"inserted": total_inserted, "processed": total_processed}
+        print(f"完成: 写入 {written} 条，扫描 {sent}/{total_pending} 行")
+    return {"written": written, "scanned": sent}
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="手机端聊天记录推送同步")
     parser.add_argument("--account", default="白晔峰", help="微信账号")
-    parser.add_argument("--limit", type=int, default=2000, help="每轮至少写入多少条后停（目标值）")
-    parser.add_argument("--full", action="store_true", help="全量重推")
+    parser.add_argument("--limit", type=int, default=2000, help="每轮实际写入目标条数")
+    parser.add_argument("--full", action="store_true", help="全量重推（重置游标）")
     parser.add_argument("--db", default="", help="数据库路径")
-    parser.add_argument("--stats", action="store_true", help="展示数据库概况")
+    parser.add_argument("--stats", action="store_true", help="查看数据库概况")
     parser.add_argument(
         "--api",
         default="https://ollama.strcoder.com/voice/chat/sync",
