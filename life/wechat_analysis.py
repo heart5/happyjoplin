@@ -23,7 +23,6 @@ import re
 import sqlite3 as lite
 from collections import Counter
 from datetime import datetime
-from pathlib import Path
 
 import arrow
 import matplotlib.pyplot as plt
@@ -33,33 +32,15 @@ import pandas as pd
 import pathmagic
 
 with pathmagic.context():
+    from etc.voice2txt import apply_transcription
+    from func.first import getdirmain
     from func.getid import getdevicename
-    from etc.voice2txt import batch_v4txt, query_v4txt
-    from func.filedatafunc import getfilemtime as getfltime
-    from func.configpr import getcfpoptionvalue, setcfpoptionvalue
-    from func.first import getdirmain, touchfilepath2depth
-    from func.jpfuncs import (
-        createnote,
-        getapi,
-        getinivaluefromcloud,
-        getnote,
-        getreslst,
-        searchnotebook,
-        searchnotes,
-        updatenote_body,
-        updatenote_title,
-    )
     from func.litetools import (
-        clean4timecl,
-        compact_sqlite3_db,
         convert_intstr_datetime,
-        ifnotcreate,
-        showtablesindb,
     )
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
-    from life.wc2note import items_to_df
 
 
 # %% [markdown]
@@ -103,12 +84,7 @@ class WeChatAnalysis:
             return None
         # 处理time字段存在int和str两种数据类型的可能
         outdf.loc[:, "time"] = outdf["time"].apply(convert_intstr_datetime)
-        # 处理录音的音频文件，转换为文字输出
-        outdf.loc[:, "content"] = outdf["content"].apply(
-            lambda x: query_v4txt(x, self.db_path)
-            if isinstance(x, str) and x.endswith(".mp3") and os.path.exists(x)
-            else x
-        )
+        outdf = apply_transcription(outdf, self.name)
         # 重新设置index，用读取的id列
         outdf.set_index("id", inplace=True)
         log.info(
@@ -143,11 +119,9 @@ class WeChatAnalysis:
             else x
         )
         outdf = df[df["content"].apply(lambda x: os.path.exists(x))]
-        mp3s = outdf["content"].unique().tolist()
         log.info(
-            f"读取的MP3数据条目有【{df.shape[0]}】条，本运行环境实际存在的数据条目为【{outdf.shape[0]}】条，有效的文件数量为{len(mp3s)}个。"
+            f"读取的MP3数据条目有【{df.shape[0]}】条，本运行环境实际存在的数据条目为【{outdf.shape[0]}】条。"
         )
-        batch_v4txt(mp3s, self.db_path)
         self.data_mp3 = outdf
 
     @timethis
@@ -281,8 +255,7 @@ class WeChatAnalysis:
 
 # %%
 def group_analysis(sdf, from_date_str):
-    """
-    分析传入的群信息，带起始日期字符串
+    """分析传入的群信息，带起始日期字符串
     """
     c1sdf = sdf.drop_duplicates()
     df = c1sdf[~c1sdf.content.isnull()]

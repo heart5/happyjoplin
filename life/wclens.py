@@ -35,6 +35,7 @@ from wordcloud import WordCloud
 import pathmagic
 
 with pathmagic.context():
+    from etc.voice2txt import apply_transcription
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.first import getdirmain
     from func.getid import getdevicename
@@ -94,6 +95,7 @@ def all2df(name, wcdatapath):
         )
         log.critical(f"合并数据记录共有{items_all_num}条，去重后有效数据有{dfdone.shape[0]}条！")
     dfcombine.drop_duplicates(inplace=True)
+    dfcombine = apply_transcription(dfcombine, name)
     print(dfcombine.dtypes)
     dfcombine.sort_values(["time"], ascending=False, inplace=True)
     return dfcombine

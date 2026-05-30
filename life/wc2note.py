@@ -37,6 +37,7 @@ import pandas as pd
 import pathmagic
 
 with pathmagic.context():
+    from etc.voice2txt import apply_transcription
     from func.configpr import getcfpoptionvalue, setcfpoptionvalue
     from func.filedatafunc import getfilemtime as getfltime
     from func.first import getdirmain, touchfilepath2depth
@@ -615,6 +616,7 @@ def all_df_desc_to_note(wc_path: Path) -> dict:
                 columns=["id", "time", "send", "sender", "type", "content"],
             )
             final_df["send"] = final_df["send"].astype(bool)
+            final_df = apply_transcription(final_df, name)
             resultdict[name] = final_df
             log.info(f"{name}\t{final_df.shape[0]}")
 

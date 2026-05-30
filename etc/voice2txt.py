@@ -21,6 +21,9 @@ import json
 import os
 import sqlite3 as lite
 import wave
+from datetime import datetime as _datetime
+
+import pandas as pd
 
 # import vosk
 # from pydub import AudioSegment
@@ -184,9 +187,10 @@ def apply_transcription(df, account):
     if not recording_mask.any():
         return df
 
-    # 收集需要查询的 (time, sender) 对
+    # 收集需要查询的 (time, sender) 对，time 统一转为 unix 时间戳字符串
     recs = df.loc[recording_mask, ["time", "sender"]].drop_duplicates()
-    records = list(zip(recs["time"], recs["sender"]))
+    records = [(_normalize_time(t), s) for t, s in zip(recs["time"], recs["sender"])]
+    records = [(t, s) for t, s in records if t]
 
     if not records:
         return df
@@ -195,8 +199,9 @@ def apply_transcription(df, account):
     hits = _query_v4txt_v2_local(account, records)
 
     # 改造命中行
+    df_time_norm = df["time"].apply(_normalize_time)
     for (msg_time, sender), text in hits.items():
-        mask = recording_mask & (df["time"] == msg_time) & (df["sender"] == sender)
+        mask = recording_mask & (df_time_norm == msg_time) & (df["sender"] == sender)
         df.loc[mask, "type"] = "VoiceText"
         df.loc[mask, "content"] = text
 
@@ -204,8 +209,36 @@ def apply_transcription(df, account):
     return df
 
 
+def _normalize_time(val):
+    """将各种时间值统一转为 unix 时间戳字符串，用于匹配 v4txt_v2.msg_time。"""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return ""
+    if isinstance(val, (int, float)):
+        return str(int(val))
+    # datetime / Timestamp
+    try:
+        return str(int(val.timestamp()))
+    except Exception:
+        pass
+    # 字符串：优先当数字时间戳，再尝试常见日期格式
+    if isinstance(val, str):
+        try:
+            return str(int(float(val)))
+        except (ValueError, OverflowError):
+            pass
+        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"]:
+            try:
+                return str(int(_datetime.strptime(val[:19], fmt).timestamp()))
+            except (ValueError, OverflowError):
+                continue
+    return str(val)
+
+
 def _query_v4txt_v2_local(account, records):
-    """本地查询 v4txt_v2（hcx 上直连数据库）。"""
+    """本地查询 v4txt_v2（hcx 上直连数据库）。
+
+    records 中 time 已由 _normalize_time 转为 unix 时间戳字符串。
+    """
     db_path = "/data/codebase/joplinai/data/voice_transcriptions.db"
     if not os.path.exists(db_path):
         log.warning("voice_transcriptions.db 不存在，跳过转录关联")
@@ -216,7 +249,7 @@ def _query_v4txt_v2_local(account, records):
         for msg_time, sender in records:
             row = conn.execute(
                 "SELECT text FROM v4txt_v2 WHERE account=? AND msg_time=? AND sender=?",
-                (account, str(msg_time), sender),
+                (account, msg_time, sender),
             ).fetchone()
             if row:
                 hits[(msg_time, sender)] = row[0]
