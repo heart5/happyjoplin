@@ -292,21 +292,26 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
             cursor_id = last_id
             continue
 
-        # 批量查已转录
+        # 批量查已转录（最多重试2次）
         already_set = set()
-        try:
-            check_records = [(_normalize_time(t), str(s)) for _, t, s, _ in mp3_records]
-            resp = requests.post(
-                f"{voice_url}/transcriptions/batch",
-                json={"account": account, "records": [[t, s] for t, s in check_records]},
-                timeout=30,
-            )
-            if resp.ok:
-                for key in resp.json().get("results", {}):
-                    t, s = key.split("#", 1)
-                    already_set.add((t, s))
-        except Exception as e:
-            print(f"  ⚠ 查询已转录失败: {e}")
+        check_records = [(_normalize_time(t), str(s)) for _, t, s, _ in mp3_records]
+        for attempt in range(2):
+            try:
+                resp = requests.post(
+                    f"{voice_url}/transcriptions/batch",
+                    json={"account": account, "records": [[t, s] for t, s in check_records]},
+                    timeout=30,
+                )
+                if resp.ok:
+                    for key in resp.json().get("results", {}):
+                        t, s = key.split("#", 1)
+                        already_set.add((t, s))
+                    break
+            except Exception as e:
+                if attempt == 0:
+                    time.sleep(3)
+                else:
+                    print(f"  ⚠ 查询已转录失败: {e}")
 
         # 逐个上传
         for rid, msg_time, sender, fpath in mp3_records:
@@ -317,28 +322,34 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
             if (nt, str(sender)) in already_set:
                 continue
 
-            try:
-                fname = os.path.basename(fpath)
-                with open(fpath, "rb") as fh:
-                    resp = requests.post(
-                        f"{voice_url}/transcribe",
-                        files={"file": (fname, fh)},
-                        data={"account": account, "msg_time": nt, "sender": str(sender), "source": get_device_id()},
-                        timeout=120,
-                    )
-                if resp.ok:
-                    data = resp.json()
-                    text = data.get("text", "")
-                    if text:
-                        already_done += 1
-                        print(f"  ✓ [{already_done}/{write_target}] {fname} → {text[:60]}...")
+            fname = os.path.basename(fpath)
+            for attempt in range(3):
+                try:
+                    with open(fpath, "rb") as fh:
+                        resp = requests.post(
+                            f"{voice_url}/transcribe",
+                            files={"file": (fname, fh)},
+                            data={"account": account, "msg_time": nt, "sender": str(sender), "source": get_device_id()},
+                            timeout=120,
+                        )
+                    if resp.ok:
+                        data = resp.json()
+                        text = data.get("text", "")
+                        if text:
+                            already_done += 1
+                            print(f"  ✓ [{already_done}/{write_target}] {fname} → {text[:60]}...")
+                        else:
+                            print(f"  ⚠ [{already_done}/{write_target}] {fname} 转录为空")
+                            already_done += 1
+                        break
                     else:
-                        print(f"  ⚠ [{already_done}/{write_target}] {fname} 转录为空")
-                        already_done += 1  # 空结果也算已处理
-                else:
-                    print(f"  ✗ {fname}: HTTP {resp.status_code}")
-            except Exception as e:
-                print(f"  ✗ {fname}: {e}")
+                        print(f"  ✗ {fname}: HTTP {resp.status_code} (尝试{attempt+1}/3)")
+                        if attempt < 2:
+                            time.sleep(5)
+                except Exception as e:
+                    print(f"  ✗ {fname}: {e} (尝试{attempt+1}/3)")
+                    if attempt < 2:
+                        time.sleep(5)
 
         save_cursor(cursor_file, last_id)
         cursor_id = last_id
