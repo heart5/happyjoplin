@@ -50,10 +50,6 @@ def get_device_id():
             return model.replace(" ", "")
     except Exception:
         pass
-    for env in ["USER"]:
-        val = os.environ.get(env, "")
-        if val:
-            return val
     return "phone"
 
 
