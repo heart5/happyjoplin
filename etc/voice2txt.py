@@ -28,6 +28,7 @@ import wave
 import pathmagic
 
 with pathmagic.context():
+
     from func.first import getdirmain
     from func.getid import getdevicename
     from func.litetools import ifnotcreate
@@ -128,43 +129,181 @@ def v2t_funasr(vfilelst):
 
 
 # %% [markdown]
-# ### v2t_ollama(vfilelst, voice_url)
+# ### v2t_ollama(filepath, account, msg_time, sender, voice_url)
 
 
 # %%
 @timethis
-def v2t_ollama(vfilelst, voice_url="https://ollama.strcoder.com/voice"):
-    """通过远程 Ollama faster-whisper 服务将 mp3 转为文字。
+def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.strcoder.com/voice"):
+    """单文件语音转文字，POST 到 hcx voice API。
 
-    每个文件单独 POST 到 voice_url/transcribe，返回文字列表。
-    转录结果加【语音转录】标记以区分普通文本消息。
+    转录后服务端自动写入 v4txt_v2，客户端无需缓存。
+    返回 text 字符串，失败时返回以"语音转换失败："开头的错误文本。
     """
     import requests
 
-    txtlst = []
-    for vfile in vfilelst:
-        log.info(f"【{vfilelst.index(vfile)}/{len(vfilelst)}】\t{vfile}")
-        try:
-            with open(vfile, "rb") as fh:
-                resp = requests.post(
-                    f"{voice_url}/transcribe",
-                    files={"file": (os.path.basename(vfile), fh)},
-                    timeout=120,
-                )
-            if resp.ok:
-                data = resp.json()
-                text = data.get("text", "")
-                lang = data.get("language", "?")
-                prob = data.get("probability", 0)
-                log.info(f"  → {text[:50]}... (lang={lang}, p={prob:.2f})")
+    log.info(f"转录: {filepath}")
+    try:
+        with open(filepath, "rb") as fh:
+            resp = requests.post(
+                f"{voice_url}/transcribe",
+                files={"file": (os.path.basename(filepath), fh)},
+                data={"account": account, "msg_time": msg_time, "sender": sender},
+                timeout=120,
+            )
+        if resp.ok:
+            data = resp.json()
+            text = data.get("text", "")
+            lang = data.get("language", "?")
+            prob = data.get("probability", 0)
+            log.info(f"  → {text[:50]}... (lang={lang}, p={prob:.2f})")
+            return text
+        else:
+            log.error(f"  → HTTP {resp.status_code}")
+            return f"语音转换失败：HTTP {resp.status_code}"
+    except Exception as e:
+        log.error(f"  → {e}")
+        return f"语音转换失败：{e}"
+
+
+# %% [markdown]
+# ### apply_transcription(df, account)
+
+
+# %%
+def apply_transcription(df, account):
+    """对 DataFrame 中的 Recording 行关联 v4txt_v2 转录结果。
+
+    输入：wc_{账号} 表的 DataFrame（含 time, sender, type, content 列）+ 账号名
+    输出：同一 DataFrame，但命中转录的行 type 改为 'VoiceText'，content 改为转录文字。
+          未命中保持原样。
+
+    hcx 本机直连 voice_transcriptions.db，非 hcx 通过 voice API 批量查询。
+    """
+    recording_mask = df["type"] == "Recording"
+    if not recording_mask.any():
+        return df
+
+    # 收集需要查询的 (time, sender) 对
+    recs = df.loc[recording_mask, ["time", "sender"]].drop_duplicates()
+    records = list(zip(recs["time"], recs["sender"]))
+
+    if not records:
+        return df
+
+    # 尝试本地查询，失败则走 API
+    hits = _query_v4txt_v2_local(account, records)
+
+    # 改造命中行
+    for (msg_time, sender), text in hits.items():
+        mask = recording_mask & (df["time"] == msg_time) & (df["sender"] == sender)
+        df.loc[mask, "type"] = "VoiceText"
+        df.loc[mask, "content"] = text
+
+    log.info(f"apply_transcription: {len(records)} 条录音, 命中 {len(hits)} 条")
+    return df
+
+
+def _query_v4txt_v2_local(account, records):
+    """本地查询 v4txt_v2（hcx 上直连数据库）。"""
+    db_path = "/data/codebase/joplinai/data/voice_transcriptions.db"
+    if not os.path.exists(db_path):
+        log.warning("voice_transcriptions.db 不存在，跳过转录关联")
+        return {}
+    try:
+        conn = lite.connect(db_path)
+        hits = {}
+        for msg_time, sender in records:
+            row = conn.execute(
+                "SELECT text FROM v4txt_v2 WHERE account=? AND msg_time=? AND sender=?",
+                (account, str(msg_time), sender),
+            ).fetchone()
+            if row:
+                hits[(msg_time, sender)] = row[0]
+        conn.close()
+        return hits
+    except Exception as e:
+        log.error(f"查询 v4txt_v2 失败: {e}")
+        return {}
+
+
+# %% [markdown]
+# ### clean_transcribed_mp3(db_path, dry_run)
+
+
+# %%
+def clean_transcribed_mp3(db_path, dry_run=True):
+    """扫描已转录的 mp3 文件并清理。
+
+    1. 扫描 wc_{账号} 表中 type=Recording 的记录
+    2. 按 (time, sender) 查 v4txt_v2
+    3. 命中 → mp3 文件存在 → 删除
+    4. dry_run=True 时只报告，不删除
+
+    返回: {"scanned": N, "hit": N, "deleted": N, "missing": N, "freed_mb": N}
+    """
+    v4_db = "/data/codebase/joplinai/data/voice_transcriptions.db"
+    if not os.path.exists(v4_db):
+        return {"error": "voice_transcriptions.db 不存在"}
+
+    conn = lite.connect(db_path)
+    v4conn = lite.connect(v4_db)
+    tables = [
+        t[0]
+        for t in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'wc_%'"
+        ).fetchall()
+    ]
+
+    proot = str(getdirmain())
+    scanned, hit, deleted, missing, freed = 0, 0, 0, 0, 0
+
+    for table in tables:
+        account = table.replace("wc_", "")
+        rows = conn.execute(
+            f"SELECT time, sender, content FROM [{table}] WHERE type='Recording'"
+        ).fetchall()
+        for msg_time, sender, content in rows:
+            if not content or not content.endswith(".mp3"):
+                continue
+            scanned += 1
+            # 查 v4txt_v2
+            row = v4conn.execute(
+                "SELECT id, cleaned FROM v4txt_v2 WHERE account=? AND msg_time=? AND sender=?",
+                (account, str(msg_time), sender),
+            ).fetchone()
+            if not row:
+                continue
+            hit += 1
+            v4id, cleaned = row
+            if cleaned:
+                continue
+            # 构建文件路径
+            fpath = os.path.join(proot, content) if not content.startswith("/") else content
+            if os.path.exists(fpath):
+                fsize_mb = os.path.getsize(fpath) / (1024 * 1024)
+                if not dry_run:
+                    os.remove(fpath)
+                    v4conn.execute("UPDATE v4txt_v2 SET cleaned=1 WHERE id=?", (v4id,))
+                    v4conn.commit()
+                deleted += 1
+                freed += fsize_mb
             else:
-                text = f"语音转换失败：HTTP {resp.status_code}"
-                log.error(f"  → {text}")
-        except Exception as e:
-            text = f"语音转换失败：{e}"
-            log.error(f"  → {text}")
-        txtlst.append("【语音转录】" + text)
-    return txtlst
+                missing += 1
+                # 文件已不存在，标记已清理
+                if not dry_run:
+                    v4conn.execute("UPDATE v4txt_v2 SET cleaned=1 WHERE id=?", (v4id,))
+                    v4conn.commit()
+
+    conn.close()
+    v4conn.close()
+
+    result = {"scanned": scanned, "hit": hit, "deleted": deleted, "missing": missing, "freed_mb": round(freed, 1)}
+    if dry_run:
+        log.info(f"[DRY-RUN] 扫描{scanned}条, 命中{hit}, 可删{deleted}个文件({result['freed_mb']}MB), 已缺失{missing}")
+    else:
+        log.info(f"清理完成: 删{deleted}个文件({result['freed_mb']}MB), 已缺失{missing}")
+    return result
 
 
 # %% [markdown]
