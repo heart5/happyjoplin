@@ -239,9 +239,27 @@ def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.
             log.warning(f"查询已转录记录失败，将重新上传: {e}")
 
     to_transcribe = [(t, s) for t, s in records if (t, s) not in already]
-    log.info(f"batch_transcribe: {len(records)} 条录音, 已转录 {len(already)}, 待转录 {len(to_transcribe)}")
 
     proot = str(getdirmain())
+    # 统计实际存在的 mp3 文件
+    exist_count = 0
+    missing = 0
+    for nt, sender in to_transcribe:
+        orig_time, sender, content = rows_map[(nt, sender)]
+        if not content or not content.endswith(".mp3"):
+            missing += 1
+            continue
+        fpath = os.path.join(proot, content) if not content.startswith("/") else content
+        if os.path.exists(fpath):
+            exist_count += 1
+        else:
+            missing += 1
+
+    log.info(
+        f"batch_transcribe: DB有{len(records)}条, 已转录{len(already)}, "
+        f"文件存在{exist_count}, 文件缺失{missing}, 待上传{exist_count}"
+    )
+
     transcribed = 0
     for i, (nt, sender) in enumerate(to_transcribe):
         orig_time, sender, content = rows_map[(nt, sender)]
@@ -249,7 +267,6 @@ def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.
             continue
         fpath = os.path.join(proot, content) if not content.startswith("/") else content
         if not os.path.exists(fpath):
-            log.info(f"  跳过不存在的文件: {fpath}")
             continue
         text = v2t_ollama(fpath, account, orig_time, sender, voice_url)
         if text and not text.startswith("语音转换失败"):
@@ -257,8 +274,8 @@ def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.
         if (i + 1) % 10 == 0:
             log.info(f"转录进度: {i+1}/{len(to_transcribe)}")
 
-    log.info(f"batch_transcribe 完成: 发送 {len(to_transcribe)} 条, 成功 {transcribed}")
-    return {"total": len(records), "already": len(already), "sent": len(to_transcribe), "success": transcribed}
+    log.info(f"batch_transcribe 完成: 实际上传 {exist_count} 条, 成功 {transcribed}")
+    return {"total": len(records), "already": len(already), "on_disk": exist_count, "missing": missing, "sent": exist_count, "success": transcribed}
 
 
 # %% [markdown]
