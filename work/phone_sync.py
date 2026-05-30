@@ -102,11 +102,9 @@ def push_records(db_path, account, api_url, limit=200, full=False):
     """推送增量记录到 hcx。自动跳过重复区间，累计到 limit 条实际写入后停。
 
     Args:
-        limit: 实际写入 hcx 的目标条数（非 HTTP 批大小）
+        limit: 实际写入 hcx 的目标条数（也是每次 HTTP 取多少行）
         full: True=重置游标全量推送
     """
-    BATCH = 5000  # 每次 HTTP 取多少行
-
     table = f"wc_{account}"
     if not os.path.exists(db_path):
         print(f"数据库不存在: {db_path}")
@@ -134,7 +132,7 @@ def push_records(db_path, account, api_url, limit=200, full=False):
 
         rows = conn.execute(
             f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
-            (since_id, BATCH),
+            (since_id, limit),
         ).fetchall()
         conn.close()
 
@@ -168,11 +166,11 @@ def push_records(db_path, account, api_url, limit=200, full=False):
 
                 if inserted > 0:
                     total_inserted += inserted
-                    print(f"  [{pct:.0f}%] +{inserted} 条写入 (累计 {total_inserted}/{limit})")
+                    print(f"  [{pct:.1f}%] +{inserted} 条写入 (累计 {total_inserted}/{limit})")
                 else:
                     total_skipped += len(records)
-                    if total_skipped % (BATCH * 5) == 0:
-                        print(f"  [{pct:.0f}%] 已跳过 {total_skipped} 条重复")
+                    if total_skipped % (limit * 5) == 0:
+                        print(f"  [{pct:.1f}%] 已跳过 {total_skipped} 条重复")
             else:
                 print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
                 break
