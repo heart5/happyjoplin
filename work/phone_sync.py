@@ -98,16 +98,15 @@ def save_cursor(cursor_file, last_id):
         json.dump({"last_id": last_id, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
 
 
-def push_records(db_path, account, api_url, limit=5000, full=False):
-    """推送增量记录到 hcx。自动跳过重复区间，直到遇到新数据或全部扫完。
+def push_records(db_path, account, api_url, limit=200, full=False):
+    """推送增量记录到 hcx。自动跳过重复区间，累计到 limit 条实际写入后停。
 
     Args:
-        db_path: 本地 SQLite 数据库路径
-        account: 微信账号名
-        api_url: hcx chat/sync 接口地址
-        limit: 每次 HTTP 推送的批大小
+        limit: 实际写入 hcx 的目标条数（非 HTTP 批大小）
         full: True=重置游标全量推送
     """
+    BATCH = 5000  # 每次 HTTP 取多少行
+
     table = f"wc_{account}"
     if not os.path.exists(db_path):
         print(f"数据库不存在: {db_path}")
@@ -117,26 +116,23 @@ def push_records(db_path, account, api_url, limit=5000, full=False):
     cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
     since_id = 0 if full else load_cursor(cursor_file)
 
+    total_inserted = 0
     total_skipped = 0
-    round_num = 0
 
-    while True:
-        round_num += 1
+    while total_inserted < limit:
         conn = sqlite3.connect(db_path)
         max_id = conn.execute(f"SELECT MAX(id) FROM [{table}]").fetchone()[0] or 0
         if since_id >= max_id:
-            print(f"扫描完毕 (cursor={since_id}, max={max_id})")
             conn.close()
             break
 
         rows = conn.execute(
             f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
-            (since_id, limit),
+            (since_id, BATCH),
         ).fetchall()
         conn.close()
 
         if not rows:
-            print("无新数据")
             break
 
         records = []
@@ -160,16 +156,16 @@ def push_records(db_path, account, api_url, limit=5000, full=False):
             if resp.ok:
                 data = resp.json()
                 inserted = data.get("inserted", 0)
+                save_cursor(cursor_file, last_id)
+                since_id = last_id
+
                 if inserted > 0:
-                    print(f"第{round_num}轮: 推送 {len(records)} 条, 写入 {inserted} 条 (id {since_id+1}→{last_id})")
-                    save_cursor(cursor_file, last_id)
-                    return {"pushed": len(records), "inserted": inserted, "skipped_before": total_skipped}
+                    total_inserted += inserted
+                    print(f"  +{inserted} 条写入 (累计 {total_inserted}/{limit}, id→{last_id})")
                 else:
                     total_skipped += len(records)
-                    save_cursor(cursor_file, last_id)
-                    since_id = last_id
-                    if round_num % 5 == 0:
-                        print(f"  ... 已跳过 {total_skipped} 条重复 (当前 id→{last_id})")
+                    if total_skipped % (BATCH * 5) == 0:
+                        print(f"  ... 已跳过 {total_skipped} 条重复")
             else:
                 print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
                 break
@@ -177,10 +173,14 @@ def push_records(db_path, account, api_url, limit=5000, full=False):
             print(f"  → 推送失败: {e}")
             break
 
-    # 所有重复都跳完了
-    if total_skipped > 0:
-        print(f"全部跳过 {total_skipped} 条重复，已无新数据")
-    return {"pushed": 0, "inserted": 0, "skipped": total_skipped}
+    if total_inserted == 0:
+        if total_skipped > 0:
+            print(f"无新数据，已跳过 {total_skipped} 条重复")
+        else:
+            print("无新数据")
+    else:
+        print(f"完成: 写入 {total_inserted} 条，跳过 {total_skipped} 条重复")
+    return {"inserted": total_inserted, "skipped": total_skipped}
 
 
 if __name__ == "__main__":
@@ -188,7 +188,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="手机端聊天记录推送同步")
     parser.add_argument("--account", default="白晔峰", help="微信账号")
-    parser.add_argument("--limit", type=int, default=5000, help="每次 HTTP 推送批大小")
+    parser.add_argument("--limit", type=int, default=200, help="实际写入目标条数")
     parser.add_argument("--full", action="store_true", help="全量重推")
     parser.add_argument("--db", default="", help="数据库路径")
     parser.add_argument("--stats", action="store_true", help="展示数据库概况")
