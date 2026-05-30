@@ -164,11 +164,12 @@ def show_stats(db_path, account, debug_mp3=False):
             "cursor": cursor, "scanned": scanned, "pending": pending}
 
 
-def push_records(db_path, account, api_url, write_target=2000, full=False):
+def push_records(db_path, account, api_url, write_target=2000, record_type=None, full=False):
     """推送增量记录到 hcx。自动跳过重复，累计「实际写入」write_target 条后停。
 
     Args:
         write_target: 计划实际写入多少条（--limit 传入）
+        record_type: 只推送此类型（如 'Recording'），None=全部。游标始终覆盖全类型。
         full: True=重置游标全量推送
     """
     table = f"wc_{account}"
@@ -181,10 +182,11 @@ def push_records(db_path, account, api_url, write_target=2000, full=False):
     cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
     cursor_id = 0 if full else load_cursor(cursor_file)
 
-    # --- 待处理行数（进度条分母） ---
+    # --- 待处理行数（进度条分母，按过滤类型） ---
     conn = sqlite3.connect(db_path)
+    type_filter_sql = f"AND type='{record_type}'" if record_type else ""
     total_pending = conn.execute(
-        f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (cursor_id,)
+        f"SELECT COUNT(*) FROM [{table}] WHERE id > ? {type_filter_sql}", (cursor_id,)
     ).fetchone()[0]
     conn.close()
 
@@ -192,22 +194,37 @@ def push_records(db_path, account, api_url, write_target=2000, full=False):
     already_scanned = 0     # 累计已扫描（发送）的行数
 
     while already_written < write_target:
-        # 还剩多少达标，就取多少行，避免最后一枪大幅超标
         fetch_size = min(_FETCH_CAP, write_target - already_written)
         conn = sqlite3.connect(db_path)
-        rows = conn.execute(
+        # 始终取全类型保证游标不跳号
+        all_rows = conn.execute(
             f"SELECT id, time, send, sender, type, content FROM [{table}] "
             f"WHERE id > ? ORDER BY id LIMIT ?",
             (cursor_id, fetch_size),
         ).fetchall()
         conn.close()
 
-        if not rows:
+        if not all_rows:
             break
+
+        # 游标以全类型最后一条 id 为准
+        last_id = all_rows[-1][0]
+
+        # Python 端按类型过滤
+        if record_type:
+            target_rows = [r for r in all_rows if r[4] == record_type]
+        else:
+            target_rows = all_rows
+
+        if not target_rows:
+            # 这批没有目标类型，推进游标继续
+            save_cursor(cursor_file, last_id)
+            cursor_id = last_id
+            continue
 
         # 组装 JSON
         records = []
-        for r in rows:
+        for r in target_rows:
             records.append({
                 "time": str(r[1]) if r[1] else "",
                 "send": bool(r[2]),
@@ -216,7 +233,6 @@ def push_records(db_path, account, api_url, write_target=2000, full=False):
                 "content": str(r[5]) if r[5] else "",
             })
 
-        last_id = rows[-1][0]
         already_scanned += len(records)
         pct = already_scanned / total_pending * 100 if total_pending > 0 else 100
 
@@ -242,7 +258,8 @@ def push_records(db_path, account, api_url, write_target=2000, full=False):
 
         if newly_inserted > 0:
             already_written += newly_inserted
-            print(f"  [{pct:.1f}%] 实际写入 +{newly_inserted} 条 (累计 {already_written}/{write_target})")
+            tag = f"[{record_type}]" if record_type else ""
+            print(f"  [{pct:.1f}%] {tag} 实际写入 +{newly_inserted} 条 (累计 {already_written}/{write_target})")
         elif already_scanned % (fetch_size * 10) == 0:
             print(f"  [{pct:.1f}%] 重复跳过，已扫描 {already_scanned}/{total_pending}")
 
@@ -253,7 +270,8 @@ def push_records(db_path, account, api_url, write_target=2000, full=False):
         else:
             print("无新数据")
     else:
-        print(f"完成: 实际写入 {already_written} 条，共扫描 {already_scanned}/{total_pending} 行")
+        tag = f"[{record_type}] " if record_type else ""
+        print(f"完成: {tag}实际写入 {already_written} 条，共扫描 {already_scanned}/{total_pending} 行")
     return {"written": already_written, "scanned": already_scanned}
 
 
@@ -266,6 +284,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="手机端聊天记录推送同步")
     parser.add_argument("--account", default="白晔峰", help="微信账号")
     parser.add_argument("--limit", type=int, default=2000, help="实际写入多少条后停（非扫描数/非游标）")
+    parser.add_argument("--type", dest="record_type", default=None, help="只推送此类型（如 Recording）")
     parser.add_argument("--full", action="store_true", help="全量重推（重置游标）")
     parser.add_argument("--db", default="", help="数据库路径")
     parser.add_argument("--stats", action="store_true", help="查看数据库概况")
@@ -290,4 +309,5 @@ if __name__ == "__main__":
     if args.stats:
         show_stats(db_path, args.account, debug_mp3=args.debug_mp3)
     else:
-        push_records(db_path, args.account, args.api, write_target=args.limit, full=args.full)
+        push_records(db_path, args.account, args.api, write_target=args.limit,
+                     record_type=args.record_type, full=args.full)
