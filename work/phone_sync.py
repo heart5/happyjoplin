@@ -6,9 +6,10 @@
 用本地 JSON 文件存同步游标，HTTP POST 至 hcx 的 /chat/sync 端点。
 
 使用：
-    python work/phone_sync.py                          # 增量推送
+    python work/phone_sync.py                          # 增量推送（自动跳过重复）
     python work/phone_sync.py --full                   # 全量重推（重置游标）
-    python work/phone_sync.py --account 白晔峰 --limit 200  # 每次200条
+    python work/phone_sync.py --stats                  # 查看数据库概况
+    python work/phone_sync.py --account 白晔峰 --limit 10000
 """
 
 import json
@@ -97,14 +98,14 @@ def save_cursor(cursor_file, last_id):
         json.dump({"last_id": last_id, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
 
 
-def push_records(db_path, account, api_url, limit=200, full=False):
-    """推送增量记录到 hcx。
+def push_records(db_path, account, api_url, limit=5000, full=False):
+    """推送增量记录到 hcx。自动跳过重复区间，直到遇到新数据或全部扫完。
 
     Args:
         db_path: 本地 SQLite 数据库路径
         account: 微信账号名
         api_url: hcx chat/sync 接口地址
-        limit: 每次最多推送条数
+        limit: 每次 HTTP 推送的批大小
         full: True=重置游标全量推送
     """
     table = f"wc_{account}"
@@ -112,61 +113,74 @@ def push_records(db_path, account, api_url, limit=200, full=False):
         print(f"数据库不存在: {db_path}")
         return
 
-    # 游标
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
     cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
     since_id = 0 if full else load_cursor(cursor_file)
 
-    # 读取新记录
-    conn = sqlite3.connect(db_path)
-    max_id = conn.execute(f"SELECT MAX(id) FROM [{table}]").fetchone()[0] or 0
-    if since_id >= max_id:
-        print(f"无新数据 (cursor={since_id}, max={max_id})")
+    total_skipped = 0
+    round_num = 0
+
+    while True:
+        round_num += 1
+        conn = sqlite3.connect(db_path)
+        max_id = conn.execute(f"SELECT MAX(id) FROM [{table}]").fetchone()[0] or 0
+        if since_id >= max_id:
+            print(f"扫描完毕 (cursor={since_id}, max={max_id})")
+            conn.close()
+            break
+
+        rows = conn.execute(
+            f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
+            (since_id, limit),
+        ).fetchall()
         conn.close()
-        return
 
-    rows = conn.execute(
-        f"SELECT id, time, send, sender, type, content FROM [{table}] WHERE id > ? ORDER BY id LIMIT ?",
-        (since_id, limit),
-    ).fetchall()
-    conn.close()
+        if not rows:
+            print("无新数据")
+            break
 
-    if not rows:
-        print("无新数据")
-        return
+        records = []
+        for r in rows:
+            records.append({
+                "time": str(r[1]) if r[1] else "",
+                "send": bool(r[2]),
+                "sender": str(r[3]) if r[3] else "",
+                "type": str(r[4]) if r[4] else "",
+                "content": str(r[5]) if r[5] else "",
+            })
 
-    # 转换格式
-    records = []
-    for r in rows:
-        records.append({
-            "time": str(r[1]) if r[1] else "",
-            "send": bool(r[2]),
-            "sender": str(r[3]) if r[3] else "",
-            "type": str(r[4]) if r[4] else "",
-            "content": str(r[5]) if r[5] else "",
-        })
+        last_id = rows[-1][0]
 
-    last_id = rows[-1][0]
-    print(f"推送 {len(records)} 条记录 (id {since_id+1}→{last_id})")
+        try:
+            resp = requests.post(
+                api_url,
+                json={"account": account, "records": records, "source": get_device_id()},
+                timeout=120,
+            )
+            if resp.ok:
+                data = resp.json()
+                inserted = data.get("inserted", 0)
+                if inserted > 0:
+                    print(f"第{round_num}轮: 推送 {len(records)} 条, 写入 {inserted} 条 (id {since_id+1}→{last_id})")
+                    save_cursor(cursor_file, last_id)
+                    return {"pushed": len(records), "inserted": inserted, "skipped_before": total_skipped}
+                else:
+                    total_skipped += len(records)
+                    save_cursor(cursor_file, last_id)
+                    since_id = last_id
+                    if round_num % 5 == 0:
+                        print(f"  ... 已跳过 {total_skipped} 条重复 (当前 id→{last_id})")
+            else:
+                print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
+                break
+        except Exception as e:
+            print(f"  → 推送失败: {e}")
+            break
 
-    # 发送
-    try:
-        resp = requests.post(
-            api_url,
-            json={"account": account, "records": records, "source": get_device_id()},
-            timeout=60,
-        )
-        if resp.ok:
-            data = resp.json()
-            inserted = data.get("inserted", 0)
-            print(f"  → 成功: 接收 {data.get('received', 0)}, 写入 {inserted}")
-            # 更新游标（用本次推送的最后一条 id）
-            save_cursor(cursor_file, last_id)
-            return {"pushed": len(records), "inserted": inserted}
-        else:
-            print(f"  → HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        print(f"  → 推送失败: {e}")
+    # 所有重复都跳完了
+    if total_skipped > 0:
+        print(f"全部跳过 {total_skipped} 条重复，已无新数据")
+    return {"pushed": 0, "inserted": 0, "skipped": total_skipped}
 
 
 if __name__ == "__main__":
@@ -174,7 +188,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="手机端聊天记录推送同步")
     parser.add_argument("--account", default="白晔峰", help="微信账号")
-    parser.add_argument("--limit", type=int, default=200, help="每次推送条数")
+    parser.add_argument("--limit", type=int, default=5000, help="每次 HTTP 推送批大小")
     parser.add_argument("--full", action="store_true", help="全量重推")
     parser.add_argument("--db", default="", help="数据库路径")
     parser.add_argument("--stats", action="store_true", help="展示数据库概况")
