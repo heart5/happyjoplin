@@ -26,12 +26,60 @@ except ImportError:
 
 def get_device_id():
     """获取设备标识，用于游标文件和上报。"""
-    # Termux 下的简单标识
     for env in ["HOSTNAME", "USER"]:
         val = os.environ.get(env, "")
         if val:
             return val
     return "phone"
+
+
+def find_db_path():
+    """自动查找微信聊天记录数据库。"""
+    home = os.path.expanduser("~")
+    candidates = [
+        f"{home}/storage/shared/happyjoplin/data/webchat/",
+        f"{home}/codebase/happyjoplin/data/webchat/",
+        f"{home}/happyjoplin/data/webchat/",
+    ]
+    for d in candidates:
+        if os.path.isdir(d):
+            db_files = [f for f in os.listdir(d) if f.startswith("wcitemsall_") and f.endswith(".db")]
+            if db_files:
+                return os.path.join(d, db_files[0])
+    return None
+
+
+def show_stats(db_path, account):
+    """展示数据库概况：总记录 / Recording 数 / mp3 存在率估算。"""
+    table = f"wc_{account}"
+    conn = sqlite3.connect(db_path)
+    total = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
+    rec_total = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'").fetchone()[0]
+
+    # 抽样检查 mp3 文件实际存在率
+    samples = conn.execute(
+        f"SELECT content FROM [{table}] WHERE type='Recording' LIMIT 500"
+    ).fetchall()
+    exist = sum(1 for (c,) in samples if c and os.path.exists(c))
+    sample_n = len(samples)
+    rate = exist / sample_n * 100 if sample_n else 0
+    estimated = rec_total * exist // sample_n if sample_n else 0
+
+    # 游标
+    cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
+    cursor_file = os.path.join(cursor_dir, f".phone_sync_cursor_{account}.json")
+    cursor = load_cursor(cursor_file)
+    max_id = conn.execute(f"SELECT MAX(id) FROM [{table}]").fetchone()[0] or 0
+    conn.close()
+
+    print(f"=== {account} 数据库概况 ===")
+    print(f"总记录:       {total:,}")
+    print(f"Recording:    {rec_total:,}")
+    print(f"mp3 存在率:   {exist}/{sample_n} ({rate:.0f}%)")
+    print(f"估算 mp3 数: ~{estimated:,}")
+    print(f"同步游标:     {cursor:,} / 最大 id {max_id:,}")
+    print(f"待同步:       {max_id - cursor:,} 条")
+    return {"total": total, "recording": rec_total, "mp3_estimate": estimated, "cursor": cursor, "pending": max_id - cursor}
 
 
 def load_cursor(cursor_file):
@@ -129,6 +177,7 @@ if __name__ == "__main__":
     parser.add_argument("--limit", type=int, default=200, help="每次推送条数")
     parser.add_argument("--full", action="store_true", help="全量重推")
     parser.add_argument("--db", default="", help="数据库路径")
+    parser.add_argument("--stats", action="store_true", help="展示数据库概况")
     parser.add_argument(
         "--api",
         default="https://ollama.strcoder.com/voice/chat/sync",
@@ -140,27 +189,13 @@ if __name__ == "__main__":
     if args.db:
         db_path = args.db
     else:
-        # Termux 默认路径
-        home = os.path.expanduser("~")
-        candidates = [
-            f"{home}/storage/shared/happyjoplin/data/webchat/",
-            f"{home}/codebase/happyjoplin/data/webchat/",
-            f"{home}/happyjoplin/data/webchat/",
-        ]
-        wc_dir = None
-        for d in candidates:
-            if os.path.isdir(d):
-                wc_dir = d
-                break
-        if not wc_dir:
+        db_path = find_db_path()
+        if not db_path:
             print("未找到 webchat 数据目录，请用 --db 指定")
             sys.exit(1)
-        # 查找数据库文件
-        db_files = [f for f in os.listdir(wc_dir) if f.startswith("wcitemsall_") and f.endswith(".db")]
-        if not db_files:
-            print(f"在 {wc_dir} 未找到数据库文件")
-            sys.exit(1)
-        db_path = os.path.join(wc_dir, db_files[0])
         print(f"自动检测数据库: {db_path}")
 
-    push_records(db_path, args.account, args.api, limit=args.limit, full=args.full)
+    if args.stats:
+        show_stats(db_path, args.account)
+    else:
+        push_records(db_path, args.account, args.api, limit=args.limit, full=args.full)
