@@ -56,7 +56,6 @@ with pathmagic.context():
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
-    from life.chat_schema import parse_tsv
 
 
 # %% [markdown]
@@ -75,22 +74,15 @@ def items_to_df(fl: Path) -> pd.DataFrame:
         log.critical(f"文件{fl}读取时出现错误，返回空的pd.DataFrame.{e}")
         return pd.DataFrame()
 
-    rows = []
-    for line in content.splitlines():
-        if not line.strip():
-            continue
-        parsed = parse_tsv(line)
-        if parsed is None:
-            log.warning(f"跳过格式异常行: {line[:80]}...")
-            continue
-        rows.append(parsed)
-    if not rows:
-        return pd.DataFrame()
-    df2 = pd.DataFrame(rows)
-    df2.rename(
-        columns={"fmTime": "time", "fmSend": "send", "fmSender": "sender", "fmType": "type", "fmText": "content"},
-        inplace=True,
-    )
+    # 用正则按记录头（时间戳+发送标记+发送者+类型）切分，天然处理多行消息内容中的 \n
+    # 不能用 splitlines() —— 消息正文含换行时会把一条记录拆成多行导致解析崩溃
+    ptn = re.compile(r"(^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\t(True|False)\t([^\t]+)\t(\w+)\t", re.M)
+    itemlst = re.split(ptn, content)
+    itemlst = [im.strip() for im in itemlst if len(im) > 0]
+    step = 5
+    itemlst4pd1 = [itemlst[i : i + step] for i in range(0, len(itemlst), step)]
+    df2 = pd.DataFrame(itemlst4pd1, columns=["time", "send", "sender", "type", "content"])
+    df2["send"] = df2["send"].apply(lambda x: True if x == "True" else False)
     df2["time"] = pd.to_datetime(df2["time"])
     df2["content"] = df2["content"].apply(lambda x: re.sub(r"(\[\w+前\]|\[刚才\])?", "", x))
     # 处理成相对路径，逻辑是准备把所有音频等文件集中到主运行环境
