@@ -22,7 +22,11 @@ import sqlite3
 import sys
 import time
 import atexit
-from datetime import datetime
+
+import pathmagic
+
+with pathmagic.context():
+    from func.datetimetools import normalize_time_to_unix
 
 try:
     import requests
@@ -245,31 +249,6 @@ def show_stats(db_path, account, debug_mp3=False):
             "cursor": cursor_id, "scanned": scanned, "pending": pending}
 
 
-def _normalize_time(val):
-    """将各种时间值统一转为 unix 时间戳字符串，匹配 v4txt_v2.msg_time。"""
-    if val is None:
-        return ""
-    if isinstance(val, (int, float)):
-        return str(int(val))
-    try:
-        return str(int(val.timestamp()))
-    except Exception:
-        pass
-    if isinstance(val, str):
-        # 解析常见 datetime 字符串格式
-        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S'):
-            try:
-                dt = datetime.strptime(val.strip(), fmt)
-                return str(int(dt.timestamp()))
-            except ValueError:
-                continue
-        try:
-            return str(int(float(val)))
-        except (ValueError, OverflowError):
-            pass
-    return str(val)
-
-
 def _get_mp3_roots(db_path):
     """获取手机端 mp3 文件的可能根目录列表。"""
     roots = [os.path.dirname(os.path.dirname(os.path.dirname(db_path)))]
@@ -358,7 +337,7 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
             mp3_zero += 1
         else:
             mp3_exist += 1
-            exist_pairs.append((_normalize_time(msg_time), str(sender)))
+            exist_pairs.append((normalize_time_to_unix(msg_time), str(sender)))
 
     # 批量查HCX缓存：哪些mp3已在库
     in_cache = 0
@@ -466,7 +445,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
     def _resolve_record(rid, msg_time, sender, send_val, fpath):
         nonlocal already_done, cursor_id, stat_cache, stat_skip, stat_retry
         fname = os.path.basename(fpath)
-        nt = _normalize_time(msg_time)
+        nt = normalize_time_to_unix(msg_time)
         ok, is_transient = _process_one(fname, fpath, nt, sender, send_val)
         if ok:
             already_done += 1
@@ -501,7 +480,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
             if not fpath:
                 resolved_retry.add(rid)
                 continue
-            nt = _normalize_time(msg_time)
+            nt = normalize_time_to_unix(msg_time)
             try:
                 resp = requests.post(
                     f"{voice_url}/transcriptions/batch",
@@ -548,7 +527,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
 
         # 批量查缓存
         already_set = set()
-        check_records = [(_normalize_time(t), str(s)) for _, t, s, _, _ in mp3_records]
+        check_records = [(normalize_time_to_unix(t), str(s)) for _, t, s, _, _ in mp3_records]
         for attempt in range(2):
             try:
                 resp = requests.post(
@@ -572,7 +551,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
             if rid in retry_ids:
                 continue
 
-            nt = _normalize_time(msg_time)
+            nt = normalize_time_to_unix(msg_time)
             if (nt, str(sender)) in already_set:
                 stat_cache += 1
                 cursor_id = max(cursor_id, rid)
@@ -654,7 +633,7 @@ def clean_transcribed_mp3(db_path, account, voice_url="https://ollama.strcoder.c
         # 批量查已转录
         transcribed = set()
         try:
-            check_records = [(_normalize_time(t), str(s)) for _, t, s in mp3_map]
+            check_records = [(normalize_time_to_unix(t), str(s)) for _, t, s in mp3_map]
             resp = requests.post(
                 f"{voice_url}/transcriptions/batch",
                 json={"account": account, "records": [[t, s] for t, s in check_records]},
@@ -669,7 +648,7 @@ def clean_transcribed_mp3(db_path, account, voice_url="https://ollama.strcoder.c
 
         # 删除命中文件
         for (rid, msg_time, sender), fpath in mp3_map.items():
-            nt = _normalize_time(msg_time)
+            nt = normalize_time_to_unix(msg_time)
             if (nt, str(sender)) not in transcribed:
                 continue
             hit += 1
