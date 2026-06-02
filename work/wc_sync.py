@@ -267,7 +267,10 @@ def _is_transient_error(resp_or_exc):
 
 
 def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_target, voice_url):
-    """启动时打印语音转录全景仪表盘。"""
+    """启动时打印语音转录全景仪表盘。
+
+    mp3文件状态通过 os.walk 快扫（非逐条 os.path.exists），秒级完成。
+    """
     total_all = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
     total_rec = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'").fetchone()[0]
     rec_done = conn.execute(
@@ -275,35 +278,42 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
     ).fetchone()[0]
     rec_pending = total_rec - rec_done
 
-    # 扫描 mp3 文件状态，同时收集(time,sender)用于查HCX缓存
-    mp3_exist = mp3_zero = mp3_missing = 0
-    exist_pairs = []  # (normalized_time, sender) for existing >0 files
-    rows = conn.execute(
-        f"SELECT id, time, sender, content FROM [{table}] WHERE type='Recording'"
-    ).fetchall()
-    for rid, msg_time, sender, content in rows:
-        if not content:
-            mp3_missing += 1
+    # 快扫：os.walk 找所有 mp3 文件，构建 {相对路径: 文件大小} 映射
+    mp3_map = {}  # relpath -> size
+    for root in roots:
+        img_dir = os.path.join(root, 'img', 'webchat')
+        if not os.path.isdir(img_dir):
             continue
-        fpath = None
-        for r in roots:
-            candidate = os.path.join(r, content)
-            if os.path.exists(candidate):
-                fpath = candidate
-                break
-        if fpath:
-            if os.path.getsize(fpath) == 0:
-                mp3_zero += 1
-            else:
-                mp3_exist += 1
-                exist_pairs.append((_normalize_time(msg_time), str(sender)))
-        else:
+        for dirpath, _dirnames, filenames in os.walk(img_dir):
+            for fn in filenames:
+                if fn.lower().endswith('.mp3'):
+                    full = os.path.join(dirpath, fn)
+                    rel = os.path.relpath(full, root)
+                    mp3_map[rel] = os.path.getsize(full)
+
+    # 从DB取Recording的content路径，与mp3_map交叉对比
+    mp3_exist = mp3_zero = 0
+    exist_pairs = []  # (norm_time, sender) for >0 files
+    # 只取有content的Recording行
+    rows = conn.execute(
+        f"SELECT id, time, sender, content FROM [{table}] "
+        f"WHERE type='Recording' AND content IS NOT NULL AND content != ''"
+    ).fetchall()
+    mp3_missing = total_rec - len(rows)  # content为空的
+
+    for rid, msg_time, sender, content in rows:
+        sz = mp3_map.get(content)
+        if sz is None:
             mp3_missing += 1
+        elif sz == 0:
+            mp3_zero += 1
+        else:
+            mp3_exist += 1
+            exist_pairs.append((_normalize_time(msg_time), str(sender)))
 
     # 批量查HCX缓存：哪些mp3已在库
     in_cache = 0
     if exist_pairs:
-        # 分批查，每批最多500条
         seen = set()
         for i in range(0, len(exist_pairs), 500):
             chunk = exist_pairs[i:i + 500]
@@ -321,8 +331,8 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
         in_cache = len(seen)
 
     local_only = mp3_exist - in_cache
-
     pct = rec_done / total_rec * 100 if total_rec else 0
+
     print()
     print(f"═══ 语音转录 — {account} ═══")
     print(f"① 总记录: {total_all:,}  ② 语音: {total_rec:,}")
