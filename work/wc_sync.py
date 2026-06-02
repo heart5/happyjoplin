@@ -266,7 +266,7 @@ def _is_transient_error(resp_or_exc):
     return False
 
 
-def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_target):
+def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_target, voice_url):
     """启动时打印语音转录全景仪表盘。"""
     total_all = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
     total_rec = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'").fetchone()[0]
@@ -275,10 +275,13 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
     ).fetchone()[0]
     rec_pending = total_rec - rec_done
 
-    # 扫描 mp3 文件状态
+    # 扫描 mp3 文件状态，同时收集(time,sender)用于查HCX缓存
     mp3_exist = mp3_zero = mp3_missing = 0
-    rows = conn.execute(f"SELECT id, content FROM [{table}] WHERE type='Recording'").fetchall()
-    for rid, content in rows:
+    exist_pairs = []  # (normalized_time, sender) for existing >0 files
+    rows = conn.execute(
+        f"SELECT id, time, sender, content FROM [{table}] WHERE type='Recording'"
+    ).fetchall()
+    for rid, msg_time, sender, content in rows:
         if not content:
             mp3_missing += 1
             continue
@@ -293,14 +296,38 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
                 mp3_zero += 1
             else:
                 mp3_exist += 1
+                exist_pairs.append((_normalize_time(msg_time), str(sender)))
         else:
             mp3_missing += 1
+
+    # 批量查HCX缓存：哪些mp3已在库
+    in_cache = 0
+    if exist_pairs:
+        # 分批查，每批最多500条
+        seen = set()
+        for i in range(0, len(exist_pairs), 500):
+            chunk = exist_pairs[i:i + 500]
+            try:
+                resp = requests.post(
+                    f"{voice_url}/transcriptions/batch",
+                    json={"account": account, "records": [[t, s] for t, s in chunk]},
+                    timeout=30,
+                )
+                if resp.ok:
+                    for key in resp.json().get("results", {}):
+                        seen.add(key)
+            except Exception:
+                pass
+        in_cache = len(seen)
+
+    local_only = mp3_exist - in_cache
 
     pct = rec_done / total_rec * 100 if total_rec else 0
     print()
     print(f"═══ 语音转录 — {account} ═══")
     print(f"① 总记录: {total_all:,}  ② 语音: {total_rec:,}")
-    print(f"③ mp3: 可转录{mp3_exist:,} | 空文件{mp3_zero:,}(跳过) | 缺失{mp3_missing:,}(无文件)")
+    print(f"③ mp3: 存在{mp3_exist:,} (已转录{in_cache:,} | 待转录{local_only:,})"
+          f" | 空文件{mp3_zero:,}(跳过) | 缺失{mp3_missing:,}")
     print(f"④ 进度: {rec_done:,}/{total_rec:,} ({pct:.1f}%) | 待处理{rec_pending:,}"
           f"{' | 待重试'+str(len(retry_ids)) if retry_ids else ''}")
     print(f"   本次目标: 最多转录 {write_target} 条")
@@ -335,7 +362,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
     conn = sqlite3.connect(db_path)
 
     # 仪表盘
-    _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_target)
+    _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_target, voice_url)
 
     # 计数器
     already_done = 0       # 本次转录成功数
