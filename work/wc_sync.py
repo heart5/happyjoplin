@@ -21,12 +21,53 @@ import os
 import sqlite3
 import sys
 import time
+import atexit
 
 try:
     import requests
 except ImportError:
     print("需要安装 requests: pip install requests")
     sys.exit(1)
+
+# ---------------------------------------------------------------------------
+# 进程锁：防止定时任务与手动测试同时运行
+# ---------------------------------------------------------------------------
+_LOCK_FILE = None  # 运行时设置
+
+
+def _acquire_lock(lock_path):
+    """获取文件锁，返回 True 表示成功获取。
+
+    用 PID 文件实现：写入当前进程PID，启动时检查旧PID是否存活。
+    """
+    global _LOCK_FILE
+    if os.path.exists(lock_path):
+        try:
+            with open(lock_path) as f:
+                old_pid = int(f.read().strip())
+            os.kill(old_pid, 0)  # 检查进程是否存在
+            print(f"已有实例运行中 (PID {old_pid})，退出。如需强制解除: rm {lock_path}")
+            return False
+        except (OSError, ValueError):
+            # 旧进程已不存在或PID无效，清理
+            os.remove(lock_path)
+
+    with open(lock_path, 'w') as f:
+        f.write(str(os.getpid()))
+    _LOCK_FILE = lock_path
+    atexit.register(_release_lock)
+    return True
+
+
+def _release_lock():
+    """退出时清理锁文件。"""
+    global _LOCK_FILE
+    if _LOCK_FILE and os.path.exists(_LOCK_FILE):
+        try:
+            os.remove(_LOCK_FILE)
+        except OSError:
+            pass
+    _LOCK_FILE = None
 
 # ---------------------------------------------------------------------------
 # 内部常量
@@ -787,6 +828,7 @@ if __name__ == "__main__":
     parser.add_argument("--reset", action="store_true", help="(with --transcribe) 重置转录游标重新处理")
     parser.add_argument("--clean", action="store_true", help="删除本地已转录的 mp3 文件")
     parser.add_argument("--dry-run", action="store_true", help="(with --clean) 仅报告不删除")
+    parser.add_argument("--force", action="store_true", help="忽略进程锁强制运行")
     parser.add_argument(
         "--voice-url",
         default="https://ollama.strcoder.com/voice",
@@ -803,6 +845,14 @@ if __name__ == "__main__":
             print("未找到 webchat 数据目录，请用 --db 指定")
             sys.exit(1)
         print(f"自动检测数据库: {db_path}")
+
+    # 进程锁（--stats 只读不需要锁）
+    lock_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
+    if not args.stats and not args.force:
+        op = "transcribe" if args.transcribe else ("clean" if args.clean else "sync")
+        lock_file = os.path.join(lock_dir, f".wc_{op}.lock")
+        if not _acquire_lock(lock_file):
+            sys.exit(1)
 
     if args.stats:
         show_stats(db_path, args.account, debug_mp3=args.debug_mp3)
