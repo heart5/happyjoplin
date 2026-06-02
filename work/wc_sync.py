@@ -77,18 +77,26 @@ def find_db_path():
 
 
 def load_cursor(cursor_file):
-    """读取游标文件。"""
+    """读取游标文件，返回 (last_id, retry_ids)。
+
+    游标格式: {"last_id": N, "retry_ids": [id1, id2, ...], "updated_at": "..."}
+    - last_id: 已处理的最大 id（成功或永久跳过的记录）
+    - retry_ids: 临时失败待重试的记录 id 列表
+    """
     if os.path.exists(cursor_file):
         with open(cursor_file) as f:
             data = json.load(f)
-            return data.get("last_id", 0)
-    return 0
+            return data.get("last_id", 0), data.get("retry_ids", [])
+    return 0, []
 
 
-def save_cursor(cursor_file, last_id):
+def save_cursor(cursor_file, last_id, retry_ids=None):
     """写入游标文件。"""
+    data = {"last_id": last_id, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if retry_ids is not None:
+        data["retry_ids"] = retry_ids
     with open(cursor_file, "w") as f:
-        json.dump({"last_id": last_id, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
+        json.dump(data, f)
 
 
 # ---------------------------------------------------------------------------
@@ -167,15 +175,15 @@ def show_stats(db_path, account, debug_mp3=False):
     # 游标 + 进度（COUNT(*)，非稀疏 id 范围）
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
     cursor_file = os.path.join(cursor_dir, f".wc_sync_cursor_{account}.json")
-    cursor = load_cursor(cursor_file)
+    cursor_id, retry_ids = load_cursor(cursor_file)
     scanned = conn.execute(
-        f"SELECT COUNT(*) FROM [{table}] WHERE id <= ?", (cursor,)
+        f"SELECT COUNT(*) FROM [{table}] WHERE id <= ?", (cursor_id,)
     ).fetchone()[0]
     pending = conn.execute(
-        f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (cursor,)
+        f"SELECT COUNT(*) FROM [{table}] WHERE id > ?", (cursor_id,)
     ).fetchone()[0]
     rec_scanned = conn.execute(
-        f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording' AND id <= ?", (cursor,)
+        f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording' AND id <= ?", (cursor_id,)
     ).fetchone()[0]
     conn.close()
 
@@ -187,10 +195,12 @@ def show_stats(db_path, account, debug_mp3=False):
     print(f"已同步:       {scanned:,} 行 ({pct_done:.1f}%)")
     print(f"Recording:    {rec_total:,}  (已同步 {rec_scanned:,}, {rec_pct:.1f}%)")
     print(f"mp3 存在率:   {exist}/{sample_n} ({rate:.0f}%)  估算 ~{estimated:,} 个")
-    print(f"游标:         id={cursor:,}")
+    print(f"游标:         id={cursor_id:,}")
+    if retry_ids:
+        print(f"待重试:       {len(retry_ids)} 条")
     print(f"待处理:       {pending:,} 行 (实际)")
     return {"total": total, "recording": rec_total, "mp3_estimate": estimated,
-            "cursor": cursor, "scanned": scanned, "pending": pending}
+            "cursor": cursor_id, "scanned": scanned, "pending": pending}
 
 
 def _normalize_time(val):
@@ -239,16 +249,35 @@ def _resolve_mp3(content, roots):
     return None
 
 
-def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/voice", write_target=50):
+def _is_transient_error(resp_or_exc):
+    """判断转录失败是否为临时性错误（可重试）。
+
+    Returns:
+        True: 临时错误（连接超时、服务端 5xx），下次可重试
+        False: 永久错误（0字节文件、HTTP 4xx），跳过不再重试
+    """
+    if isinstance(resp_or_exc, Exception):
+        return True  # 连接错误/超时都是临时的
+    status = resp_or_exc.status_code
+    if 500 <= status < 600:
+        return True  # 服务端错误是临时的
+    if 400 <= status < 500:
+        return False  # 客户端错误是永久的（格式/权限问题）
+    return False
+
+
+def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/voice", write_target=50, reset=False):
     """上传手机端 mp3 至 hcx 语音转文字。
 
-    1. 扫描 Recording 记录，解析 mp3 文件路径
-    2. 批量查 hcx 已转录记录，跳过
-    3. 逐个上传未转录 mp3 至 /transcribe
-    4. 本地 JSON 游标记录进度
+    1. 先处理待重试列表（上次临时失败的记录）
+    2. 扫描 Recording 记录，解析 mp3 文件路径
+    3. 批量查 hcx 已转录记录，跳过
+    4. 逐个上传未转录 mp3 至 /transcribe
+    5. 逐条保存游标：成功/永久失败→推进游标；临时失败→加入 retry_ids
 
     Args:
         write_target: 实际转录成功多少条后停（非扫描数）
+        reset: True=重置游标，从头处理
     """
     table = f"wc_{account}"
     if not os.path.exists(db_path):
@@ -257,7 +286,11 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
 
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
     cursor_file = os.path.join(cursor_dir, f".wc_transcribe_cursor_{account}.json")
-    cursor_id = load_cursor(cursor_file)
+    if reset:
+        if os.path.exists(cursor_file):
+            os.remove(cursor_file)
+            print("已重置转录游标")
+    cursor_id, retry_ids = load_cursor(cursor_file)
 
     roots = _get_mp3_roots(db_path)
 
@@ -266,10 +299,123 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
         f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording' AND id > ?", (cursor_id,)
     ).fetchone()[0]
     print(f"待转录 Recording: {total_pending} 条 (游标 id={cursor_id})")
+    if retry_ids:
+        print(f"上次临时失败待重试: {len(retry_ids)} 条")
 
     already_done = 0
     already_scanned = 0
+    new_retry_ids = []  # 本次新产生的临时失败
+    resolved_retry = set()  # 本次重试解决（成功或确认永久失败）的 id
 
+    def _process_one(rid, msg_time, sender, send_val, fpath):
+        """处理单条语音转录，返回 (success, is_transient)"""
+        fname = os.path.basename(fpath)
+
+        # 预检：0字节文件为永久失败
+        try:
+            if os.path.getsize(fpath) == 0:
+                print(f"  ⊗ {fname}: 0字节空文件，永久跳过")
+                return False, False  # 未成功，非临时（永久跳过）
+        except OSError as e:
+            print(f"  ⊗ {fname}: 文件不可读 ({e})，永久跳过")
+            return False, False
+
+        nt = _normalize_time(msg_time)
+        for attempt in range(3):
+            try:
+                with open(fpath, "rb") as fh:
+                    resp = requests.post(
+                        f"{voice_url}/transcribe",
+                        files={"file": (fname, fh)},
+                        data={
+                            "account": account, "msg_time": nt,
+                            "sender": str(sender), "send": str(send_val),
+                            "source": get_device_id(),
+                        },
+                        timeout=120,
+                    )
+                if resp.ok:
+                    text = resp.json().get("text", "")
+                    if text:
+                        print(f"  ✓ {fname} → {text[:60]}...")
+                    else:
+                        print(f"  ⚠ {fname} 转录结果为空")
+                    return True, False  # 成功
+                else:
+                    is_transient = _is_transient_error(resp)
+                    tag = "临时" if is_transient else "永久"
+                    print(f"  ✗ {fname}: HTTP {resp.status_code} ({tag}，尝试{attempt+1}/3)")
+                    if is_transient and attempt < 2:
+                        time.sleep(5)
+                    elif not is_transient:
+                        return False, False  # 永久跳过
+            except Exception as e:
+                print(f"  ✗ {fname}: {e} (临时，尝试{attempt+1}/3)")
+                if attempt < 2:
+                    time.sleep(5)
+        # 3次重试后仍临时失败
+        return False, True  # 未成功，是临时错误
+
+    def _resolve_record(rid, msg_time, sender, send_val, fpath):
+        """处理一条记录并更新游标状态。"""
+        nonlocal already_done, cursor_id
+        success, is_transient = _process_one(rid, msg_time, sender, send_val, fpath)
+        if success:
+            already_done += 1
+        if is_transient:
+            new_retry_ids.append(rid)
+        else:
+            # 成功或永久失败：推进游标到此 id（retry_ids 机制保证下次运行先重试未推进的 transient 项）
+            resolved_retry.add(rid)
+            cursor_id = max(cursor_id, rid)
+        # 逐条保存游标
+        save_cursor(cursor_file, cursor_id, retry_ids + new_retry_ids)
+
+    # --- Phase 1: 先处理待重试列表 ---
+    if retry_ids:
+        print(f"\n--- 重试上次临时失败的 {len(retry_ids)} 条 ---")
+        for rid in list(retry_ids):
+            if already_done >= write_target:
+                break
+            row = conn.execute(
+                f"SELECT id, time, sender, send, content FROM [{table}] WHERE id=? AND type='Recording'",
+                (rid,),
+            ).fetchone()
+            if not row:
+                # 记录已不存在，从重试列表移除
+                resolved_retry.add(rid)
+                continue
+
+            rid2, msg_time, sender, send_val, content = row
+            fpath = _resolve_mp3(content, roots)
+            if not fpath:
+                print(f"  ⊗ id={rid}: mp3 路径无法解析，永久跳过")
+                resolved_retry.add(rid)
+                continue
+
+            nt = _normalize_time(msg_time)
+            # 先检查是否已在 hcx 转录过
+            try:
+                resp = requests.post(
+                    f"{voice_url}/transcriptions/batch",
+                    json={"account": account, "records": [[nt, str(sender)]]},
+                    timeout=30,
+                )
+                if resp.ok and resp.json().get("results", {}):
+                    print(f"  ✓ id={rid}: 已在 hcx 转录过")
+                    resolved_retry.add(rid)
+                    continue
+            except Exception:
+                pass
+
+            _resolve_record(rid2, msg_time, sender, send_val, fpath)
+
+        # 清理已解决的重试id，合并 Phase 1 新增的临时失败
+        retry_ids = [i for i in retry_ids if i not in resolved_retry] + new_retry_ids
+        new_retry_ids = []
+        save_cursor(cursor_file, cursor_id, retry_ids)
+
+    # --- Phase 2: 扫描新记录 ---
     while already_done < write_target:
         fetch_size = min(_FETCH_CAP, max(write_target - already_done, 20))
         rows = conn.execute(
@@ -282,8 +428,6 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
             print("无更多 Recording 记录")
             break
 
-        last_id = rows[-1][0]
-
         # 解析 mp3 路径
         mp3_records = []
         for r in rows:
@@ -295,11 +439,12 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
         already_scanned += len(rows)
 
         if not mp3_records:
-            save_cursor(cursor_file, last_id)
-            cursor_id = last_id
+            # 无 mp3 的记录推进游标
+            cursor_id = rows[-1][0]
+            save_cursor(cursor_file, cursor_id, retry_ids + new_retry_ids)
             continue
 
-        # 批量查已转录（最多重试2次）
+        # 批量查已转录缓存
         already_set = set()
         check_records = [(_normalize_time(t), str(s)) for _, t, s, _, _ in mp3_records]
         for attempt in range(2):
@@ -320,51 +465,46 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
                 else:
                     print(f"  ⚠ 查询已转录失败: {e}")
 
-        # 逐个上传
+        # 逐个上传，每条记录后推进游标
         for rid, msg_time, sender, send_val, fpath in mp3_records:
             if already_done >= write_target:
                 break
 
-            nt = _normalize_time(msg_time)
-            if (nt, str(sender)) in already_set:
+            # 跳过已在 Phase 1 处理但再次临时失败的记录
+            if rid in retry_ids:
                 continue
 
-            fname = os.path.basename(fpath)
-            for attempt in range(3):
-                try:
-                    with open(fpath, "rb") as fh:
-                        resp = requests.post(
-                            f"{voice_url}/transcribe",
-                            files={"file": (fname, fh)},
-                            data={"account": account, "msg_time": nt, "sender": str(sender), "send": str(send_val), "source": get_device_id()},
-                            timeout=120,
-                        )
-                    if resp.ok:
-                        data = resp.json()
-                        text = data.get("text", "")
-                        if text:
-                            already_done += 1
-                            print(f"  ✓ [{already_done}/{write_target}] {fname} → {text[:60]}...")
-                        else:
-                            print(f"  ⚠ [{already_done}/{write_target}] {fname} 转录为空")
-                            already_done += 1
-                        break
-                    else:
-                        print(f"  ✗ {fname}: HTTP {resp.status_code} (尝试{attempt+1}/3)")
-                        if attempt < 2:
-                            time.sleep(5)
-                except Exception as e:
-                    print(f"  ✗ {fname}: {e} (尝试{attempt+1}/3)")
-                    if attempt < 2:
-                        time.sleep(5)
+            nt = _normalize_time(msg_time)
+            if (nt, str(sender)) in already_set:
+                # 已在 hcx 转录过，推进游标
+                cursor_id = max(cursor_id, rid)
+                save_cursor(cursor_file, cursor_id, retry_ids + new_retry_ids)
+                continue
 
-        save_cursor(cursor_file, last_id)
-        cursor_id = last_id
+            _resolve_record(rid, msg_time, sender, send_val, fpath)
+
+        # 批次结束：游标推进到本批次最大已处理 id。
+        # 注意：cursor_id 可能跳过 transient 失败项（它们在 retry_ids 中），
+        # 下次运行时 Phase 1 会先重试 retry_ids，再扫描 id>cursor_id，因此安全。
+        batch_retry = set(new_retry_ids)
+        all_resolved = [rid for rid, _, _, _, _ in mp3_records
+                       if rid not in retry_ids and rid not in batch_retry]
+        if all_resolved:
+            cursor_id = max(all_resolved)
+            save_cursor(cursor_file, cursor_id, retry_ids + new_retry_ids)
+
+    # 合并 retry_ids
+    retry_ids = retry_ids + new_retry_ids
+    save_cursor(cursor_file, cursor_id, retry_ids)
 
     conn.close()
     pct = already_scanned / total_pending * 100 if total_pending > 0 else 100
+    transient_count = len(retry_ids)
     print(f"转录完成: 成功 {already_done} 条, 扫描 {already_scanned}/{total_pending} ({pct:.1f}%)")
-    return {"transcribed": already_done, "scanned": already_scanned}
+    if transient_count:
+        print(f"临时失败待下次重试: {transient_count} 条")
+    return {"transcribed": already_done, "scanned": already_scanned,
+            "retry_pending": transient_count}
 
 
 def clean_transcribed_mp3(db_path, account, voice_url="https://ollama.strcoder.com/voice", dry_run=True):
@@ -477,7 +617,7 @@ def push_records(db_path, account, api_url, write_target=2000, record_type=None,
     # --- 游标 ---
     cursor_dir = os.path.dirname(db_path) if os.path.dirname(db_path) else "."
     cursor_file = os.path.join(cursor_dir, f".wc_sync_cursor_{account}.json")
-    cursor_id = 0 if full else load_cursor(cursor_file)
+    cursor_id = 0 if full else load_cursor(cursor_file)[0]
 
     # --- 待处理行数（进度条分母，按过滤类型） ---
     conn = sqlite3.connect(db_path)
@@ -599,6 +739,7 @@ if __name__ == "__main__":
         help="hcx 推送接口",
     )
     parser.add_argument("--transcribe", action="store_true", help="上传 mp3 至 hcx 语音转文字")
+    parser.add_argument("--reset", action="store_true", help="(with --transcribe) 重置转录游标重新处理")
     parser.add_argument("--clean", action="store_true", help="删除本地已转录的 mp3 文件")
     parser.add_argument("--dry-run", action="store_true", help="(with --clean) 仅报告不删除")
     parser.add_argument(
@@ -621,7 +762,8 @@ if __name__ == "__main__":
     if args.stats:
         show_stats(db_path, args.account, debug_mp3=args.debug_mp3)
     elif args.transcribe:
-        transcribe_records(db_path, args.account, voice_url=args.voice_url, write_target=args.limit)
+        transcribe_records(db_path, args.account, voice_url=args.voice_url,
+                          write_target=args.limit, reset=args.reset or args.full)
     elif args.clean:
         clean_transcribed_mp3(db_path, args.account, voice_url=args.voice_url, dry_run=args.dry_run)
     else:
