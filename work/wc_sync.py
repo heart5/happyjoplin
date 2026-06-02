@@ -22,6 +22,7 @@ import sqlite3
 import sys
 import time
 import atexit
+from datetime import datetime
 
 try:
     import requests
@@ -255,6 +256,13 @@ def _normalize_time(val):
     except Exception:
         pass
     if isinstance(val, str):
+        # 解析常见 datetime 字符串格式
+        for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S'):
+            try:
+                dt = datetime.strptime(val.strip(), fmt)
+                return str(int(dt.timestamp()))
+            except ValueError:
+                continue
         try:
             return str(int(float(val)))
         except (ValueError, OverflowError):
