@@ -298,13 +298,11 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
     """启动时打印语音转录全景仪表盘。
 
     mp3文件状态通过 os.walk 快扫（非逐条 os.path.exists），秒级完成。
+    返回 local_only_records: [(rid, msg_time, sender, send_val, fpath), ...]
+    供调用方处理"mp3存在但不在库"的记录（含游标已扫过的回填记录）。
     """
     total_all = conn.execute(f"SELECT COUNT(*) FROM [{table}]").fetchone()[0]
     total_rec = conn.execute(f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording'").fetchone()[0]
-    rec_done = conn.execute(
-        f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording' AND id <= ?", (cursor_id,)
-    ).fetchone()[0]
-    rec_pending = total_rec - rec_done
 
     # 快扫：os.walk 找所有 mp3 文件，构建 {相对路径: 文件大小} 映射
     mp3_map = {}  # relpath -> size
@@ -321,15 +319,14 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
 
     # 从DB取Recording的content路径，与mp3_map交叉对比
     mp3_exist = mp3_zero = 0
-    exist_pairs = []  # (norm_time, sender) for >0 files
-    # 只取有content的Recording行
+    exist_records = []  # (rid, msg_time, sender, send_val, content) for >0 mp3
     rows = conn.execute(
-        f"SELECT id, time, sender, content FROM [{table}] "
+        f"SELECT id, time, sender, send, content FROM [{table}] "
         f"WHERE type='Recording' AND content IS NOT NULL AND content != ''"
     ).fetchall()
     mp3_missing = total_rec - len(rows)  # content为空的
 
-    for rid, msg_time, sender, content in rows:
+    for rid, msg_time, sender, send_val, content in rows:
         sz = mp3_map.get(content)
         if sz is None:
             mp3_missing += 1
@@ -337,18 +334,20 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
             mp3_zero += 1
         else:
             mp3_exist += 1
-            exist_pairs.append((normalize_time_to_unix(msg_time), str(sender)))
+            exist_records.append((rid, msg_time, sender, send_val, content))
 
     # 批量查HCX缓存：哪些mp3已在库
     in_cache = 0
-    if exist_pairs:
-        seen = set()
-        for i in range(0, len(exist_pairs), 500):
-            chunk = exist_pairs[i:i + 500]
+    seen = set()
+    if exist_records:
+        for i in range(0, len(exist_records), 500):
+            chunk = exist_records[i:i + 500]
             try:
                 resp = requests.post(
                     f"{voice_url}/transcriptions/batch",
-                    json={"account": account, "records": [[t, s] for t, s in chunk]},
+                    json={"account": account, "records": [
+                        [normalize_time_to_unix(t), str(s)] for _, t, s, _, _ in chunk
+                    ]},
                     timeout=30,
                 )
                 if resp.ok:
@@ -358,18 +357,35 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
                 pass
         in_cache = len(seen)
 
-    local_only = mp3_exist - in_cache
-    pct = rec_done / total_rec * 100 if total_rec else 0
+    # 构建"本地有mp3但不在库"的完整记录列表（供后续回填处理）
+    local_only_records = []
+    for rid, msg_time, sender, send_val, content in exist_records:
+        key = f"{normalize_time_to_unix(msg_time)}#{sender}"
+        if key not in seen:
+            fpath = _resolve_mp3(content, roots)
+            if fpath:
+                local_only_records.append((rid, msg_time, sender, send_val, fpath))
+
+    local_only = len(local_only_records)
+    # 真正待处理 = mp3存在但未入库 + 游标后的新记录（去重）
+    rec_future = conn.execute(
+        f"SELECT COUNT(*) FROM [{table}] WHERE type='Recording' AND id > ?", (cursor_id,)
+    ).fetchone()[0]
+    true_pending = local_only + len(retry_ids)
+    pct = (total_rec - true_pending) / total_rec * 100 if total_rec else 0
 
     print()
     print(f"═══ 语音转录 — {account} ═══")
     print(f"① 总记录: {total_all:,}  ② 语音: {total_rec:,}")
     print(f"③ mp3: 存在{mp3_exist:,} (已转录{in_cache:,} | 待转录{local_only:,})"
           f" | 空文件{mp3_zero:,}(跳过) | 缺失{mp3_missing:,}")
-    print(f"④ 进度: {rec_done:,}/{total_rec:,} ({pct:.1f}%) | 待处理{rec_pending:,}"
-          f"{' | 待重试'+str(len(retry_ids)) if retry_ids else ''}")
+    print(f"④ 进度: {total_rec - true_pending:,}/{total_rec:,} ({pct:.1f}%) | 待转录{local_only:,}"
+          f"{' | 待重试'+str(len(retry_ids)) if retry_ids else ''}"
+          f"{' | 游标后'+str(rec_future) if rec_future else ''}")
     print(f"   本次目标: 最多转录 {write_target} 条")
     print(f"─── 开始处理 ───")
+
+    return local_only_records
 
 
 def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/voice", write_target=50, reset=False):
@@ -399,8 +415,8 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
     roots = _get_mp3_roots(db_path)
     conn = sqlite3.connect(db_path)
 
-    # 仪表盘
-    _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_target, voice_url)
+    # 仪表盘（同时获取"mp3存在但不在库"的回填列表）
+    local_only_records = _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_target, voice_url)
 
     # 计数器
     already_done = 0       # 本次转录成功数
@@ -569,6 +585,35 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
             save_cursor(cursor_file, cursor_id, retry_ids + new_retry_ids)
 
     retry_ids = retry_ids + new_retry_ids
+
+    # ── Phase 3: 回填"本地有mp3但不在库"的记录（含游标已扫过的）──
+    if local_only_records and already_done < write_target:
+        local_resolved = set()
+        for rid, msg_time, sender, send_val, fpath in local_only_records:
+            if already_done >= write_target:
+                break
+            if rid in retry_ids or rid in resolved_retry:
+                continue
+            nt = normalize_time_to_unix(msg_time)
+            try:
+                resp = requests.post(
+                    f"{voice_url}/transcriptions/batch",
+                    json={"account": account, "records": [[nt, str(sender)]]},
+                    timeout=30,
+                )
+                if resp.ok and resp.json().get("results", {}):
+                    stat_cache += 1
+                    local_resolved.add(rid)
+                    continue
+            except Exception:
+                pass
+            _resolve_record(rid, msg_time, sender, send_val, fpath)
+            local_resolved.add(rid)
+        # Phase 3 可能新产生 retry_ids，合并进去
+        if new_retry_ids:
+            retry_ids = retry_ids + new_retry_ids
+            new_retry_ids = []
+
     save_cursor(cursor_file, cursor_id, retry_ids)
     conn.close()
 
