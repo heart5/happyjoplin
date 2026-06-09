@@ -37,6 +37,7 @@ from tzlocal import get_localzone
 import pathmagic
 
 with pathmagic.context():
+    from func.datetimetools import normalize_chinese_dates
     from func.first import getdirmain
     from func.jpfuncs import (
         createnote,
@@ -448,6 +449,7 @@ def _merge_cached_quotes(cache: dict) -> list[dict]:
 
 def _parse_spark_note(body: str, title: str, max_len: int, ptn_date, item_ptn) -> list[dict]:
     """解析单条思想火花笔记的 body，返回 [{text, source_date}]。"""
+    body = normalize_chinese_dates(body)
     sections = re.split(ptn_date, body.strip())
     date_matches = ptn_date.findall(body.strip())
 
@@ -508,6 +510,8 @@ def _get_spark_candidates() -> list[dict]:
         body = getattr(r, "body", "") or ""
         if not body:
             continue
+
+        body = normalize_chinese_dates(body)
 
         if not ptn_date.search(body):
             log.warning(f"思想火花笔记《{r.title}》无有效三级标题日期分割，跳过")

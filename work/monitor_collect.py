@@ -25,6 +25,7 @@ import pathmagic
 
 with pathmagic.context():
     from func.datatools import compute_content_hash
+    from func.datetimetools import normalize_chinese_dates
     from func.first import getdirmain
     from func.jpfuncs import getnote, searchnotes
     from func.logme import log
@@ -97,6 +98,7 @@ def parse_daily_entries(body: str, current_time: datetime) -> dict:
 
     过滤掉超过current_time后一天的日期（防异常日期）。
     """
+    body = normalize_chinese_dates(body)
     ptn = re.compile(r"^###\s+(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号])\s*$", re.M)
 
     parts = re.split(ptn, body.strip())
@@ -335,6 +337,7 @@ def _check_backfill(entry_date_str: str, current_time: datetime) -> int:
 # %%
 def _fill_empty_dates(note_id: str, body: str, current_time: datetime) -> None:
     """对于笔记中存在但未写入daily_stats的日期，填0值条目。"""
+    body = normalize_chinese_dates(body)
     ptn = re.compile(r"^###\s+(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*[日号])\s*$", re.M)
     parts = re.split(ptn, body.strip())
     if len(parts) < 3:
