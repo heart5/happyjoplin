@@ -49,7 +49,7 @@ _DEFAULT_LOAN_PLATFORMS = [
 ]
 
 _DEFAULT_LOAN_DISBURSEMENT_KEYWORDS = ["放款", "借款到账", "贷款发放", "借款成功", "借款已到账"]
-_DEFAULT_LOAN_REPAYMENT_KEYWORDS = ["还款", "应还", "自动扣款", "扣款"]
+_DEFAULT_LOAN_REPAYMENT_KEYWORDS = ["还款", "自动扣款", "扣款"]
 
 _DEFAULT_PAYMENT_METHOD_MAP = {
     "广发信用卡": ("bank_credit", "广发银行"),

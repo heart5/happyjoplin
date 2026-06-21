@@ -67,6 +67,8 @@ LOAN_PLATFORMS = get_loan_platforms()
 
 RE_CARD_SUFFIX = re.compile(r"尾[号账](\d{4})")
 RE_AMOUNT_CNY = re.compile(r"[人民币￥¥](\d+\.?\d*)")
+# 确认还款：排除"如已成功还款"/"若已成功还款"等条件前缀
+_RE_CONFIRM_REPAYMENT = re.compile(r"(?<![如若]已)成功还款")
 
 # 交易失败关键词
 _RE_FAILURE_KW = ["交易失败", "因额度不足", "因余额不足失败", "余额不足失败"]
@@ -103,12 +105,43 @@ def _is_loan_platform(org: str) -> bool:
 
 def _is_loan_disbursement(body: str) -> bool:
     """是否贷款放款（资金进入账户）。"""
+    # 先排除提醒/广告/失败类误匹配
+    if any(kw in body for kw in ("预计", "申请", "评估", "可提现", "额度", "失败")):
+        return False
     return any(kw in body for kw in get_loan_disbursement_keywords())
 
 
 def _is_loan_repayment(body: str) -> bool:
-    """是否贷款还款（资金从账户扣走）。"""
-    return any(kw in body for kw in get_loan_repayment_keywords())
+    """是否贷款还款（资金从账户扣走）。仅确认已发生的还款，排除提醒/催收。
+
+    注意：确认词优先于排除词——同一条短信可能同时含
+    "已主动还款"和"未还清"，应判定为实际还款而非提醒。
+    """
+    # 1) 明确确认已发生的还款——优先级最高
+    # "成功还款" 使用正则排除 "如已成功还款"/"若已成功还款" 条件前缀
+    if _RE_CONFIRM_REPAYMENT.search(body):
+        return True
+    if any(kw in body for kw in ("还款成功",
+                                   "已自动还款", "已主动还款",
+                                   "自动还款成功")):
+        return True
+
+    # 2) "代扣"+"失败"已在上面 catch，来自贷款平台的代扣就是实际还款
+    if "代扣" in body and "失败" not in body:
+        return True
+
+    # 3) 排除提醒/催收/失败类短信
+    reminder_kw = ("应还", "需还款", "请还款", "还款提醒", "还款日为", "本期还款",
+                   "已过期", "已逾期", "即将到期", "温馨提示",
+                   "扣款失败", "还款失败",
+                   "待还", "剩余待还",
+                   "已还忽略", "已还请忽略", "如已还款请忽略",
+                   "尽快")
+    for kw in reminder_kw:
+        if kw in body:
+            return False
+
+    return False
 
 
 # ── 金额/商户/卡号解析 ──
