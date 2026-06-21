@@ -100,14 +100,14 @@ def _is_finance_msg(msg: dict) -> bool:
     1. 发件人号码为银行/金融短号
     2. 正文含财务关键词
     """
-    address = str(msg.get("address", ""))
+    number = str(msg.get("number", ""))
     body = str(msg.get("body", ""))
 
     if not body:
         return False
 
     # 发件人是银行短号
-    if any(code in address for code in _BANK_SHORT_CODES):
+    if any(code in number for code in _BANK_SHORT_CODES):
         return True
 
     # 正文含财务关键词
@@ -204,7 +204,7 @@ class SMSCache:
             try:
                 conn.execute(
                     "INSERT OR IGNORE INTO sms_archive (id, address, body_preview, received, uploaded_at) VALUES (?,?,?,?,?)",
-                    (int(m["id"]), str(m.get("address", "")), body, str(m.get("received", "")), now)
+                    (int(m["_id"]), str(m.get("number", "")), body, str(m.get("received", "")), now)
                 )
             except (ValueError, KeyError):
                 continue
@@ -298,7 +298,7 @@ class SMSCollector:
             return []
 
         # 按 id 去重（跳过已处理的消息）
-        new_sms = [m for m in raw_sms if int(m["id"]) > last_id]
+        new_sms = [m for m in raw_sms if int(m["_id"]) > last_id]
 
         if not new_sms:
             log.info("无新短信")
@@ -368,7 +368,7 @@ class SMSCollector:
             return stats
 
         # 按 id 排序（旧→新），确保 last_sms_id 单调递增
-        messages.sort(key=lambda m: int(m["id"]))
+        messages.sort(key=lambda m: int(m["_id"]))
 
         # 分批上传
         batch_size = int(self.config["batch_size"])
@@ -379,7 +379,7 @@ class SMSCollector:
             stats["batches"] += 1
 
             # 更新本批次 max_id
-            batch_max = max(int(m["id"]) for m in batch)
+            batch_max = max(int(m["_id"]) for m in batch)
             if batch_max > max_id:
                 max_id = batch_max
 
@@ -433,7 +433,7 @@ def _show_stats():
     if is_tool_valid("termux-sms-list"):
         try:
             all_sms = termux_sms_list(num=1)
-            print(f"  手机端最新 id: {all_sms[0]['id'] if all_sms else 'N/A'}")
+            print(f"  手机端最新 id: {all_sms[0]['_id'] if all_sms else 'N/A'}")
         except Exception:
             pass
 
