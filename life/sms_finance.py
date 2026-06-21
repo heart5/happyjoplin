@@ -41,6 +41,11 @@ import pathmagic
 
 with pathmagic.context():
     from func.logme import log
+    from life.ledger.cloudcfg import (
+        get_sms_api_url, get_wechat_api_url,
+        get_bank_short_codes, get_loan_platforms,
+        get_loan_disbursement_keywords, get_loan_repayment_keywords,
+    )
 
 log = logging.getLogger("sms_finance")
 
@@ -53,26 +58,10 @@ __all__ = [
 
 # ── API 配置 ──
 
-SMS_API_URL = "https://ollama.strcoder.com/sms/query"
-WECHAT_API_URL = "https://ollama.strcoder.com/wechat/query"
-
-# ── 银行短号映射 ──
-
-BANK_SHORT_CODES = {
-    "95555": "招商银行", "95588": "工商银行", "95599": "农业银行",
-    "95566": "中国银行", "95559": "交通银行", "95533": "建设银行",
-    "95508": "广发银行", "95595": "光大银行", "95568": "民生银行",
-    "95528": "浦发银行", "95558": "中信银行", "95577": "华夏银行",
-    "95561": "兴业银行", "95580": "邮储银行", "95511": "平安银行",
-}
-
-# ── 贷款平台列表（放款/还款不计入常规收支）──
-
-LOAN_PLATFORMS = [
-    "洋钱罐", "小赢卡贷", "宜享花", "招联金融", "中邮消金",
-    "京东金融", "花呗", "借呗", "微粒贷", "木吉网络",
-    "美团月付", "美团借钱", "分期乐", "安逸花", "马上消费",
-]
+SMS_API_URL = get_sms_api_url()
+WECHAT_API_URL = get_wechat_api_url()
+BANK_SHORT_CODES = get_bank_short_codes()
+LOAN_PLATFORMS = get_loan_platforms()
 
 # ── 正则模式 ──
 
@@ -111,12 +100,12 @@ def _is_loan_platform(org: str) -> bool:
 
 def _is_loan_disbursement(body: str) -> bool:
     """是否贷款放款（资金进入账户）。"""
-    return any(kw in body for kw in ["放款", "借款到账", "贷款发放", "借款成功", "借款已到账"])
+    return any(kw in body for kw in get_loan_disbursement_keywords())
 
 
 def _is_loan_repayment(body: str) -> bool:
     """是否贷款还款（资金从账户扣走）。"""
-    return any(kw in body for kw in ["还款", "应还", "自动扣款", "扣款"])
+    return any(kw in body for kw in get_loan_repayment_keywords())
 
 
 # ── 金额/商户/卡号解析 ──
@@ -431,8 +420,7 @@ def generate_sms_report(
     lines.append("---")
     lines.append(f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}*")
     lines.append(f"*数据来源：{source_label}*")
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 
 def generate_combined_report(
@@ -504,8 +492,7 @@ def generate_combined_report(
     lines.append("---")
     lines.append(f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}*")
     lines.append("*数据来源：微信聊天记录 + 手机短信*")
-    return "
-".join(lines)
+    return "\n".join(lines)
 
 
 # ── 主流程 ──
@@ -549,10 +536,7 @@ def process_sms_month(
 
     sms_list = _fetch_sms_api(date_from, date_to)
     if not sms_list:
-        return f"# SMS 月报 — {year}年{month}月
-
-该月无短信记录。
-"
+        return f"# SMS 月报 — {year}年{month}月\n\n该月无短信记录。\n"
 
     sms_records = parse_sms_records(sms_list)
     log.info(f"SMS端: {len(sms_list)}条 → {len(sms_records)}条记录")
