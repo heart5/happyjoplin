@@ -284,6 +284,15 @@ class SMSCollector:
             log.info("无短信返回")
             return []
 
+        # termux_sms_list 的 evaloutput 不处理 JSON 数组，
+        # 返回字符串时手动解析
+        if isinstance(raw_sms, str):
+            try:
+                raw_sms = json.loads(raw_sms)
+            except (json.JSONDecodeError, TypeError) as e:
+                log.warning(f"JSON 解析失败: {e}")
+                return []
+
         if not isinstance(raw_sms, list):
             log.warning(f"返回格式异常: {type(raw_sms)}")
             return []
