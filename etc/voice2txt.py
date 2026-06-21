@@ -137,7 +137,7 @@ def v2t_funasr(vfilelst):
 
 # %%
 @timethis
-def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.strcoder.com/voice", source=None):
+def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.qingxd.com/voice", source=None):
     """单文件语音转文字，POST 到 hcx voice API。
 
     转录后服务端自动写入 v4txt_v2，客户端无需缓存。
@@ -178,7 +178,7 @@ def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.st
 
 # %%
 @timethis
-def batch_transcribe_voice(db_path, account, voice_url="https://ollama.strcoder.com/voice", limit=50, skip_existing=True, source=None):
+def batch_transcribe_voice(db_path, account, voice_url="https://ollama.qingxd.com/voice", limit=50, skip_existing=True, source=None):
     """扫描 wc_表 Recording 行，上传 mp3 至 voice API 转录。
 
     1. 从 wc_{account} 查 type='Recording' 的行（按 id DESC，优先新数据）
@@ -571,7 +571,7 @@ if __name__ == "__main__":
     parser.add_argument("--all", action="store_true", help="全量处理（不限条数，默认每次50条）")
     parser.add_argument("--account", default="白晔峰", help="微信账号")
     parser.add_argument("--limit", type=int, default=50, help="每次最多处理条数")
-    parser.add_argument("--voice-url", default="https://ollama.strcoder.com/voice", help="voice API 地址")
+    parser.add_argument("--voice-url", default="https://ollama.qingxd.com/voice", help="voice API 地址")
     args = parser.parse_args()
 
     if not_IPython():

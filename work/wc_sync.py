@@ -388,7 +388,7 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
     return local_only_records
 
 
-def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/voice", write_target=50, reset=False):
+def transcribe_records(db_path, account, voice_url="https://ollama.qingxd.com/voice", write_target=50, reset=False):
     """上传手机端 mp3 至 hcx 语音转文字。
 
     1. 打印全景仪表盘（总记录/语音/mp3状态/进度）
@@ -625,7 +625,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.strcoder.com/
             "cache_hit": stat_cache, "skipped": stat_skip, "retry_pending": stat_retry}
 
 
-def clean_transcribed_mp3(db_path, account, voice_url="https://ollama.strcoder.com/voice", dry_run=True):
+def clean_transcribed_mp3(db_path, account, voice_url="https://ollama.qingxd.com/voice", dry_run=True):
     """删除本地已转录的 mp3 文件。
 
     1. 扫描 Recording 记录，找到 mp3 存在的
@@ -853,7 +853,7 @@ if __name__ == "__main__":
     parser.add_argument("--debug-mp3", action="store_true", help="(with --stats) 调试 mp3 路径解析")
     parser.add_argument(
         "--api",
-        default="https://ollama.strcoder.com/voice/chat/sync",
+        default="https://ollama.qingxd.com/voice/chat/sync",
         help="hcx 推送接口",
     )
     parser.add_argument("--transcribe", action="store_true", help="上传 mp3 至 hcx 语音转文字")
@@ -863,7 +863,7 @@ if __name__ == "__main__":
     parser.add_argument("--force", action="store_true", help="忽略进程锁强制运行")
     parser.add_argument(
         "--voice-url",
-        default="https://ollama.strcoder.com/voice",
+        default="https://ollama.qingxd.com/voice",
         help="hcx voice API 地址",
     )
     args = parser.parse_args()

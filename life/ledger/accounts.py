@@ -88,10 +88,17 @@ class AccountManager:
                 return self._row_to_account(row)
 
         if bank:
-            row = self.db.fetchone(
-                "SELECT * FROM accounts WHERE type=? AND bank=? AND is_active=1 ORDER BY id LIMIT 1",
-                (acct_type, bank),
-            )
+            if acct_type == "loan":
+                # 贷款账户用 institution 列匹配
+                row = self.db.fetchone(
+                    "SELECT * FROM accounts WHERE type=? AND institution=? AND is_active=1 ORDER BY id LIMIT 1",
+                    (acct_type, bank),
+                )
+            else:
+                row = self.db.fetchone(
+                    "SELECT * FROM accounts WHERE type=? AND bank=? AND is_active=1 ORDER BY id LIMIT 1",
+                    (acct_type, bank),
+                )
             if row:
                 return self._row_to_account(row)
 
@@ -116,7 +123,7 @@ class AccountManager:
                 return self._row_to_account(row)
 
         row = self.db.fetchone(
-            "SELECT * FROM accounts WHERE bank=? AND is_active=1 ORDER BY id LIMIT 1",
+            "SELECT * FROM accounts WHERE bank=? AND is_active=1 ORDER BY CASE WHEN type='bank_debit' THEN 0 ELSE 1 END, id LIMIT 1",
             (bank,),
         )
         return self._row_to_account(row) if row else None

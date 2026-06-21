@@ -68,6 +68,9 @@ LOAN_PLATFORMS = get_loan_platforms()
 RE_CARD_SUFFIX = re.compile(r"尾[号账](\d{4})")
 RE_AMOUNT_CNY = re.compile(r"[人民币￥¥](\d+\.?\d*)")
 
+# 交易失败关键词
+_RE_FAILURE_KW = ["交易失败", "因额度不足", "因余额不足失败", "余额不足失败"]
+
 # ── 银行/机构名识别 ──
 
 
@@ -118,7 +121,7 @@ def _parse_amount(body: str, org: str) -> float:
         if m:
             return float(m.group(1))
     if "交通银行" in org or "建设银行" in org:
-        m = re.search(r"(?:转入资金|转出|消费|存入|支付)(\d+\.?\d*)元", body)
+        m = re.search(r"(?:网络支付转入|支付转入|转入资金|转入|转出|消费|存入|支付)(\d+\.?\d*)元", body)
         if m:
             return float(m.group(1))
     if "农业银行" in org:
@@ -171,6 +174,9 @@ def _detect_direction(body: str, org: str, is_loan: bool) -> str:
     """判断交易方向。"""
     if is_loan:
         return "收入" if _is_loan_disbursement(body) else "支出"
+    # "收款" 是入账，但注意 "收款人" 表示收款方（支出交易中的对方信息）
+    if re.search(r"收款[\d]", body):
+        return "收入"
     for kw in ["收入", "入账", "存入", "转入资金", "银联入账", "汇款", "转入"]:
         if kw in body:
             return "收入"
@@ -188,6 +194,10 @@ def _parse_record(msg: dict) -> dict:
     body = str(msg.get("body", ""))
     number = str(msg.get("number", ""))
     received = str(msg.get("received", ""))
+
+    # 过滤失败交易（额度不足/余额不足等非实际交易）
+    if any(kw in body for kw in _RE_FAILURE_KW):
+        return {"amount": 0.0, "time": received, "_skip": True}
 
     org = _detect_org(number, body)
     is_loan = _is_loan_platform(org)

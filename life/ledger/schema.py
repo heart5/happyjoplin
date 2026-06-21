@@ -140,6 +140,8 @@ SEED_CATEGORIES = [
     ("借贷-放款", "income"), ("借贷-还款", "expense"), ("借贷-其他", "expense"),
     # 内部往来
     ("内部-转账", "transfer"),
+    # 保险
+    ("保险-人寿", "expense"),
 ]
 
 SEED_ACCOUNTS = [

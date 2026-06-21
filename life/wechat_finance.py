@@ -158,7 +158,7 @@ def save_category_map(mapping: dict, path: str = None):
 
 
 def classify_merchant(merchant: str, category_map: dict = None) -> str:
-    """商户名 → 分类。完全匹配优先，否则模糊匹配。"""
+    """商户名 → 分类。完全匹配优先，否则按匹配键长度降序模糊匹配（长键优先）。"""
     if not merchant:
         return "未分类-其他"
     if category_map is None:
@@ -167,8 +167,8 @@ def classify_merchant(merchant: str, category_map: dict = None) -> str:
     # 完全匹配
     if merchant in category_map:
         return category_map[merchant]
-    # 模糊匹配：商户名包含分类键
-    for key, cat in category_map.items():
+    # 模糊匹配：商户名包含分类键，按键长度降序（避免"交通银行"误夺"交通银行信用卡"）
+    for key, cat in sorted(category_map.items(), key=lambda x: -len(x[0])):
         if key in merchant or merchant in key:
             return cat
     return "未分类-其他"
@@ -244,7 +244,7 @@ def _collect_finance_events(messages: list) -> list:
 
     for msg in messages:
         sender = msg.get("sender", "")
-        content = msg.get("content", "")
+        content = msg.get("content") or ""
         msg_time = msg.get("time", "")
         msg_type = msg.get("type", "")
 
@@ -259,6 +259,21 @@ def _collect_finance_events(messages: list) -> list:
             "source_text": content[:100],
             "raw": msg,
         }
+
+        # ── 零钱提现/充值（微信余额↔银行卡互转）──
+        if "零钱提现" in content or "零钱充值" in content:
+            m = RE_AMOUNT.search(content)
+            if m:
+                amt = float(m.group(1))
+                if amt > 0:
+                    kw = "零钱提现" if "零钱提现" in content else "零钱充值"
+                    evt["amount"] = amt
+                    evt["source"] = "paid"
+                    evt["merchant"] = kw
+                    evt["category"] = "内部-转账"
+                    evt["payment_method"] = "零钱"
+                    events.append(evt)
+                    continue
 
         # ── 微信支付消息 ──
         if sender == "微信支付":
@@ -304,6 +319,29 @@ def _collect_finance_events(messages: list) -> list:
         if sender == "微信转账助手":
             if any(kw in content for kw in _RE_TRANSFER_SKIP):
                 continue
+
+        # ── 京东白条消息（格式不同：消费金额/服务商户而非交易金额/交易商户）──
+        if sender == "京东白条":
+            # 失败通知/额度通知/非交易提醒 → 跳过
+            if any(kw in content for kw in ("失败通知", "交易到账通知", "账单", "还款", "分期", "红包")):
+                continue
+            # 交易提醒 → 提取金额和商户
+            if "交易提醒" in content:
+                m = re.search(r"消费金额[：:](\d+\.?\d*)元", content)
+                if m:
+                    amt = float(m.group(1))
+                else:
+                    amt = _parse_amount(content)
+                if amt > 0:
+                    m2 = re.search(r"服务商户[：:]\s*(.+?)(?:\n|\)|$)", content)
+                    merchant = m2.group(1).strip() if m2 else "京东白条"
+                    evt["amount"] = amt
+                    evt["source"] = "bank_expense"
+                    evt["merchant"] = merchant
+                    evt["payment_method"] = "京东白条"
+                    events.append(evt)
+                    continue
+            continue
 
         # ── 银行/信用卡消息 ──
         if _is_bank_sender(sender):
@@ -424,7 +462,9 @@ def _build_record(primary: dict, companions: list) -> dict:
 
     # 如果仍然没有商户名，用支付方式代替
     if not record["merchant"]:
-        record["merchant"] = record.get("payment_method") or "微信支付"
+        pm = record.get("payment_method") or "微信支付"
+        if pm not in ("零钱", "微信支付"):
+            record["merchant"] = pm
 
     return record
 

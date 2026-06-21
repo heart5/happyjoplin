@@ -186,6 +186,11 @@ def cmd_import_sms(args):
 
     records = parse_sms_records(sms_list)
     log.info(f"SMS: {len(sms_list)}条 → {len(records)}条财务记录")
+    from life.wechat_finance import classify_merchant, load_category_map
+    sms_cat_map = load_category_map()
+    for r in records:
+        if r.get("category", "") == "未分类-其他":
+            r["category"] = classify_merchant(r["merchant"], sms_cat_map)
     result = tx_mgr.import_sms(records, month_key)
     print(f"短信导入完成: {result} 条流水")
 
@@ -239,6 +244,9 @@ def cmd_import_all(args):
         sms_list = []
 
     sms_records = parse_sms_records(sms_list) if sms_list else []
+    for r in sms_records:
+        if r.get("category", "") == "未分类-其他":
+            r["category"] = classify_merchant(r["merchant"], cat_map)
     log.info(f"SMS: {len(sms_list)}条 → {len(sms_records)}条记录")
 
     # 归并导入

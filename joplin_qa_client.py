@@ -143,7 +143,7 @@ keys = getkeysfromcloud()
 list(keys.values())[0]
 
 # %%
-client = JoplinQAClient(base_url="https://ask.strcoder.com", api_key=list(keys.values())[0])
+client = JoplinQAClient(base_url="https://ask.qingxd.com", api_key=list(keys.values())[0])
 
 
 # %% [markdown]

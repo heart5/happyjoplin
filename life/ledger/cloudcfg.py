@@ -22,8 +22,8 @@ with pathmagic.context():
 
 # ── 硬编码默认值（云端不可用时的回退）──
 
-_DEFAULT_SMS_API_URL = "https://ollama.strcoder.com/sms/query"
-_DEFAULT_WECHAT_API_URL = "https://ollama.strcoder.com/wechat/query"
+_DEFAULT_SMS_API_URL = "https://ollama.qingxd.com/sms/query"
+_DEFAULT_WECHAT_API_URL = "https://ollama.qingxd.com/wechat/query"
 _DEFAULT_MERGE_WINDOW = 30
 
 _DEFAULT_BANK_SHORT_CODES = {
@@ -45,6 +45,7 @@ _DEFAULT_LOAN_PLATFORMS = [
     "洋钱罐", "小赢卡贷", "宜享花", "招联金融", "中邮消金",
     "京东金融", "花呗", "借呗", "微粒贷", "木吉网络",
     "美团月付", "美团借钱", "分期乐", "安逸花", "马上消费",
+    "京东白条", "网银在线京东白条",
 ]
 
 _DEFAULT_LOAN_DISBURSEMENT_KEYWORDS = ["放款", "借款到账", "贷款发放", "借款成功", "借款已到账"]
@@ -63,8 +64,9 @@ _DEFAULT_PAYMENT_METHOD_MAP = {
     "中国银行": ("bank_debit", "中国银行"),
     "交通银行": ("bank_debit", "交通银行"),
     "农业银行": ("bank_debit", "农业银行"),
-    "建设银行": ("bank_debit", "建设银行"),
     "广发银行": ("bank_debit", "广发银行"),
+    "京东白条": ("loan", "京东白条"),
+    "南京银行(白条分分卡)": ("loan", "南京银行"),
 }
 
 # ── 进程级缓存 ──

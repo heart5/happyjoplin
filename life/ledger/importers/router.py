@@ -58,6 +58,9 @@ class FlowRouter:
             for wx_evt, wi in candidates:
                 if wi in used_wx:
                     continue
+                # 内部转账（零钱提现/充值）不归并，它们是跨账户的不同交易腿
+                if wx_evt.get("category") == "内部-转账":
+                    continue
                 # 检查时间窗口
                 if self._time_diff_seconds(wx_evt.get("time", ""), sms.get("time", "")) <= MERGE_WINDOW:
                     matched = (wx_evt, wi)
@@ -109,7 +112,7 @@ class FlowRouter:
         """归并微信和短信通知为一条流水。"""
         amt = round(wx_evt.get("amount", 0), 2)
         direction = "outflow" if wx_evt.get("direction", "支出") == "支出" else "inflow"
-        payment_method = wx_evt.get("payment_method", "")
+        payment_method = wx_evt.get("payment_method", "") or sms.get("payment_method", "")
         card_suffix = sms.get("card_suffix", "")
         org = sms.get("payment_method", "")
         merchant = wx_evt.get("merchant", "") or sms.get("merchant", "")
@@ -193,7 +196,7 @@ class FlowRouter:
         f_dir = "outflow" if direction == "支出" else "inflow"
         tx_type = "expense" if direction == "支出" else "income"
 
-        return [AccountFlow(
+        flows = [AccountFlow(
             tx_date=(sms.get("time") or "")[:10],
             tx_time=sms.get("time", ""),
             amount=amt,
@@ -207,6 +210,28 @@ class FlowRouter:
             source_group_id=self._make_group_id(sms),
             raw_data=json.dumps({"sms": sms.get("source_text", "")}, ensure_ascii=False),
         )]
+
+        # 零钱充值：银行卡→微信零钱，同步生成微信零钱入账
+        source_text = sms.get("source_text", "")
+        if "零钱充值" in source_text and f_dir == "outflow":
+            wx_acct = self.acct_mgr.get_wechat_wallet()
+            if wx_acct:
+                flows.append(AccountFlow(
+                    tx_date=(sms.get("time") or "")[:10],
+                    tx_time=sms.get("time", ""),
+                    amount=amt,
+                    account_id=wx_acct.id,
+                    direction="inflow",
+                    tx_type="transfer",
+                    category_id=self._get_category_id("内部-转账"),
+                    merchant="零钱充值",
+                    counterparty="零钱充值",
+                    source="sms",
+                    source_group_id=self._make_group_id(sms),
+                    raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
+                ))
+
+        return flows
 
     def _route_loan(self, sms: dict, amt: float, category: str,
                     org: str, card_suffix: str, merchant: str) -> Optional[list]:
