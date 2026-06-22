@@ -453,6 +453,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="试跑，不上传")
     parser.add_argument("--stats", action="store_true", help="显示统计")
     parser.add_argument("--batch-size", type=int, help="单批上传条数（覆盖 INI 配置）")
+    parser.add_argument("--limit", type=int, help="拉取上限（覆盖 full_fetch_limit / incr_fetch_limit）")
     parser.add_argument("--config", help="从指定 INI 文件读取配置（不含 .ini 后缀）")
     args = parser.parse_args()
 
@@ -463,6 +464,9 @@ def main():
     config = {}
     if args.batch_size:
         config["batch_size"] = str(args.batch_size)
+    if args.limit:
+        key = "full_fetch_limit" if args.full else "incr_fetch_limit"
+        config[key] = str(args.limit)
 
     collector = SMSCollector(config=config)
     stats = collector.run(full_scan=args.full, dry_run=args.dry_run)
