@@ -226,6 +226,7 @@ def diagnose(deep: bool, quick: bool):
             print()
 
     # ──── 3) 与已入库数据对比 ────
+    server_max_id = 0
     if SMS_RECEIVED_DB.exists():
         section("3. 已上传 vs 手机端对比")
 
