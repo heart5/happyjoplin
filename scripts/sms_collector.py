@@ -300,19 +300,20 @@ class SMSCollector:
             log.warning(f"返回格式异常: {type(raw_sms)}")
             return []
 
-        # 按 id 去重（跳过已处理的消息）
-        new_sms = [m for m in raw_sms if int(m["_id"]) > last_id]
+        # 按 id 去重（全量模式不过滤，增量模式跳过已处理的）
+        if not full_scan:
+            raw_sms = [m for m in raw_sms if int(m["_id"]) > last_id]
 
-        if not new_sms:
+        if not raw_sms:
             log.info("无新短信")
             return []
 
         # 过滤财务消息
-        finance_sms = [m for m in new_sms if _is_finance_msg(m)]
+        finance_sms = [m for m in raw_sms if _is_finance_msg(m)]
 
-        skipped = len(new_sms) - len(finance_sms)
+        skipped = len(raw_sms) - len(finance_sms)
         log.info(
-            f"短信: 总计{len(raw_sms)}条, 新{len(new_sms)}条, "
+            f"短信: 总计{len(raw_sms) if full_scan else '?'}条, "
             f"财务{len(finance_sms)}条, 过滤跳过{skipped}条"
         )
 
