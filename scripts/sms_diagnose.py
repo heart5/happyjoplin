@@ -144,8 +144,15 @@ def diagnose(deep: bool, quick: bool):
 
     print("正在读取手机短信（最多 5000 条）...")
     phone_sms = termux_sms_list(num=5000)
-    if not phone_sms:
-        print("❌ termux-sms-list 返回空，检查 Termux:API 权限")
+    # termux_sms_list 经 evaloutput 返回的是 JSON 字符串（数组），需手动解析
+    if isinstance(phone_sms, str):
+        try:
+            phone_sms = json.loads(phone_sms)
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f"❌ JSON 解析失败: {e}")
+            return
+    if not phone_sms or not isinstance(phone_sms, list):
+        print("❌ termux-sms-list 返回空或格式异常，检查 Termux:API 权限")
         return
 
     phone_count = len(phone_sms)
