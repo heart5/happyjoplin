@@ -94,9 +94,7 @@ _FINANCE_KEYWORDS = [
 
 
 # 补充关键词（当前脚本漏掉的，用于对比验证）
-_EXTRA_KEYWORDS = ["扣款", "代扣", "放款", "转出", "转入", "还清",
-                   "结清", "逾期", "拖欠", "快捷支付", "网上支付",
-                   "保费", "年金", "保险"]
+_EXTRA_KEYWORDS = ["快捷支付", "网上支付", "年金"]
 
 
 def is_finance_msg(msg: dict) -> bool:
