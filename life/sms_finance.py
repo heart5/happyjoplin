@@ -13,7 +13,7 @@
 # %% [markdown]
 # # SMS 短信财务解析模块
 #
-# 通过 voice_api HTTP API 获取短信数据，解析银行通知提取金额/卡号/商户，
+# 通过 Message API 获取短信数据，解析银行通知提取金额/卡号/商户，
 # 支持与微信记录去重合并，生成综合月报。
 # 贷款类交易（放款/还款）单独归类，不计入常规收支。
 
@@ -21,7 +21,7 @@
 """
 SMS 短信财务解析模块。
 
-数据源：通过 voice_api HTTP API 获取（而非直读 SQLite）。
+数据源：通过 Message API 获取（而非直读 SQLite）。
 贷款处理：放款 = 借贷-放款（非收入），还款 = 借贷-还款（非支出）。
 
 用法：
@@ -339,7 +339,7 @@ def _parse_record(msg: dict) -> dict:
 
 
 def _fetch_sms_api(date_from: str, date_to: str) -> list:
-    """通过 voice_api HTTP API 获取短信数据。"""
+    """通过 Message API 获取短信数据。"""
     import urllib.request, json, ssl
 
     url = f"{SMS_API_URL}?date_from={date_from}&date_to={date_to}&limit=50000"
@@ -357,7 +357,7 @@ def _fetch_sms_api(date_from: str, date_to: str) -> list:
 
 
 def _fetch_wechat_api(account: str, date_from: str, date_to: str) -> list:
-    """通过 voice_api HTTP API 获取微信聊天记录。"""
+    """通过 Message API 获取微信聊天记录。"""
     import urllib.request, json, ssl
     from urllib.parse import quote
 
