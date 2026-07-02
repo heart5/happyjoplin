@@ -4,12 +4,12 @@ import json
 import re
 import hashlib
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from ..db import Database
 from ..accounts import AccountManager
-from ..cloudcfg import get_merge_window
+from ..cloudcfg import get_merge_window, get_loan_platforms
 from ..models import Account, AccountFlow
 
 __all__ = ["FlowRouter"]
@@ -30,6 +30,16 @@ class FlowRouter:
         self.db = db
         self.acct_mgr = acct_mgr
         self._cat_cache = {}  # category_name → category_id
+
+    @staticmethod
+    def _detect_loan_platform(text: str):
+        """从交易描述中检测实际贷款平台名。"""
+        if not text:
+            return None
+        for p in get_loan_platforms():
+            if p in text:
+                return p
+        return None
 
     def route_events(self, wechat_events: list, sms_records: list) -> list:
         """主入口：归并 + 匹配 + 路由。返回 AccountFlow 列表。"""
@@ -186,7 +196,9 @@ class FlowRouter:
         merchant = sms.get("merchant", "")
 
         if is_loan:
-            return self._route_loan(sms, amt, category, org, card_suffix, merchant)
+            # 从交易描述检测实际贷款平台（银行短信中可能含贷款平台名如中邮消费金融还款）
+            loan_org = self._detect_loan_platform(merchant) or org
+            return self._route_loan(sms, amt, category, org, card_suffix, merchant, loan_org)
 
         # 常规银行交易
         account = self.acct_mgr.match_by_bank_sms(org, card_suffix)
@@ -231,12 +243,42 @@ class FlowRouter:
                     raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
                 ))
 
+        # 信用卡还款：储蓄卡→信用卡，同步生成信用卡入账（负债减少）
+        tx_type_detail = sms.get("tx_type_detail", "")
+        is_cc_repayment = (
+            tx_type_detail == "transfer" and account.type == "bank_debit" and f_dir == "outflow"
+        ) or (
+            "信用卡还款" in source_text and "还款" in source_text
+        )
+        if is_cc_repayment:
+            bank = AccountManager._normalize_bank_name(org)
+            if bank:
+                credit_acct = self._find_credit_card_for_bank(bank)
+                if credit_acct and not self._has_credit_inflow(credit_acct.id, amt, sms.get("time", "")):
+                    flows.append(AccountFlow(
+                        tx_date=(sms.get("time") or "")[:10],
+                        tx_time=sms.get("time", ""),
+                        amount=amt,
+                        account_id=credit_acct.id,
+                        direction="inflow",
+                        tx_type="transfer",
+                        category_id=self._get_category_id("内部-转账"),
+                        merchant="信用卡还款入账",
+                        counterparty=account.name,
+                        source="sms",
+                        source_group_id=self._make_group_id(sms),
+                        raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
+                    ))
+
         return flows
 
     def _route_loan(self, sms: dict, amt: float, category: str,
-                    org: str, card_suffix: str, merchant: str) -> Optional[list]:
+                    org: str, card_suffix: str, merchant: str,
+                    loan_org: str = None) -> Optional[list]:
         """贷款放款/还款 → 双条分录。"""
-        loan_acct = self.acct_mgr.get_or_create_loan(org)
+        loan_acct = self.acct_mgr.get_or_create_loan(loan_org or org)
+        source_text = sms.get("source_text", "")
+        raw_data_loan = json.dumps({"sms": source_text}, ensure_ascii=False) if source_text else None
 
         if category == "借贷-放款":
             # 放款：银行 inflow + 负债 outflow（负债增加）
@@ -253,7 +295,7 @@ class FlowRouter:
                     category_id=self._get_category_id(category),
                     merchant=merchant,
                     counterparty=org,
-                    source="sms",
+                    source="sms", raw_data=raw_data_loan,
                     source_group_id=self._make_group_id(sms),
                 )]
 
@@ -268,7 +310,7 @@ class FlowRouter:
                 category_id=self._get_category_id(category),
                 merchant=merchant,
                 counterparty=org,
-                source="sms",
+                source="sms", raw_data=raw_data_loan,
                 source_group_id=group_id,
             )
             f2 = AccountFlow(
@@ -281,7 +323,7 @@ class FlowRouter:
                 category_id=self._get_category_id(category),
                 merchant=merchant,
                 counterparty=bank_acct.name if bank_acct else "",
-                source="sms",
+                source="sms", raw_data=raw_data_loan,
                 source_group_id=group_id,
             )
             return [f1, f2]
@@ -300,7 +342,7 @@ class FlowRouter:
                     category_id=self._get_category_id(category),
                     merchant=merchant,
                     counterparty=org,
-                    source="sms",
+                    source="sms", raw_data=raw_data_loan,
                     source_group_id=self._make_group_id(sms),
                 )]
 
@@ -315,7 +357,7 @@ class FlowRouter:
                 category_id=self._get_category_id(category),
                 merchant=merchant,
                 counterparty=org,
-                source="sms",
+                source="sms", raw_data=raw_data_loan,
                 source_group_id=group_id,
             )
             f2 = AccountFlow(
@@ -328,12 +370,40 @@ class FlowRouter:
                 category_id=self._get_category_id(category),
                 merchant=merchant,
                 counterparty=bank_acct.name if bank_acct else "",
-                source="sms",
+                source="sms", raw_data=raw_data_loan,
                 source_group_id=group_id,
             )
             return [f1, f2]
 
         return None
+
+    # ── 信用卡双条分录 ──
+
+    def _find_credit_card_for_bank(self, bank_name: str) -> Optional[Account]:
+        """找到指定银行的信用卡账户（还款双条分录用）。"""
+        row = self.db.fetchone(
+            "SELECT * FROM accounts WHERE type='bank_credit' AND bank=? AND is_active=1 ORDER BY id LIMIT 1",
+            (bank_name,),
+        )
+        if row:
+            return AccountManager._row_to_account(row)
+        return None
+
+    def _has_credit_inflow(self, credit_acct_id: int, amount: float, tx_date: str, days: int = 2) -> bool:
+        """检查信用卡在时间窗口内是否已有同等金额的还款入账（防重复）。"""
+        try:
+            dt = datetime.strptime(tx_date[:10], "%Y-%m-%d")
+            start = (dt - timedelta(days=days)).strftime("%Y-%m-%d")
+            end = (dt + timedelta(days=days)).strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            return False
+        row = self.db.fetchone(
+            """SELECT COUNT(*) as cnt FROM account_flows
+               WHERE account_id=? AND direction='inflow' AND amount=?
+               AND tx_date BETWEEN ? AND ?""",
+            (credit_acct_id, amount, start, end),
+        )
+        return row and row["cnt"] > 0
 
     # ── 辅助 ──
 
@@ -396,12 +466,43 @@ class FlowRouter:
 
     @staticmethod
     def _dedup_flows(flows: list) -> list:
-        """去除完全重复的流水（相同 account + amount + date + direction）。"""
-        seen = set()
+        """去除重复流水。
+
+        精确匹配：相同 account + amount + date + direction。
+        贷款近匹配：相同 account + amount + direction，日期在 ±2 天内。
+        """
+        seen_exact = set()
+        seen_loan = []  # [(account_id, amount, direction, tx_date)]
         result = []
         for f in flows:
-            key = (f.account_id, round(f.amount, 2), f.tx_date, f.direction)
-            if key not in seen:
-                seen.add(key)
-                result.append(f)
+            amt = round(f.amount, 2)
+            key = (f.account_id, amt, f.tx_date, f.direction)
+
+            # 精确匹配
+            if key in seen_exact:
+                continue
+            seen_exact.add(key)
+
+            # 贷款近匹配：同一 account + amount + direction 且在 ±3 天内
+            is_loan_type = f.tx_type in ("loan_repayment", "loan_disbursement")
+            if is_loan_type:
+                try:
+                    f_date = datetime.strptime(f.tx_date[:10], "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    result.append(f)
+                    continue
+
+                is_dup = False
+                for sid, s_amt, s_dir, s_date in seen_loan:
+                    if sid == f.account_id and s_amt == amt and s_dir == f.direction:
+                        d_diff = abs((f_date - s_date).days)
+                        if d_diff <= 3:
+                            is_dup = True
+                            break
+
+                if is_dup:
+                    continue
+                seen_loan.append((f.account_id, amt, f.direction, f_date))
+
+            result.append(f)
         return result

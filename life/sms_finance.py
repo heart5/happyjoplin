@@ -13,7 +13,7 @@
 # %% [markdown]
 # # SMS 短信财务解析模块
 #
-# 通过 voice_api HTTP API 获取短信数据，解析银行通知提取金额/卡号/商户，
+# 通过 Message API 获取短信数据，解析银行通知提取金额/卡号/商户，
 # 支持与微信记录去重合并，生成综合月报。
 # 贷款类交易（放款/还款）单独归类，不计入常规收支。
 
@@ -21,7 +21,7 @@
 """
 SMS 短信财务解析模块。
 
-数据源：通过 voice_api HTTP API 获取（而非直读 SQLite）。
+数据源：通过 Message API 获取（而非直读 SQLite）。
 贷款处理：放款 = 借贷-放款（非收入），还款 = 借贷-还款（非支出）。
 
 用法：
@@ -43,9 +43,11 @@ with pathmagic.context():
     from func.logme import log
     from life.ledger.cloudcfg import (
         get_sms_api_url, get_wechat_api_url,
-        get_bank_short_codes, get_loan_platforms,
+        get_bank_short_codes, get_bank_number_prefixes,
+        get_loan_platforms,
         get_loan_disbursement_keywords, get_loan_repayment_keywords,
     )
+    from life.sms_bank_parsers import dispatch as bank_parser_dispatch, parse_to_dict
 
 log = logging.getLogger("sms_finance")
 
@@ -77,18 +79,31 @@ _RE_FAILURE_KW = ["交易失败", "因额度不足", "因余额不足失败", "�
 
 
 def _detect_org(number: str, body: str) -> str:
-    """识别短信发件机构名。"""
-    if number in BANK_SHORT_CODES:
-        return BANK_SHORT_CODES[number]
+    """识别短信发件机构名。
 
-    for prefix, name in sorted(BANK_SHORT_CODES.items(), key=lambda x: -len(x[0])):
+    匹配顺序：
+    1. 号码前缀匹配（先长后短，含106开头长号码）
+    2. 正文【银行名】或[银行名]
+    3. 回落 number 原文
+    """
+    # 1) 用全量号码前缀映射匹配
+    number_prefixes = get_bank_number_prefixes()
+    # 按前缀长度降序排列，长前缀优先
+    sorted_prefixes = sorted(number_prefixes.items(), key=lambda x: -len(x[0]))
+    for prefix, name in sorted_prefixes:
         if number.startswith(prefix):
             return name
 
+    # 2) 正文提取：【】或[]
     m = re.search(r"[【](.+?)[】]", body)
     if m:
         name = m.group(1).strip()
         name = re.sub(r"(尊敬的|您好).*", "", name).strip()
+        if name and len(name) < 25:
+            return name
+    m = re.search(r"\[(.+?)\]", body)
+    if m:
+        name = m.group(1).strip()
         if name and len(name) < 25:
             return name
 
@@ -121,7 +136,7 @@ def _is_loan_repayment(body: str) -> bool:
     # "成功还款" 使用正则排除 "如已成功还款"/"若已成功还款" 条件前缀
     if _RE_CONFIRM_REPAYMENT.search(body):
         return True
-    if any(kw in body for kw in ("还款成功",
+    if any(kw in body for kw in ("还款成功", "还款已成功",
                                    "已自动还款", "已主动还款",
                                    "自动还款成功")):
         return True
@@ -222,13 +237,69 @@ def _detect_direction(body: str, org: str, is_loan: bool) -> str:
 # ── 单条解析 ──
 
 
+def _reclassify_loan(result: dict, body: str):
+    """检查银行解析器结果是否应重分类为贷款交易。
+
+    银行解析器（尤其兜底 _parse_fallback）可能无法识别贷款平台，
+    此函数根据 org/body 重新判断是否贷款交易。
+
+    返回重分类后的 result，或 None（贷款平台提醒消息，应跳过）。
+    """
+    org = result.get("payment_method", "")
+    if not org:
+        # 也检查正文是否含已知贷款平台名
+        for p in get_loan_platforms():
+            if p in body:
+                org = p
+                result["payment_method"] = p
+                break
+    if not org:
+        return result
+    if not _is_loan_platform(org):
+        return result
+
+    # 判断是否为实际放款/还款交易
+    is_disbursement = _is_loan_disbursement(body)
+    is_repayment = _is_loan_repayment(body)
+
+    if not is_disbursement and not is_repayment:
+        # 既非放款也非还款，说明是提醒/逾期/通知类消息，跳过
+        return None
+
+    result["is_loan"] = True
+    result["category"] = "借贷-放款" if is_disbursement else "借贷-还款"
+    return result
+
+
 def _parse_record(msg: dict) -> dict:
-    """单条短信 → 财务记录。"""
+    """单条短信 → 财务记录。
+
+    先尝试银行专用解析器（dispatch），
+    专用解析器不命中时回退通用解析。
+    """
     body = str(msg.get("body", ""))
     number = str(msg.get("number", ""))
     received = str(msg.get("received", ""))
 
-    # 过滤失败交易（额度不足/余额不足等非实际交易）
+    # 1) 尝试银行专用解析器
+    parsed = bank_parser_dispatch(number, body, received)
+    if parsed is not None and not parsed._skip:
+        result = parse_to_dict(parsed)
+        result["time"] = received
+        # 银行解析器（尤其兜底 _parse_fallback）可能没识别贷款平台，
+        # 检查是否应重分类为贷款交易
+        if not result.get("is_loan"):
+            reclassified = _reclassify_loan(result, body)
+            if reclassified is None:
+                # 贷款平台提醒消息，跳过
+                return {"amount": 0.0, "time": received, "_skip": True}
+            result = reclassified
+        return result
+    if parsed is not None and parsed._skip:
+        return parse_to_dict(parsed)
+
+    # 2) 回落旧版通用解析
+    # 过滤失败交易
     if any(kw in body for kw in _RE_FAILURE_KW):
         return {"amount": 0.0, "time": received, "_skip": True}
 
@@ -245,7 +316,8 @@ def _parse_record(msg: dict) -> dict:
         elif _is_loan_repayment(body):
             category = "借贷-还款"
         else:
-            category = "借贷-其他"
+            # 既非放款也非还款，说明是提醒/逾期/通知类消息，跳过
+            return {"amount": 0.0, "time": received, "_skip": True}
     else:
         category = "未分类-其他"
 
@@ -267,7 +339,7 @@ def _parse_record(msg: dict) -> dict:
 
 
 def _fetch_sms_api(date_from: str, date_to: str) -> list:
-    """通过 voice_api HTTP API 获取短信数据。"""
+    """通过 Message API 获取短信数据。"""
     import urllib.request, json, ssl
 
     url = f"{SMS_API_URL}?date_from={date_from}&date_to={date_to}&limit=50000"
@@ -285,7 +357,7 @@ def _fetch_sms_api(date_from: str, date_to: str) -> list:
 
 
 def _fetch_wechat_api(account: str, date_from: str, date_to: str) -> list:
-    """通过 voice_api HTTP API 获取微信聊天记录。"""
+    """通过 Message API 获取微信聊天记录。"""
     import urllib.request, json, ssl
     from urllib.parse import quote
 

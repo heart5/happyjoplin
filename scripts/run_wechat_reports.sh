@@ -51,7 +51,7 @@ echo "月报合并完成: $COMBINED"
 
 # 4. 上传到 Joplin
 echo "--- 上传 Joplin ---"
-python etc/md2note.py "$COMBINED" \
+python -m func.tools.md2note "$COMBINED" \
     --title "微信数据月报 - ${MONTH_LABEL}" \
     --notebook "ewmobile" \
     --quiet
