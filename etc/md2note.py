@@ -156,15 +156,16 @@ def sync_file(
 
     if is_new:
         results = searchnotes(title)
-        if results:
-            note_id = results[0].id
-            log.info(f"标题《{title}》匹配已有笔记{note_id}，补录映射")
+        hit = next((r for r in results if r.title == title), None)
+        if hit:
+            note_id = hit.id
+            log.info(f"标题《{title}》精确匹配已有笔记{note_id}，补录映射")
         else:
             note_id = createnote(title, body, parent_id=parent_id)
             log.info(f"新建笔记《{title}》（{note_id}）")
-            _save(fpath, note_id, title, current_mtime)
-            if not quiet:
-                print(f"已创建笔记《{title}》← {fpath}")
+        _save(fpath, note_id, title, current_mtime)
+        if not quiet:
+            print(f"已创建笔记《{title}》← {fpath}")
     else:
         updatenote_body(note_id, body)
 
