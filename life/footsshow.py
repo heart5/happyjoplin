@@ -861,8 +861,14 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
     str，包含地图底图的轨迹图的资源ID
     """
     try:
+        import signal
         import contextily as ctx
         ctx.set_cache_dir('/data/ctx_cache')  # 瓦片缓存固定到数据盘，跨日复用防 /tmp 写满
+
+        def _timeout_handler(signum, frame):
+            raise TimeoutError("底图下载超时（10秒）")
+
+        signal.signal(signal.SIGALRM, _timeout_handler)
 
         figsize, lon_margin, lat_margin = compute_figsizes(df, config)
         fig, ax = plt.subplots(figsize=figsize)
@@ -919,47 +925,17 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         ax.set_xlim(min_lon - lon_margin, max_lon + lon_margin)
         ax.set_ylim(min_lat - lat_margin, max_lat + lat_margin)
 
-        # 2. 计算合适的缩放级别
-        lon_range = max_lon - min_lon
-        lat_range = max_lat - min_lat
-        max_range = max(lon_range, lat_range)
-
-        # 根据数据范围动态确定缩放级别
-        # 更精确的缩放级别映射
-        if max_range < 0.001:  # 非常小的范围（约100米）
-            zoom_level = 18
-        elif max_range < 0.005:  # 约500米
-            zoom_level = 16
-        elif max_range < 0.01:  # 约1公里
-            zoom_level = 15
-        elif max_range < 0.05:  # 约5公里
-            zoom_level = 14
-        elif max_range < 0.1:  # 约10公里
-            zoom_level = 13
-        elif max_range < 0.5:  # 约50公里
-            zoom_level = 12
-        else:  # 大范围
-            zoom_level = 10
-
-        # 3. 使用高分辨率地图源
+        # 2. 加载地图底图（单源 OSM，10 秒超时保护；超时或失败由外层降级）
+        signal.alarm(10)
         try:
-            # 尝试使用Stamen Terrain背景，通常提供较高清晰度
-            ctx.add_basemap(
-                ax,
-                crs="EPSG:4326",
-                source=ctx.providers.Stamen.Terrain.background,
-                zoom=zoom_level,  # 指定缩放级别
-                alpha=0.8,
-            )
-        except Exception:
-            # 备用方案：使用OpenStreetMap但指定缩放级别
             ctx.add_basemap(
                 ax,
                 crs="EPSG:4326",
                 source=ctx.providers.OpenStreetMap.Mapnik,
-                zoom=zoom_level,
                 alpha=0.8,
             )
+        finally:
+            signal.alarm(0)
 
         # 4. 设置标题和标签
         ax.set_title(f"{scope.capitalize()}位置轨迹（带地图底图）", fontsize=14)
