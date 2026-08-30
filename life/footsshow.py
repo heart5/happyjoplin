@@ -862,6 +862,7 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
     """
     try:
         import contextily as ctx
+        ctx.set_cache_dir('/data/ctx_cache')  # 瓦片缓存固定到数据盘，跨日复用防 /tmp 写满
 
         figsize, lon_margin, lat_margin = compute_figsizes(df, config)
         fig, ax = plt.subplots(figsize=figsize)
