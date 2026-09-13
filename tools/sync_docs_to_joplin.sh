@@ -12,7 +12,8 @@ echo "[$LOGGER_TAG] 同步 .md 文件到 Joplin..."
 cd "$PROJ_ROOT" || exit 1
 python -m func.tools.md2note --find-files --notebook happyjoplin --quiet
 echo "[$LOGGER_TAG] 同步完成，通知 TC 触发 joplin sync..."
-ssh tc "/usr/miniconda3/bin/conda run -n newlsp joplin sync" 2>/dev/null && \
+# 勿用 conda run/activate newlsp 包裹：该环境 node v18 跑 /usr/bin/joplin 会 ERR_REQUIRE_ESM
+ssh tc "joplin sync" 2>/dev/null && \
   echo "[$LOGGER_TAG] TC joplin sync 完成" || \
   echo "[$LOGGER_TAG] TC joplin sync 跳过（非阻塞）"
 echo "[$LOGGER_TAG] 完成"
