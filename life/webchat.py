@@ -796,12 +796,14 @@ def _sync_tc_joplin():
     import subprocess
 
     try:
-        subprocess.run(
-            "ssh tc 'source /usr/miniconda3/bin/activate newlsp && "
-            "conda activate newlsp && joplin sync'",
+        res = subprocess.run(
+            "ssh tc 'joplin sync'",
             shell=True, timeout=30, capture_output=True,
         )
-        log.info("tc Joplin同步完成")
+        if res.returncode == 0:
+            log.info("tc Joplin同步完成")
+        else:
+            log.error(f"tc Joplin同步失败: {res.stderr.decode(errors='replace')[:200]}")
     except Exception as e:
         log.error(f"tc Joplin同步失败: {e}")
 
