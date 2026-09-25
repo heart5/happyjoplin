@@ -171,3 +171,7 @@ cython_debug/
 
 # 文档含敏感信息，不公开
 docs/
+
+# 本地备份与会话配置
+itchat.pkl.bak*
+.claude/
