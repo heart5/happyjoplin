@@ -370,15 +370,19 @@ def update_wcitems_to_note(name: str, df4name: pd.DataFrame, wc_path: Path, note
             f"本地资源的记录数量（{itemnum}），登记的记录数量（{itemsnum4net}）"
             f"和笔记中登记的记录数量（{itemsnumfromnet}）三不相同，从笔记端拉取融合"
         )
-    resources = getreslst(xlsx_note_id)
-    if len(resources) != 0:
-        dfromnote = pd.DataFrame()
-        filetmp = wc_path / "wccitems_from_net.xlsx"
-        for res in resources:
-            fh = open(filetmp, "wb")
-            fh.write(res.get("contentb"))
-            fh.close()
-            dfromnote = pd.concat([dfromnote, pd.read_excel(filetmp)])
+    # getreslst 是生成器，只能遍历一次：下载时顺带把 (id, title) 记进 res_ids，
+    # 供函数末尾删除旧资源用——否则那一步遍历到的是空生成器，旧资源永远删不掉、越积越多
+    res_ids = []
+    dfromnote = pd.DataFrame()
+    filetmp = wc_path / "wccitems_from_net.xlsx"
+    for res in getreslst(xlsx_note_id):
+        res_ids.append((res.get("id"), res.get("title")))
+        fh = open(filetmp, "wb")
+        fh.write(res.get("contentb"))
+        fh.close()
+        dfromnote = pd.concat([dfromnote, pd.read_excel(filetmp)])
+
+    if len(res_ids) != 0:
         dfcombine = pd.concat([dfromnote, df4name])
         ptn = re.compile(r"^/.+happyjoplin/")
         dfcombine.loc[:, "content"] = dfcombine["content"].apply(
@@ -422,9 +426,9 @@ def update_wcitems_to_note(name: str, df4name: pd.DataFrame, wc_path: Path, note
         note_parts = [note_desc, first_note_tail]
     resultstr = "\n\n---\n".join(note_parts)
     df4name.to_excel(xlsx_abs_path, engine="xlsxwriter", index=False)
-    for res in resources:
-        jpapi.delete_resource(res.get("id"))
-        log.critical(f"资源文件《{res.get('title')}》（id：{res.get('id')}）被从系统中删除！")
+    for rid, rtitle in res_ids:
+        jpapi.delete_resource(rid)
+        log.critical(f"资源文件《{rtitle}》（id：{rid}）被从系统中删除！")
 
     res_id = jpapi.add_resource(xlsx_abs_path)
     link_desc = f"[{xlsx_abs_path}](:/{res_id})\n\n"
@@ -530,18 +534,16 @@ def merge_to_note(dfdict: dict, wc_path: Path, notebook_id: str, newfileonly: bo
             )
             misslstfromnote = [fl for fl in fllstfromnote if fl[0] not in xlsxfllstfromlocal]
             for fl, guid, num in misslstfromnote:
-                resources = getreslst(guid)
-                if len(resources) != 0:
-                    for res in resources:
-                        flfull = wc_path / fl
-                        fh = open(flfull, "wb")
-                        fh.write(res["contentb"])
-                        fh.close()
-                        dftest = pd.read_excel(flfull)
-                        setcfpoptionvalue("happyjpwcitems", fl, "guid", guid)
-                        setcfpoptionvalue("happyjpwcitems", fl, "itemsnum", str(dftest.shape[0]))
-                        setcfpoptionvalue("happyjpwcitems", fl, "itemsnum4net", str(dftest.shape[0]))
-                        log.info(f"文件《{fl}》在本地不存在，从云端获取存入并更新ini（section：{fl}，guid：{guid}）")
+                for res in getreslst(guid):
+                    flfull = wc_path / fl
+                    fh = open(flfull, "wb")
+                    fh.write(res["contentb"])
+                    fh.close()
+                    dftest = pd.read_excel(flfull)
+                    setcfpoptionvalue("happyjpwcitems", fl, "guid", guid)
+                    setcfpoptionvalue("happyjpwcitems", fl, "itemsnum", str(dftest.shape[0]))
+                    setcfpoptionvalue("happyjpwcitems", fl, "itemsnum4net", str(dftest.shape[0]))
+                    log.info(f"文件《{fl}》在本地不存在，从云端获取存入并更新ini（section：{fl}，guid：{guid}）")
 
         xlsxfllst = sorted([fl for fl in os.listdir(wc_path) if re.search(ptn, fl)])
         if newfileonly:
