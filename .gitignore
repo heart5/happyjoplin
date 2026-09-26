@@ -175,3 +175,6 @@ docs/
 # 本地备份与会话配置
 itchat.pkl.bak*
 .claude/
+
+# 本地临时测试脚本，非项目代码
+etc/test_ollama.py
