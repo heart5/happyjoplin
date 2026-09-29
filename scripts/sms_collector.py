@@ -61,7 +61,7 @@ __all__ = ["SMSCollector", "main"]
 # ── 默认配置（由 INI 文件覆盖）──
 
 DEFAULT_CONFIG = {
-    "hcx_url": "https://long9.org/sms/upload",
+    "hcx_url": "https://ollama.qingxd.com/sms/upload",
     "api_key": "",
     "batch_size": "200",       # 单批上传条数
     "full_fetch_limit": "5000",  # 全量拉取上限
