@@ -39,6 +39,7 @@
 """
 
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -70,6 +71,10 @@ DEFAULT_CONFIG = {
 
 INI_FILE = "happyjphard"
 INI_SECTION = "sms_collector"
+
+# 并发锁文件 + 过期时间（秒）
+LOCK_FILE = "/data/data/com.termux/files/usr/tmp/sms_collector.lock"
+LOCK_TIMEOUT = 300  # 超过 5 分钟视为死锁，强制获取
 
 # ── 财务消息过滤 ──
 
@@ -252,6 +257,30 @@ class SMSCollector:
             if val:
                 self.config[key] = val
 
+    def _acquire_lock(self) -> bool:
+        """获取文件锁，防止并发运行。已过期锁自动覆盖。"""
+        try:
+            if os.path.exists(LOCK_FILE):
+                mtime = os.path.getmtime(LOCK_FILE)
+                if time.time() - mtime < LOCK_TIMEOUT:
+                    log.warning(f"上一实例仍在运行（锁文件 {LOCK_FILE} 未过期），跳过本次执行")
+                    return False
+                log.info(f"锁文件已过期（{time.time() - mtime:.0f}s），覆盖")
+            Path(LOCK_FILE).parent.mkdir(parents=True, exist_ok=True)
+            Path(LOCK_FILE).write_text(str(os.getpid()))
+            return True
+        except Exception as e:
+            log.error(f"获取锁文件失败: {e}")
+            return True  # 锁文件出问题时宁可放行，不阻塞采集
+
+    def _release_lock(self):
+        """释放文件锁。"""
+        try:
+            if os.path.exists(LOCK_FILE):
+                os.remove(LOCK_FILE)
+        except Exception:
+            pass
+
     # ── 短信获取 ──
 
     def fetch_messages(self, full_scan: bool = False) -> list:
@@ -359,6 +388,22 @@ class SMSCollector:
 
         返回统计信息 dict。
         """
+        stats = {
+            "fetched": 0, "uploaded": 0, "batches": 0,
+            "errors": 0, "duration_seconds": 0,
+        }
+
+        if not self._acquire_lock():
+            stats["errors"] = 1
+            stats["duration_seconds"] = round(time.time() - self.session_start, 1)
+            return stats
+
+        try:
+            return self._do_run(full_scan=full_scan, dry_run=dry_run)
+        finally:
+            self._release_lock()
+
+    def _do_run(self, full_scan: bool = False, dry_run: bool = False) -> dict:
         stats = {
             "fetched": 0, "uploaded": 0, "batches": 0,
             "errors": 0, "duration_seconds": 0,
