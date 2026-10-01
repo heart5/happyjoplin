@@ -19,6 +19,7 @@
 # ## 引入库
 
 # %%
+import math
 import os
 import random
 import time
@@ -136,6 +137,14 @@ def _safe_add_resource(data: bytes, title: str, max_tries: int = 3) -> str:
 # ## 数据加载函数
 
 # %% [markdown]
+# ### 数据边界常量
+# 中国境内包围盒（lat_min, lat_max, lng_min, lng_max），剔除 (0,0) 与境外异常定位点，与 traveldaily 同源
+
+# %%
+_CHINA_BBOX = (18.0, 54.0, 73.0, 135.0)
+
+
+# %% [markdown]
 # ### load_location_data(scope, config: Config)
 # 加载指定范围的位置数据
 
@@ -199,6 +208,14 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
     else:
         df = pd.concat(monthly_dfs).reset_index(drop=True)
         outdf = df[(df["time"] >= start_date) & (df["time"] <= end_date)]
+        # 剔除 (0,0)/境外异常定位（GPS 漂移曾报出巴黎、南非点，撑爆轨迹图幅）
+        before = len(outdf)
+        outdf = outdf[
+            outdf["latitude"].between(_CHINA_BBOX[0], _CHINA_BBOX[1])
+            & outdf["longitude"].between(_CHINA_BBOX[2], _CHINA_BBOX[3])
+        ].reset_index(drop=True)
+        if len(outdf) < before:
+            log.warning(f"{scope}: 剔除境外/无效坐标 {before - len(outdf)} 条")
 
     return outdf
 
@@ -845,6 +862,95 @@ def compute_figsizes(df: pd.DataFrame, config: Config) -> tuple:
 
 
 # %% [markdown]
+# ### 高德底图与坐标转换（OSM 已 403 封禁，弃用）
+
+# %%
+# 瓦片源＝高德（GCJ-02）。数据源 XLSX 为 WGS-84，绘图前须先转 GCJ-02，
+# 否则轨迹与底图错位约 500 米。转换函数与 geotrace/app.py 同源。
+AMAP_TILE_URL = (
+    "https://webrd0{s}.is.autonavi.com/appmaptile"
+    "?lang=zh_cn&size=1&scale=2&style=8&x={x}&y={y}&z={z}"
+)
+AMAP_ATTR = "© 高德地图"
+AMAP_SUBDOMAINS = "1234"
+
+_A = 6378245.0
+_EE = 0.00669342162296594323
+
+
+def _transform_lat(x, y):
+    ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * math.sqrt(abs(x))
+    ret += (20.0 * math.sin(6.0 * x * math.pi) + 20.0 * math.sin(2.0 * x * math.pi)) * 2.0 / 3.0
+    ret += (20.0 * math.sin(y * math.pi) + 40.0 * math.sin(y / 3.0 * math.pi)) * 2.0 / 3.0
+    ret += (160.0 * math.sin(y / 12.0 * math.pi) + 320 * math.sin(y * math.pi / 30.0)) * 2.0 / 3.0
+    return ret
+
+
+def _transform_lng(x, y):
+    ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * math.sqrt(abs(x))
+    ret += (20.0 * math.sin(6.0 * x * math.pi) + 20.0 * math.sin(2.0 * x * math.pi)) * 2.0 / 3.0
+    ret += (20.0 * math.sin(x * math.pi) + 40.0 * math.sin(x / 3.0 * math.pi)) * 2.0 / 3.0
+    ret += (150.0 * math.sin(x / 12.0 * math.pi) + 300.0 * math.sin(x / 30.0 * math.pi)) * 2.0 / 3.0
+    return ret
+
+
+def wgs84_to_gcj02(lat, lng):
+    """WGS84 → GCJ-02（高德/火星坐标系）。中国境外坐标原样返回。"""
+    if lng < 72.004 or lng > 137.8347 or lat < 0.8293 or lat > 55.8271:
+        return lat, lng
+    dlat = _transform_lat(lng - 105.0, lat - 35.0)
+    dlng = _transform_lng(lng - 105.0, lat - 35.0)
+    radlat = lat / 180.0 * math.pi
+    magic = math.sin(radlat)
+    magic = 1 - _EE * magic * magic
+    sqrtmagic = math.sqrt(magic)
+    dlat = (dlat * 180.0) / ((_A * (1 - _EE)) / (magic * sqrtmagic) * math.pi)
+    dlng = (dlng * 180.0) / (_A / sqrtmagic * math.cos(radlat) * math.pi)
+    return lat + dlat, lng + dlng
+
+
+def _to_gcj02_df(df: pd.DataFrame) -> pd.DataFrame:
+    """经纬度列 WGS-84 → GCJ-02 的转换副本（其余列原样）。"""
+    coords = [wgs84_to_gcj02(la, lo) for la, lo in zip(df["latitude"], df["longitude"])]
+    out = df.copy()
+    out["latitude"] = [c[0] for c in coords]
+    out["longitude"] = [c[1] for c in coords]
+    return out
+
+
+def _amap_xyz_provider():
+    """contextily 用高德瓦片源（XYZ 模板）。"""
+    from xyzservices import TileProvider
+
+    return TileProvider(
+        name="高德地图",
+        url=AMAP_TILE_URL,
+        subdomains=list(AMAP_SUBDOMAINS),
+        attribution=AMAP_ATTR,
+        max_zoom=18,
+    )
+
+
+def _add_amap_basemap(ax, attempts: int = 5, **basemap_kwargs) -> None:
+    """contextily 高德底图加载 + 重试。
+
+    高德瓦片偶发 TLS 握手失败/连接中断，单块瓦片失败会中断整次抓取；
+    已成功的瓦片进本地缓存，重试实际只补缺块。
+    """
+    import contextily as ctx
+
+    last: Optional[Exception] = None
+    for i in range(attempts):
+        try:
+            ctx.add_basemap(ax, crs="EPSG:4326", source=_amap_xyz_provider(), **basemap_kwargs)
+            return
+        except Exception as e:
+            last = e
+            time.sleep(1 + i)
+    log.warning(f"底图加载失败（{attempts} 次重试后）: {last}")
+
+
+# %% [markdown]
 # ### generate_trajectory_map(df, scope, config)
 
 
@@ -861,14 +967,9 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
     str，包含地图底图的轨迹图的资源ID
     """
     try:
-        import signal
         import contextily as ctx
         ctx.set_cache_dir('/data/ctx_cache')  # 瓦片缓存固定到数据盘，跨日复用防 /tmp 写满
-
-        def _timeout_handler(signum, frame):
-            raise TimeoutError("底图下载超时（10秒）")
-
-        signal.signal(signal.SIGALRM, _timeout_handler)
+        df = _to_gcj02_df(df)  # 高德瓦片为 GCJ-02，先纠正坐标系
 
         figsize, lon_margin, lat_margin = compute_figsizes(df, config)
         fig, ax = plt.subplots(figsize=figsize)
@@ -925,17 +1026,8 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         ax.set_xlim(min_lon - lon_margin, max_lon + lon_margin)
         ax.set_ylim(min_lat - lat_margin, max_lat + lat_margin)
 
-        # 2. 加载地图底图（单源 OSM，10 秒超时保护；超时或失败由外层降级）
-        signal.alarm(10)
-        try:
-            ctx.add_basemap(
-                ax,
-                crs="EPSG:4326",
-                source=ctx.providers.OpenStreetMap.Mapnik,
-                alpha=0.8,
-            )
-        finally:
-            signal.alarm(0)
+        # 2. 加载地图底图（高德瓦片 + 重试；失败由外层降级为无底图）
+        _add_amap_basemap(ax, attempts=5, alpha=0.8)
 
         # 4. 设置标题和标签
         ax.set_title(f"{scope.capitalize()}位置轨迹（带地图底图）", fontsize=14)
@@ -1120,10 +1212,19 @@ def generate_interactive_map(df: pd.DataFrame, scope: str, config: Config) -> st
     """生成交互式Leaflet地图"""
     import folium
 
-    # 创建基础地图
+    df = _to_gcj02_df(df)  # 高德瓦片为 GCJ-02，先纠正坐标系
+
+    # 创建基础地图（高德瓦片，OSM 已被 403 封禁不可用）
     center_lat = df["latitude"].mean()
     center_lon = df["longitude"].mean()
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=12, tiles=None)
+    folium.TileLayer(
+        tiles=AMAP_TILE_URL,
+        attr=AMAP_ATTR,
+        subdomains=AMAP_SUBDOMAINS,
+        name="高德地图",
+        max_zoom=18,
+    ).add_to(m)
 
     # 添加轨迹线
     points = list(zip(df["latitude"], df["longitude"]))
