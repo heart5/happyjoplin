@@ -19,9 +19,11 @@
 # ## 引入库
 
 # %%
+import json
 import math
 import os
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -42,9 +44,9 @@ import pathmagic
 
 with pathmagic.context():
     from func.jpfuncs import (
+        _read_remote_config,
         add_resource_from_bytes,
         createnote,
-        createresource,
         getinivaluefromcloud,
         jpapi,
         searchnotebook,
@@ -77,6 +79,7 @@ class Config:
     IMPORTANT_POINT_MIN_INCLUDE: int = 100  # 重要地点最小包含点数，默认100个
     IMPORTANT_POINT_SHOW_MAX: int = 5  # 重要地点显示最大数量，默认5个
     REPORT_COUNT: int = 3  # 报告层级的数量，默认3层
+    old_body: str = ""  # 运行期赋值：当前档位报告笔记旧正文（资源复用与失引清理的依据）
 
     def __post_init__(self) -> None:
         """从配置读取阈值，如果读取不到则使用默认值"""
@@ -111,12 +114,46 @@ class Config:
             }
 
 
-def _safe_add_resource(data: bytes, title: str, max_tries: int = 3) -> str:
-    """上传资源到 Joplin，带指数退避重试"""
+# 资源复用与失引清理（对照 xiaobu report.py 的 upsert+prune 方案）：
+# 每轮按标签在旧正文中定位同槽位资源原地更新（id 不变），避免"每轮新建→旧版失引→孤儿"循环。
+
+_RESOURCE_REF_RE = re.compile(r"\(:/([a-fA-F0-9]{32})\)")
+
+
+def _find_resource_id(old_body: str, label: str) -> Optional[str]:
+    """在旧正文中按标签定位资源 id（匹配 `![label](:/id)` 或 `[label](:/id)`）。"""
+    if not old_body or not label:
+        return None
+    m = re.search(r"!?\[" + re.escape(label) + r"\]\(:/([a-fA-F0-9]{32})\)", old_body)
+    return m.group(1) if m else None
+
+
+def _put_resource_bytes(res_id: str, data: bytes, title: str) -> None:
+    """原地替换资源数据（PUT /resources/:id 带文件），资源 id 保持不变。"""
+    files = {
+        "data": (title, data),
+        "props": (None, json.dumps({"title": title})),
+    }
+    jpapi._request("put", f"/resources/{res_id}", files=files)
+
+
+def _upsert_resource(config: Config, data: bytes, label: str, title: str, max_tries: int = 3) -> str:
+    """按标签复用旧资源：命中则原地更新（id 不变），否则新建。带指数退避重试。"""
+    res_id = _find_resource_id(getattr(config, "old_body", "") or "", label)
     last_exc = None
     for attempt in range(1, max_tries + 1):
         try:
-            return add_resource_from_bytes(data, title=title)
+            if res_id:
+                try:
+                    _put_resource_bytes(res_id, data, title)
+                    log.info(f"资源《{title}》原地更新成功（{res_id}），未新建")
+                    return res_id
+                except Exception as e:
+                    log.warning(f"资源（{res_id}）原地更新失败，改为新建: {e}")
+                    res_id = None
+            res_id = add_resource_from_bytes(data, title=title)
+            log.info(f"资源《{title}》新建成功（{res_id}）")
+            return res_id
         except (
             http_req.exceptions.ConnectionError,
             http_req.exceptions.ReadTimeout,
@@ -131,6 +168,55 @@ def _safe_add_resource(data: bytes, title: str, max_tries: int = 3) -> str:
                 log.warning(f"资源上传失败（第{attempt}次），{wait}秒后重试: {e}")
                 time.sleep(wait)
     raise last_exc
+
+
+def get_report_body(scope: str) -> str:
+    """取现有报告笔记正文（资源按标签复用的依据）；笔记不存在返回空串。"""
+    note_title = f"位置分析报告_{scope}"
+    for note in searchnotes(note_title):
+        if note.title == note_title:
+            return note.body or ""
+    return ""
+
+
+def _prune_stale_resources(old_body: str, new_body: str, note_id: str) -> list:
+    """删除旧正文引用、新正文不再引用、且无其他笔记引用的资源（异常遗留兜底）。
+
+    /resources/:id/notes 索引有分钟级滞后，本笔记自身的旧索引行已由 note_id 排除；
+    引用查询失败或仍被其他笔记引用的资源跳过不删。返回被删除资源 id 列表。
+    """
+    stale = sorted(set(_RESOURCE_REF_RE.findall(old_body or "")) - set(_RESOURCE_REF_RE.findall(new_body or "")))
+    if not stale:
+        return []
+    url, token, _ = _read_remote_config()
+    deleted = []
+    for res_id in stale:
+        try:
+            jpapi.get_resource(res_id)
+        except Exception:
+            continue
+        refs = None
+        if url and token:
+            try:
+                resp = http_req.get(f"{url}/resources/{res_id}/notes", params={"token": token}, timeout=10)
+                items = resp.json().get("items", []) or []
+                refs = [it for it in items if it.get("id") != note_id]
+            except Exception as e:
+                log.warning(f"失引资源（{res_id}）引用查询失败，跳过删除: {e}")
+        if refs is None:
+            continue
+        if refs:
+            log.info(f"旧资源（{res_id}）仍被 {len(refs)} 篇其他笔记引用，保留不删")
+            continue
+        try:
+            jpapi.delete_resource(res_id)
+            deleted.append(res_id)
+            log.info(f"旧资源（{res_id}）已无引用，删除成功")
+        except Exception as e:
+            log.warning(f"旧资源（{res_id}）删除失败: {e}")
+    if deleted:
+        log.info(f"本轮失引旧资源清理 {len(deleted)} 个: {deleted}")
+    return deleted
 
 
 # %% [markdown]
@@ -1056,7 +1142,7 @@ def generate_trajectory_map(df: pd.DataFrame, scope: str, config: Config) -> str
         )
         plt.close()
 
-        return _safe_add_resource(buf.getvalue(), title=f"轨迹图_{scope}_带地图.png")
+        return _upsert_resource(config, buf.getvalue(), label="移动轨迹", title=f"轨迹图_{scope}_带地图.png")
 
     except ImportError as ie:
         log.critical(f"未安装contextily库，无法添加《{scope}》位置地图底图。{ie}")
@@ -1135,7 +1221,7 @@ def generate_trajectory_map_fallback(df: pd.DataFrame, scope: str, config: Confi
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return _safe_add_resource(buf.getvalue(), title=f"轨迹图_{scope}.png")
+    return _upsert_resource(config, buf.getvalue(), label="移动轨迹", title=f"轨迹图_{scope}.png")
 
 
 # %% [markdown]
@@ -1200,7 +1286,7 @@ def generate_stay_points_map(df: pd.DataFrame, scope: str, config: Config) -> st
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return _safe_add_resource(buf.getvalue(), title=f"停留点分布_{scope}.png")
+    return _upsert_resource(config, buf.getvalue(), label="停留点分布", title=f"停留点分布_{scope}.png")
 
 
 # %% [markdown]
@@ -1244,10 +1330,11 @@ def generate_interactive_map(df: pd.DataFrame, scope: str, config: Config) -> st
     # 保存为html文件
     map_path = f"/tmp/interactive_map_{scope}.html"
     m.save(map_path)
-    res_id = createresource(map_path, title="交互地图.html")
+    with open(map_path, "rb") as f:
+        map_data = f.read()
     os.remove(map_path)
 
-    return res_id
+    return _upsert_resource(config, map_data, label="查看交互式地图", title=f"交互地图_{scope}.html")
 
 
 # %% [markdown]
@@ -1304,7 +1391,7 @@ def generate_time_series_analysis(df: pd.DataFrame, scope: str, config: Config) 
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return _safe_add_resource(buf.getvalue(), title=f"时间序列分析_{scope}.png")
+    return _upsert_resource(config, buf.getvalue(), label="时间序列分析", title=f"时间序列分析_{scope}.png")
 
 
 # %% [markdown]
@@ -1346,7 +1433,7 @@ def enhanced_stay_points_analysis(df: pd.DataFrame, scope: str, config: Config) 
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return _safe_add_resource(buf.getvalue(), title=f"增强停留点分析_{scope}.png")
+    return _upsert_resource(config, buf.getvalue(), label="停留点分析", title=f"增强停留点分析_{scope}.png")
 
 
 # %% [markdown]
@@ -1394,7 +1481,7 @@ def data_quality_dashboard(df: pd.DataFrame, scope: str, config: Config) -> str:
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return _safe_add_resource(buf.getvalue(), title=f"数据质量仪表板_{scope}.png")
+    return _upsert_resource(config, buf.getvalue(), label="数据质量", title=f"数据质量仪表板_{scope}.png")
 
 
 # %% [markdown]
@@ -1446,7 +1533,7 @@ def movement_pattern_analysis(df: pd.DataFrame, scope: str, config: Config) -> s
     plt.savefig(buf, format="png", dpi=config.DPI)
     plt.close()
 
-    return _safe_add_resource(buf.getvalue(), title=f"移动模式分析_{scope}.png")
+    return _upsert_resource(config, buf.getvalue(), label="移动模式", title=f"移动模式分析_{scope}.png")
 
 
 # %% [markdown]
@@ -1533,7 +1620,7 @@ def build_report_content(analysis_results: dict, resource_ids: str, scope: str) 
 
 
 # %%
-def update_joplin_report(report_content: str, scope: str) -> None:
+def update_joplin_report(report_content: str, scope: str, old_body: str = "") -> None:
     """更新Joplin位置分析报告"""
     note_title = f"位置分析报告_{scope}"
     existing_notes = searchnotes(f"{note_title}")
@@ -1544,6 +1631,7 @@ def update_joplin_report(report_content: str, scope: str) -> None:
                 note_id = note.id
         # 更新笔记内容
         updatenote_body(note_id, report_content)
+        _prune_stale_resources(old_body, report_content, note_id)
     else:
         parent_id = searchnotebook("ewmobile")
         if not parent_id:
@@ -1587,6 +1675,9 @@ def generate_location_reports(config: Config) -> None:
             log.warning(f"跳过 {scope} 报告，无数据")
             continue
 
+        # 1.5 取旧正文：资源按标签原地复用，避免每轮新建堆积孤儿
+        config.old_body = get_report_body(scope)
+
         # 2. 分析数据并生成可视化资源
         analysis_results = analyze_location_data(df, scope)
 
@@ -1596,8 +1687,8 @@ def generate_location_reports(config: Config) -> None:
         # 4. 构建报告
         report_content = build_report_content(analysis_results, resource_ids, scope)
 
-        # 5. 更新笔记
-        update_joplin_report(report_content, scope)
+        # 5. 更新笔记（并清理本轮失引的旧资源）
+        update_joplin_report(report_content, scope, config.old_body)
 
 
 # %% [markdown]
