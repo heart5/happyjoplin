@@ -119,6 +119,15 @@ class Config:
 
 _RESOURCE_REF_RE = re.compile(r"\(:/([a-fA-F0-9]{32})\)")
 
+_RETRYABLE_EXC = (
+    http_req.exceptions.ConnectionError,
+    http_req.exceptions.ReadTimeout,
+    http_req.exceptions.ConnectTimeout,
+    ConnectionRefusedError,
+    ConnectionResetError,
+    OSError,
+)
+
 
 def _find_resource_id(old_body: str, label: str) -> Optional[str]:
     """在旧正文中按标签定位资源 id（匹配 `![label](:/id)` 或 `[label](:/id)`）。"""
@@ -138,7 +147,7 @@ def _put_resource_bytes(res_id: str, data: bytes, title: str) -> None:
 
 
 def _upsert_resource(config: Config, data: bytes, label: str, title: str, max_tries: int = 3) -> str:
-    """按标签复用旧资源：命中则原地更新（id 不变），否则新建。带指数退避重试。"""
+    """按标签复用旧资源：命中则原地更新（id 不变），否则新建。连接类错误退避重试（PUT 保持同一 id）。"""
     res_id = _find_resource_id(getattr(config, "old_body", "") or "", label)
     last_exc = None
     for attempt in range(1, max_tries + 1):
@@ -148,20 +157,22 @@ def _upsert_resource(config: Config, data: bytes, label: str, title: str, max_tr
                     _put_resource_bytes(res_id, data, title)
                     log.info(f"资源《{title}》原地更新成功（{res_id}），未新建")
                     return res_id
+                except _RETRYABLE_EXC as e:
+                    last_exc = e
+                    if attempt < max_tries:
+                        wait = random.randint(2, 10) * attempt
+                        log.warning(f"资源（{res_id}）原地更新失败（第{attempt}次），{wait}秒后重试: {e}")
+                        time.sleep(wait)
+                        continue
+                    log.warning(f"资源（{res_id}）原地更新重试耗尽，兜底新建: {e}")
+                    res_id = None
                 except Exception as e:
                     log.warning(f"资源（{res_id}）原地更新失败，改为新建: {e}")
                     res_id = None
             res_id = add_resource_from_bytes(data, title=title)
             log.info(f"资源《{title}》新建成功（{res_id}）")
             return res_id
-        except (
-            http_req.exceptions.ConnectionError,
-            http_req.exceptions.ReadTimeout,
-            http_req.exceptions.ConnectTimeout,
-            ConnectionRefusedError,
-            ConnectionResetError,
-            OSError,
-        ) as e:
+        except _RETRYABLE_EXC as e:
             last_exc = e
             if attempt < max_tries:
                 wait = random.randint(2, 10) * attempt
