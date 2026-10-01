@@ -315,12 +315,13 @@ def load_location_data(scope: str, config: Config) -> pd.DataFrame:
 
 # %%
 @timethis
-def analyze_location_data(indf: pd.DataFrame, scope: str) -> dict:
+def analyze_location_data(indf: pd.DataFrame, scope: str, config: Optional[Config] = None) -> dict:
     """分析位置数据，返回统计结果
 
     修复列名问题并添加数据预处理
     """
-    config = Config()
+    # 继承调用方的 config（携带 old_body），否则资源按标签复用定位不到旧资源
+    config = config if config is not None else Config()
     df = indf.copy()
 
     # 1. 数据预处理
@@ -1679,7 +1680,7 @@ def generate_location_reports(config: Config) -> None:
         config.old_body = get_report_body(scope)
 
         # 2. 分析数据并生成可视化资源
-        analysis_results = analyze_location_data(df, scope)
+        analysis_results = analyze_location_data(df, scope, config)
 
         # 3. 从分析结果中获取资源ID
         resource_ids = generate_visualizations(analysis_results, scope)
