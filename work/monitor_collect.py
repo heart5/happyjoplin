@@ -44,8 +44,10 @@ with pathmagic.context():
         init_db,
         insert_alert,
         insert_snapshot,
+        mark_note_active,
         mark_note_inactive,
         mark_report_dirty,
+        resolve_note_missing_alerts,
         update_note_updated_time,
         upsert_daily_stat,
         upsert_note,
@@ -141,6 +143,7 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
     4. hash 未变 → 仅更新元数据（updated_time），清理 pending
     5. hash 变化 → pending/冷却机制
     6. 快照 captured_at 使用 note.updated_time（Joplin 实际修改时间）
+    7. 此前被标不活跃的笔记恢复可见 → 自动复活并消除其 note_missing 告警（自愈）
     """
     if current_time is None:
         current_time = datetime.now()
@@ -183,6 +186,18 @@ def collect_one(note_id: str, section: str, current_time: datetime | None = None
 
     # 确保notes表有记录
     upsert_note(note_id, title=title, person=person, section=section)
+
+    # 自愈：此前被标记不活跃的笔记恢复可见 → 重新激活并消除其 note_missing 告警
+    info = get_note_info(note_id)
+    if info and not info.get("is_active"):
+        mark_note_active(note_id)
+        resolved_count = resolve_note_missing_alerts(note_id)
+        if person:
+            mark_report_dirty(person)
+        log.warning(
+            f"笔记《{title}》恢复可见，已重新激活"
+            + (f"，消除 {resolved_count} 条未解决告警" if resolved_count else "")
+        )
 
     pending = get_pending_change(note_id)
 

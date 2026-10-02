@@ -440,6 +440,21 @@ def mark_note_inactive(note_id: str) -> None:
         conn.execute("UPDATE notes SET is_active=0 WHERE note_id=?", (note_id,))
 
 
+def mark_note_active(note_id: str) -> None:
+    with _get_conn() as conn:
+        conn.execute("UPDATE notes SET is_active=1 WHERE note_id=?", (note_id,))
+
+
+def resolve_note_missing_alerts(note_id: str) -> int:
+    """将指定笔记未解决的 note_missing 告警标记为已处理，返回处理条数。"""
+    with _get_conn() as conn:
+        cursor = conn.execute(
+            "UPDATE content_alerts SET resolved=1 WHERE note_id=? AND alert_type='note_missing' AND resolved=0",
+            (note_id,),
+        )
+        return cursor.rowcount
+
+
 # %% [markdown]
 # ## daily_stats 表操作
 
