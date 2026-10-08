@@ -36,6 +36,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.ticker import MaxNLocator
 
 plt.switch_backend("Agg")
 
@@ -292,6 +293,7 @@ def render_chart(chart_data: Dict) -> Optional[bytes]:
             ax.set_title("近期公网IP出现频率 (Top 8)")
             ax.set_xlabel("公网IP地址")
             ax.set_ylabel("出现次数")
+            ax.yaxis.set_major_locator(MaxNLocator(integer=True))
             ax.tick_params(axis="x", labelrotation=45)
             fig.tight_layout()
 
@@ -367,7 +369,7 @@ def render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -
     if change_log:
         md_lines.append("| 时间 | 公网IP | 网络 |")
         md_lines.append("|:---|:---|:---|")
-        for entry in change_log[-10:]:  # 显示最近10次变化
+        for entry in reversed(change_log[-10:]):  # 最近10次变化，倒序（新→旧）
             timestamp = entry.get("timestamp")
             if isinstance(timestamp, pd.Timestamp):
                 timestamp = timestamp.strftime("%m-%d %H:%M")
