@@ -230,7 +230,7 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
         change_mask.iloc[0] = False
     ip_change_points = df_recent[change_mask]
     analysis["summary"]["public_ip_changes"] = len(ip_change_points)
-    analysis["detail"]["ip_change_log"] = ip_change_points[["timestamp", "public_ip"]].to_dict("records")
+    analysis["detail"]["ip_change_log"] = ip_change_points[["timestamp", "public_ip", "network"]].to_dict("records")
 
     # 5. 本地IP段统计
     def extract_ip_segment(ip):
@@ -306,114 +306,96 @@ def render_chart(chart_data: Dict) -> Optional[bytes]:
 
 
 # %% [markdown]
+# ### _relative_time(ts: datetime) -> str
+
+# %%
+def _relative_time(ts: datetime) -> str:
+    """把时间戳转换为相对当下的粗略描述（用于仪表盘状态行）."""
+    if not isinstance(ts, datetime):
+        return ""
+    secs = int((datetime.now() - ts).total_seconds())
+    if secs < 60:
+        return "刚刚"
+    if secs < 3600:
+        return f"约 {secs // 60} 分钟前"
+    if secs < 86400:
+        return f"约 {secs // 3600} 小时前"
+    return f"约 {secs // 86400} 天前"
+
+
+# %% [markdown]
 # ### render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -> str
 
 # %%
 def render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -> str:
-    """生成图文并茂的Markdown报告内容（图表以占位符替代，发布时替换为资源引用）."""
+    """生成状态仪表盘式Markdown报告（图表以占位符替代，发布时替换为资源引用）."""
     if not analysis:
-        return "# IP网络分析报告\n\n暂无有效数据。\n"
+        return "# 🌐 IP 分析报告\n\n暂无有效数据。\n"
 
-    md_lines = []
-
-    # 标题与概览
-    md_lines.append(f"# 🌐 IP网络连接分析报告 ({cfg.host_user})")
-    md_lines.append(f"**设备ID**: `{cfg.device_id}`  |  **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    md_lines.append(f"**分析时间范围**: {analysis['time_range'][0]} 至 {analysis['time_range'][1]}")
-    md_lines.append(
-        f"**总记录数**: {analysis['total_records']} | "
-        f"**近期记录数(最近{cfg.report_days}天)**: {analysis['recent_records']}\n"
-    )
-
-    # 1. 核心摘要 (用表格展示)
-    md_lines.append("## 📊 核心摘要")
-    summary_table = []
     summary = analysis["summary"]
+    latest = analysis.get("latest_record", {})
 
-    latest_record = analysis.get("latest_record", {})
-    if latest_record:
-        latest_time = latest_record.get("timestamp", "")
-        if isinstance(latest_time, pd.Timestamp):
-            latest_time = latest_time.strftime("%Y-%m-%d %H:%M:%S")
-        summary_table.append(["**最新记录时间**", f"{latest_time}"])
-        summary_table.append(["**最新网络类型**", f"{latest_record.get('network', 'N/A')}"])
-        summary_table.append(["**最新公网IP**", f"`{latest_record.get('public_ip', 'N/A')}`"])
-        summary_table.append(["**最新本地IP**", f"`{latest_record.get('local_ip', 'N/A')}`"])
+    md_lines = [f"# 🌐 IP 分析报告 · {cfg.host_user}", ""]
 
-    summary_table.append(["**公网IP变化次数**", f"{summary.get('public_ip_changes', 0)} 次"])
+    # 状态仪表盘：当前网络 / 公网出口 / 最近上报
+    latest_time = latest.get("timestamp")
+    if latest_time is not None:
+        time_text = latest_time.strftime("%m-%d %H:%M") if hasattr(latest_time, "strftime") else str(latest_time)
+        rel = _relative_time(latest_time)
+        rel_text = f"（{rel}）" if rel else ""
+        md_lines.append(f"📡 **当前网络** ｜ {latest.get('network', '未知')} · 本地 `{latest.get('local_ip', '未知')}`")
+        md_lines.append(f"🌍 **公网出口** ｜ `{latest.get('public_ip') or '未知'}`")
+        md_lines.append(f"🕐 **最近上报** ｜ {time_text}{rel_text}")
+        md_lines.append("")
 
-    main_network = max(
-        summary.get("network_stats", {}),
-        key=summary.get("network_stats", {}).get,
-        default="N/A",
+    # 图表前置（发布时替换为资源引用）
+    if chart_image:
+        md_lines.append(f"## 📈 图表\n\n{CHART_PLACEHOLDER}\n")
+    else:
+        md_lines.append("## 📈 图表\n\n*(图表生成跳过)*\n")
+
+    # 近 N 天摘要：记录数 / 公网IP切换 / WiFi 次数
+    wifi_count = summary.get("network_stats", {}).get("WiFi", 0)
+    md_lines.append(f"## 🔄 近 {cfg.report_days} 天")
+    md_lines.append(
+        f"{analysis['recent_records']} 条记录 ｜ **{summary.get('public_ip_changes', 0)} 次** 公网IP切换 ｜ "
+        f"WiFi **{wifi_count}** 次"
     )
-    summary_table.append(["**主要连接方式**", main_network])
-
-    main_segment = max(
-        summary.get("local_ip_segments", {}),
-        key=summary.get("local_ip_segments", {}).get,
-        default="N/A",
-    )
-    summary_table.append(["**主要本地IP段**", main_segment])
-
-    md_lines.append("| 指标 | 值 |")
-    md_lines.append("|:---|:---|")
-    for row in summary_table:
-        md_lines.append(f"| {row[0]} | {row[1]} |")
     md_lines.append("")
 
-    # 2. 详细统计表格
-    md_lines.append("## 📈 详细统计")
-
-    md_lines.append("### 网络连接类型分布")
-    for net_type, count in summary.get("network_stats", {}).items():
-        md_lines.append(f"- **{net_type}**: {count} 次")
-    md_lines.append("")
-
-    md_lines.append("### 常连WiFi热点 (Top 5)")
-    for wifi, data in summary.get("wifi_stats", {}).items():
-        count = data.get("count", 0)
-        latest_time = data.get("latest_time")
-        if latest_time:
-            if isinstance(latest_time, pd.Timestamp):
-                time_str = latest_time.strftime("%Y-%m-%d %H:%M")
-            else:
-                time_str = str(latest_time)
-            time_display = f" (最近连接: {time_str})"
-        else:
-            time_display = ""
-        display_name = wifi if wifi else "<未知>"
-        md_lines.append(f"- **{display_name}**: {count} 次{time_display}")
-    md_lines.append("")
-
-    # 3. 公网IP变化历史
-    md_lines.append("## 🔄 公网IP变化历史")
     change_log = analysis.get("detail", {}).get("ip_change_log", [])
     if change_log:
-        md_lines.append("| 时间 | 公网IP |")
-        md_lines.append("|:---|:---|")
+        md_lines.append("| 时间 | 公网IP | 网络 |")
+        md_lines.append("|:---|:---|:---|")
         for entry in change_log[-10:]:  # 显示最近10次变化
-            timestamp = entry.get("timestamp", "")
+            timestamp = entry.get("timestamp")
             if isinstance(timestamp, pd.Timestamp):
-                timestamp = timestamp.strftime("%Y-%m-%d %H:%M:%S")
-            md_lines.append(f"| {timestamp} | `{entry['public_ip']}` |")
+                timestamp = timestamp.strftime("%m-%d %H:%M")
+            md_lines.append(f"| {timestamp} | `{entry.get('public_ip') or '未知'}` | {entry.get('network', '')} |")
     else:
         md_lines.append("近期无公网IP变化。")
     md_lines.append("")
 
-    # 4. 图表占位（发布时替换为资源引用）
-    if chart_image:
-        md_lines.append(f"## 📸 可视化图表\n\n{CHART_PLACEHOLDER}")
-    else:
-        md_lines.append("## 📸 可视化图表\n\n*(图表生成跳过)*")
+    # 常连热点（Top 1）
+    wifi_stats = summary.get("wifi_stats", {})
+    if wifi_stats:
+        wifi_name, wifi_data = next(iter(wifi_stats.items()))
+        latest_time = wifi_data.get("latest_time")
+        if isinstance(latest_time, pd.Timestamp):
+            latest_time = latest_time.strftime("%m-%d %H:%M")
+        md_lines.append(f"🏨 常连热点：{wifi_name}（{wifi_data.get('count', 0)} 次 · 最近 {latest_time}）\n")
 
-    # 5. 原始数据摘要
-    md_lines.append("## 📁 数据来源")
-    md_lines.append(f"- 日志文件: `{cfg.log_file}`")
-    md_lines.append(f"- 最后更新: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    md_lines.append("- 注：本报告基于自动采集的日志生成。\n")
+    # 技术信息折叠区
+    md_lines.append("<details>")
+    md_lines.append("<summary>📁 技术信息</summary>")
+    md_lines.append("")
+    md_lines.append(f"设备 `{cfg.device_id}` ｜ 统计窗口 近 {cfg.report_days} 天")
+    md_lines.append(f"日志 `{cfg.log_file}` ｜ 总记录 {analysis['total_records']:,} 条")
+    md_lines.append(f"生成 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    md_lines.append("")
+    md_lines.append("</details>")
 
-    return "\n".join(md_lines)
+    return "\n".join(md_lines) + "\n"
 
 
 # %% [markdown]
