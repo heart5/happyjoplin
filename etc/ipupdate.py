@@ -18,7 +18,8 @@
 # 功能：读取设备IP/WiFi变化日志，分析并生成Markdown报告，更新至Joplin笔记。
 #
 # 结构：配置装载（load_config）→ 解析（parse_ip_log_file）→ 分析（analyze_ip_data）
-# → 归属地反查（resolve_ip_geos）→ 图表（render_chart）→ 报告（render_report）
+# → 归属地反查（resolve_ip_geos）→ 实时信息采集（collect_live_network_details / collect_live_location）
+# → 图表（render_chart）→ 报告（render_report）
 # → 变化检测（detect_ip_changes）→ 笔记定位（resolve_note）→ 资源替换与发布（sync_note_resources）。
 
 # %% [markdown]
@@ -27,12 +28,16 @@
 # %%
 import io
 import json
+import math
 import re
+import shutil
+import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -81,6 +86,34 @@ GEO_API_FIELDS = "status,country,regionName,city,isp"
 GEO_CACHE_SECTION = "geo_cache"
 GEO_CACHE_KEY = "ip_geos"
 GEO_CACHE_LIMIT = 200
+PLACES_URL = "https://loc.xilong9.com/places"
+OSM_LINK_TEMPLATE = "https://www.openstreetmap.org/?mlat={lat}&mlon={lng}&zoom=15"
+# VPN接口/IP 等字段在日志契约中以这些字符串表示无值
+BLANK_VALUES = {"", "n/a", "na", "none", "unknown"}
+RADIO_TYPE_MAP = {
+    "nr": "5G NR",
+    "lte": "LTE",
+    "wcdma": "WCDMA",
+    "hspa": "HSPA",
+    "gsm": "GSM",
+    "cdma": "CDMA",
+    "tdscdma": "TD-SCDMA",
+}
+CARRIER_MAP = {
+    "46000": "中国移动",
+    "46002": "中国移动",
+    "46004": "中国移动",
+    "46007": "中国移动",
+    "46008": "中国移动",
+    "46001": "中国联通",
+    "46006": "中国联通",
+    "46009": "中国联通",
+    "46003": "中国电信",
+    "46005": "中国电信",
+    "46011": "中国电信",
+    "46015": "中国广电",
+}
+PROVIDER_TEXT_MAP = {"network": "网络", "gps": "GPS", "fused": "融合", "passive": "被动", "cached": "缓存"}
 CJK_FONT_CANDIDATES = (
     "/system/fonts/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -262,7 +295,7 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
 
 
 # %% [markdown]
-# ### render_chart(chart_data: Dict) -> Optional[bytes]
+# ### render_chart(chart_data: Dict, geo: Optional[Dict] = None) -> Optional[bytes]
 
 # %%
 def ensure_cjk_font() -> bool:
@@ -282,8 +315,8 @@ def ensure_cjk_font() -> bool:
     return False
 
 
-def render_chart(chart_data: Dict) -> Optional[bytes]:
-    """生成公网IP出现频率条形图，返回PNG字节；无有效数据时返回None."""
+def render_chart(chart_data: Dict, geo: Optional[Dict[str, Dict[str, str]]] = None) -> Optional[bytes]:
+    """生成公网IP出现频率条形图（x轴两行标签：IP+归属地名），返回PNG字节；无有效数据时返回None."""
     try:
         timeline = chart_data.get("timeline")
         if timeline is None or timeline.empty:
@@ -292,14 +325,22 @@ def render_chart(chart_data: Dict) -> Optional[bytes]:
         if ip_series.empty:
             return None
 
+        geo = geo or {}
         ensure_cjk_font()
         fig, ax = plt.subplots(figsize=(10, 6))
         try:
-            ip_series.value_counts().head(8).plot(kind="bar", color="skyblue", ax=ax)
+            counts = ip_series.value_counts().head(8)
+            counts.plot(kind="bar", color="skyblue", ax=ax)
             ax.set_title("近期公网IP出现频率 (Top 8)")
             ax.set_xlabel("公网IP地址")
             ax.set_ylabel("出现次数")
             ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+            labels = []
+            for ip in counts.index:
+                place = (geo.get(ip) or {}).get("place", "")
+                labels.append(f"{ip}\n（{place}）" if place else ip)
+            ax.set_xticks(range(len(labels)))
+            ax.set_xticklabels(labels)
             ax.tick_params(axis="x", labelrotation=45)
             fig.tight_layout()
 
@@ -365,6 +406,164 @@ def resolve_ip_geos(ips) -> Dict[str, Dict[str, str]]:
 
 
 # %% [markdown]
+# ### 实时网络与定位（termux-api / geotrace 注册地点）
+
+# %%
+def _run_termux_command(args: list, timeout: int) -> Optional[str]:
+    """运行 termux-api 命令返回 stdout；命令缺失或执行失败返回 None."""
+    if shutil.which(args[0]) is None:
+        return None
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.SubprocessError, OSError) as e:
+        log.warning(f"执行 {' '.join(args)} 失败：{e}")
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    return proc.stdout.strip()
+
+
+def _run_termux_json(args: list, timeout: int) -> Optional[Union[dict, list]]:
+    """运行 termux-api 命令并解析其 JSON 输出；失败返回 None."""
+    out = _run_termux_command(args, timeout)
+    if out is None:
+        return None
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError:
+        log.warning(f"解析 {' '.join(args)} 输出失败：{out[:120]}")
+        return None
+
+
+def collect_live_network_details() -> Dict[str, str]:
+    """实时采集网络链路细节：WiFi 连接返回链路质量，否则返回基站信号；不可用返回 {}."""
+    wifi_info = _run_termux_json(["termux-wifi-connectioninfo"], 8)
+    if isinstance(wifi_info, dict) and str(wifi_info.get("supplicant_state", "")).upper() in {"COMPLETED", "CONNECTED"}:
+        details = {"ssid": str(wifi_info.get("ssid") or "").strip()}
+        text_parts = []
+        rssi = wifi_info.get("rssi")
+        if isinstance(rssi, (int, float)) and rssi > -127:
+            text_parts.append(f"{rssi} dBm")
+        speed = wifi_info.get("link_speed_mbps")
+        if isinstance(speed, (int, float)) and speed > 0:
+            text_parts.append(f"{speed:g} Mbps")
+        freq = wifi_info.get("frequency_mhz")
+        if isinstance(freq, (int, float)) and freq > 0:
+            band = "2.4 GHz" if freq < 2500 else ("5 GHz" if freq < 5900 else "6 GHz")
+            text_parts.append(band)
+        if text_parts:
+            details["signal_label"] = "WiFi 链路"
+            details["signal_text"] = " · ".join(text_parts)
+        return details
+
+    cells = _run_termux_json(["termux-telephony-cellinfo"], 8)
+    registered = next((c for c in (cells or []) if isinstance(c, dict) and c.get("registered")), None)
+    if not registered:
+        return {}
+    device_info = _run_termux_json(["termux-telephony-deviceinfo"], 8) or {}
+
+    text_parts = []
+    radio = RADIO_TYPE_MAP.get(str(registered.get("type") or "").lower())
+    if radio:
+        text_parts.append(radio)
+    dbm = registered.get("dbm")
+    if isinstance(dbm, (int, float)) and dbm < 0:
+        text_parts.append(f"{dbm} dBm")
+    try:
+        mcc_mnc = f"{int(registered.get('mcc'))}{int(registered.get('mnc')):02d}"
+    except (TypeError, ValueError):
+        mcc_mnc = ""
+    carrier = CARRIER_MAP.get(mcc_mnc) or str(device_info.get("sim_operator_name") or "").strip()
+    if carrier:
+        text_parts.append(carrier)
+    if not text_parts:
+        return {}
+    return {"signal_label": "基站信号", "signal_text": " · ".join(text_parts)}
+
+
+def collect_live_location() -> Optional[Dict[str, Any]]:
+    """获取即时网络定位（新鲜优先、缓存回退）；termux-api 不可用返回 None."""
+    fix = _run_termux_json(["termux-location", "-p", "network", "-r", "once"], 60)
+    provider = str((fix if isinstance(fix, dict) else {}).get("provider") or "network")
+    if not isinstance(fix, dict):
+        fix = _run_termux_json(["termux-location", "-p", "network", "-r", "last"], 15)
+        provider = "cached"
+    if not isinstance(fix, dict):
+        return None
+    lat, lng = fix.get("latitude"), fix.get("longitude")
+    if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
+        log.warning(f"定位输出缺少经纬度：{str(fix)[:120]}")
+        return None
+    location = {"latitude": float(lat), "longitude": float(lng), "provider": provider}
+    accuracy = fix.get("accuracy")
+    if isinstance(accuracy, (int, float)) and accuracy > 0:
+        location["accuracy"] = float(accuracy)
+    fix_time = fix.get("time")
+    if isinstance(fix_time, (int, float)) and fix_time > 0:
+        stamp = fix_time / 1000.0 if fix_time > 1e11 else float(fix_time)
+        try:
+            fix_dt = datetime.fromtimestamp(stamp)
+        except (OverflowError, OSError, ValueError):
+            fix_dt = None
+        if fix_dt is not None and datetime(2020, 1, 1) <= fix_dt <= datetime.now() + timedelta(days=1):
+            location["fix_time"] = fix_dt
+    return location
+
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """两坐标间大圆距离（米）."""
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+    a = math.sin(d_phi / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(d_lambda / 2) ** 2
+    return 2 * 6371000.0 * math.asin(math.sqrt(a))
+
+
+def fetch_registered_places() -> list:
+    """拉取 geotrace 已注册地点（name/lat/lng/radius）；失败返回 []（定位退化为仅坐标）."""
+    token = getinivaluefromcloud("sms_collector", "api_key")
+    if not token or str(token).strip().lower() == "none":
+        log.warning("云端配置缺少 [sms_collector] api_key，跳过注册地点匹配。")
+        return []
+    for attempt in range(3):
+        try:
+            resp = requests.get(f"{PLACES_URL}?token={token}", timeout=15)
+            data = resp.json()
+        except Exception as e:
+            log.warning(f"拉取注册地点失败（第 {attempt + 1}/3 次）：{e}")
+        else:
+            if isinstance(data, list):
+                return data
+            log.warning(f"注册地点接口返回异常：{str(data)[:120]}")
+        if attempt < 2:
+            time.sleep(2 * (attempt + 1))
+    return []
+
+
+def match_registered_place(lat: float, lng: float, places: list) -> Optional[str]:
+    """在已注册地点中取最近命中（bbox 预筛 + haversine ≤ radius）；未命中返回 None."""
+    best_name, best_dist = None, float("inf")
+    for place in places:
+        if not isinstance(place, dict):
+            continue
+        try:
+            p_lat = float(place.get("lat", 0))
+            p_lng = float(place.get("lng", 0))
+            radius_m = max(float(place.get("radius", 50) or 50), 50.0)
+        except (TypeError, ValueError):
+            continue
+        if (p_lat == 0 and p_lng == 0) or abs(lat - p_lat) > radius_m / 111000.0 + 1e-6:
+            continue
+        if abs(lng - p_lng) > radius_m / (111000.0 * max(math.cos(math.radians(p_lat)), 0.01)) + 1e-6:
+            continue
+        dist = _haversine_m(lat, lng, p_lat, p_lng)
+        if dist <= radius_m and dist < best_dist:
+            name = str(place.get("name") or "").strip()
+            if name:
+                best_name, best_dist = name, dist
+    return best_name
+
+
+# %% [markdown]
 # ### _relative_time(ts: datetime) -> str
 
 # %%
@@ -383,17 +582,52 @@ def _relative_time(ts: datetime) -> str:
 
 
 # %% [markdown]
-# ### render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -> str
+# ### _render_location_line(location: Dict) -> str
+
+# %%
+def _render_location_line(location: Dict[str, Any]) -> str:
+    """渲染「📍 当前定位」状态行；无有效坐标返回空串."""
+    lat, lng = location.get("latitude"), location.get("longitude")
+    if lat is None or lng is None:
+        return ""
+    detail_parts = []
+    provider = str(location.get("provider") or "").strip()
+    if provider:
+        detail_parts.append(PROVIDER_TEXT_MAP.get(provider.lower(), provider))
+    accuracy = location.get("accuracy")
+    if isinstance(accuracy, (int, float)) and accuracy > 0:
+        detail_parts.append(f"±{accuracy:.0f}m")
+    fix_time = location.get("fix_time")
+    if isinstance(fix_time, datetime):
+        age = _relative_time(fix_time)
+        if age and age != "刚刚":
+            detail_parts.append(age)
+    place = str(location.get("place") or "").strip()
+    place_text = f"{place} · " if place else ""
+    detail_text = f"（{' · '.join(detail_parts)}）" if detail_parts else ""
+    map_link = f"[地图]({OSM_LINK_TEMPLATE.format(lat=lat, lng=lng)})"
+    return f"📍 **当前定位** ｜ {place_text}{lat:.3f}, {lng:.3f}{detail_text} · {map_link}"
+
+
+# %% [markdown]
+# ### render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes], geo/live/location) -> str
 
 # %%
 def render_report(
-    analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes], geo: Optional[Dict[str, Dict[str, str]]] = None
+    analysis: Dict,
+    cfg: IpConfig,
+    chart_image: Optional[bytes],
+    geo: Optional[Dict[str, Dict[str, str]]] = None,
+    live: Optional[Dict[str, str]] = None,
+    location: Optional[Dict[str, Any]] = None,
 ) -> str:
     """生成状态仪表盘式Markdown报告（图表以占位符替代，发布时替换为资源引用）."""
     if not analysis:
         return "# 🌐 IP 分析报告\n\n暂无有效数据。\n"
 
     geo = geo or {}
+    live = live or {}
+    location = location or {}
     summary = analysis["summary"]
     latest = analysis.get("latest_record", {})
 
@@ -413,7 +647,19 @@ def render_report(
             if geo_info.get("isp"):
                 geo_text += f" · {geo_info['isp']}"
             geo_text += "）"
-        md_lines.append(f"📡 **当前网络** ｜ {latest.get('network', '未知')} · 本地 `{latest.get('local_ip', '未知')}`")
+        network = str(latest.get("network", "未知"))
+        ssid = str(live.get("ssid") or "").strip() or str(latest.get("wifi_name") or "").strip()
+        ssid_text = f" · {ssid}" if network == "WiFi" and ssid else ""
+        md_lines.append(f"📡 **当前网络** ｜ {network}{ssid_text} · 本地 `{latest.get('local_ip', '未知')}`")
+        if live.get("signal_label") and live.get("signal_text"):
+            md_lines.append(f"📶 **{live['signal_label']}** ｜ {live['signal_text']}")
+        location_line = _render_location_line(location)
+        if location_line:
+            md_lines.append(location_line)
+        vpn_intf = str(latest.get("vpn_interface") or "").strip()
+        vpn_ip = str(latest.get("vpn_ip") or "").strip()
+        if vpn_intf.lower() not in BLANK_VALUES and vpn_ip.lower() not in BLANK_VALUES:
+            md_lines.append(f"🔒 **VPN** ｜ {vpn_intf} · `{vpn_ip}`")
         md_lines.append(f"🌍 **公网出口** ｜ `{public_ip or '未知'}`{geo_text}")
         md_lines.append(f"🕐 **最近上报** ｜ {time_text}{rel_text}")
         md_lines.append("")
@@ -658,9 +904,18 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
         geo_ips += [e.get("public_ip") for e in analysis.get("detail", {}).get("ip_change_log", [])]
         geo_map = resolve_ip_geos(geo_ips)
 
+        # 5.6 实时网络与定位（termux-api；失败优雅省略）
+        live = collect_live_network_details()
+        location = collect_live_location()
+        if location:
+            places = fetch_registered_places()
+            place = match_registered_place(location["latitude"], location["longitude"], places)
+            if place:
+                location["place"] = place
+
         # 6. 生成图表与报告文本
-        chart_image = render_chart(analysis.get("chart_data", {}))
-        report_content = render_report(analysis, cfg, chart_image, geo_map)
+        chart_image = render_chart(analysis.get("chart_data", {}), geo_map)
+        report_content = render_report(analysis, cfg, chart_image, geo_map, live, location)
 
         # 7. 定位笔记并发布（含图表资源的安全替换）
         note_id = resolve_note(cfg)
