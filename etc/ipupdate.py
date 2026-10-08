@@ -933,9 +933,9 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
         chart_image = render_chart(analysis.get("chart_data", {}), geo_map)
         report_content = render_report(analysis, cfg, chart_image, geo_map, live, location)
 
-        # 7. 定位笔记并发布（含图表资源的安全替换）
+        # 7. 定位笔记并发布（含图表资源的安全替换；标题带快照更新时间，列表即可见新旧）
         note_id = resolve_note(cfg)
-        note_title = f"IP分析报告_{host_user}"
+        note_title = f"IP分析报告_{host_user}（更新于 {datetime.now().strftime('%m-%d %H:%M')}）"
         sync_note_resources(note_id, note_title, report_content, chart_image)
 
         # 8. 记录完整更新时间
