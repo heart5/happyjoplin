@@ -80,6 +80,7 @@ CONFIG_NAME = "happyjpip"
 IP_UPDATE_CONFIG_SECTION = "ip_update_status"
 DEFAULT_NOTEBOOK = "ewmobile"
 DEFAULT_REPORT_DAYS = 7
+RECENT_LOG_LIMIT = 15
 CHART_PLACEHOLDER = "*(图表已更新至笔记附件)*"
 GEO_API_URL = "http://ip-api.com/json/{ip}"
 GEO_API_FIELDS = "status,country,regionName,city,isp"
@@ -246,8 +247,8 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
     analysis["latest_record"] = {
         "timestamp": latest_row["timestamp"],
         "network": latest_row["network"],
-        "wifi_name": latest_row["wifi_name"],
-        "public_ip": latest_row["public_ip"],
+        "wifi_name": None if pd.isna(latest_row["wifi_name"]) else latest_row["wifi_name"],
+        "public_ip": None if pd.isna(latest_row["public_ip"]) else latest_row["public_ip"],
         "local_ip": latest_row["local_ip"],
         "vpn_interface": latest_row["vpn_interface"],
         "vpn_ip": latest_row["vpn_ip"],
@@ -268,9 +269,18 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
     change_mask = df_recent["public_ip"].ne(df_recent["public_ip"].shift(1))
     if not change_mask.empty:
         change_mask.iloc[0] = False
-    ip_change_points = df_recent[change_mask]
-    analysis["summary"]["public_ip_changes"] = len(ip_change_points)
-    analysis["detail"]["ip_change_log"] = ip_change_points[["timestamp", "public_ip", "network"]].to_dict("records")
+    analysis["summary"]["public_ip_changes"] = int(change_mask.sum())
+    window_log = df_recent[["timestamp", "public_ip", "network"]].copy()
+    window_log["ip_changed"] = change_mask
+    analysis["detail"]["recent_log"] = [
+        {
+            "timestamp": row.timestamp,
+            "public_ip": None if pd.isna(row.public_ip) else row.public_ip,
+            "network": row.network,
+            "ip_changed": bool(row.ip_changed),
+        }
+        for row in window_log.itertuples(index=False)
+    ]
 
     # 5. 本地IP段统计
     def extract_ip_segment(ip):
@@ -679,20 +689,26 @@ def render_report(
     )
     md_lines.append("")
 
-    change_log = analysis.get("detail", {}).get("ip_change_log", [])
-    if change_log:
+    # 记录表：列出统计窗口内全部记录（新→旧），🔄加粗行为公网IP切换点
+    recent_log = analysis.get("detail", {}).get("recent_log", [])
+    if recent_log:
         md_lines.append("| 时间 | 公网IP | 网络 |")
         md_lines.append("|:---|:---|:---|")
-        for entry in reversed(change_log[-10:]):  # 最近10次变化，倒序（新→旧）
+        shown_log = recent_log[-RECENT_LOG_LIMIT:]
+        for entry in reversed(shown_log):
             timestamp = entry.get("timestamp")
             if isinstance(timestamp, pd.Timestamp):
                 timestamp = timestamp.strftime("%m-%d %H:%M")
             entry_ip = entry.get("public_ip")
             entry_place = (geo.get(entry_ip) or {}).get("place", "")
             ip_cell = f"`{entry_ip or '未知'}`" + (f"（{entry_place}）" if entry_place else "")
+            if entry.get("ip_changed"):
+                ip_cell = f"🔄 **{ip_cell}**"
             md_lines.append(f"| {timestamp} | {ip_cell} | {entry.get('network', '')} |")
+        if len(recent_log) > len(shown_log):
+            md_lines.append(f"*（共 {len(recent_log)} 条，仅列最近 {len(shown_log)} 条）*")
     else:
-        md_lines.append("近期无公网IP变化。")
+        md_lines.append("近期无记录。")
     md_lines.append("")
 
     # 常连热点（Top 1）
@@ -901,7 +917,7 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
 
         # 5.5 反查公网IP归属地（本地缓存，仅新IP发请求）
         geo_ips = [analysis["latest_record"].get("public_ip")]
-        geo_ips += [e.get("public_ip") for e in analysis.get("detail", {}).get("ip_change_log", [])]
+        geo_ips += [e.get("public_ip") for e in analysis.get("detail", {}).get("recent_log", [])]
         geo_map = resolve_ip_geos(geo_ips)
 
         # 5.6 实时网络与定位（termux-api；失败优雅省略）
