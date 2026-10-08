@@ -82,6 +82,8 @@ DEFAULT_NOTEBOOK = "ewmobile"
 DEFAULT_REPORT_DAYS = 7
 RECENT_LOG_LIMIT = 15
 CHART_PLACEHOLDER = "*(图表已更新至笔记附件)*"
+# 报告标题的「（更新于…）」后缀（须完整闭合到结尾；新格式全角/旧格式半角括号均认）
+TITLE_UPDATE_SUFFIX_RE = re.compile(r"^\s*[（(]更新于[^）)]*[）)]\s*$")
 GEO_API_URL = "http://ip-api.com/json/{ip}"
 GEO_API_FIELDS = "status,country,regionName,city,isp"
 GEO_CACHE_SECTION = "geo_cache"
@@ -806,8 +808,18 @@ def generate_change_summary(changes: Dict[str, Any]) -> str:
 # ### resolve_note(cfg: IpConfig) -> str
 
 # %%
+def _matches_report_title(title: str, base: str) -> bool:
+    """严格判定标题属本设备报告：等于基础标题，或仅追加「（更新于…）」后缀；防搜索子串误命中他笔记."""
+    if title == base:
+        return True
+    if not title.startswith(base):
+        return False
+    return bool(TITLE_UPDATE_SUFFIX_RE.match(title[len(base):]))
+
+
+# %%
 def resolve_note(cfg: IpConfig) -> str:
-    """定位本设备的报告笔记：ini记忆的note_id优先，失效则按标题搜索取最新，兜底新建."""
+    """定位本设备的报告笔记：ini登记的note_id为准，仅登记缺失/失效时按标题严格匹配找回，兜底新建."""
     notebook_id = searchnotebook(DEFAULT_NOTEBOOK)
     note_id = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "note_id")
 
@@ -815,19 +827,22 @@ def resolve_note(cfg: IpConfig) -> str:
         try:
             note = getnote(note_id)
         except Exception as e:
-            log.warning(f"ini记忆的笔记（{note_id}）读取失败（{e}），回退标题搜索。")
+            log.warning(f"ini登记的笔记（{note_id}）读取失败（{e}），改为标题严格匹配找回。")
             note_id = None
         else:
             if notebook_id and note.parent_id != notebook_id:
-                log.warning(f"ini记忆的笔记（{note_id}）不在《{DEFAULT_NOTEBOOK}》，回退标题搜索。")
+                log.warning(f"ini登记的笔记（{note_id}）不在《{DEFAULT_NOTEBOOK}》，改为标题严格匹配找回。")
                 note_id = None
 
     if not note_id:
         note_title = f"IP分析报告_{cfg.host_user}"
-        existing_notes = searchnotes(note_title, parent_id=notebook_id)
-        if existing_notes:
-            note_id = max(existing_notes, key=lambda n: n.updated_time).id
-            log.info(f"按标题《{note_title}》找到现有笔记：{note_id}")
+        candidates = searchnotes(note_title, parent_id=notebook_id)
+        matched = [n for n in candidates if _matches_report_title(n.title, note_title)]
+        if matched:
+            if len(matched) > 1:
+                log.warning(f"标题严格匹配到多条笔记：{[(n.id, n.title) for n in matched]}，取最近更新者。")
+            note_id = max(matched, key=lambda n: n.updated_time).id
+            log.info(f"标题严格匹配找回笔记并重新登记：{note_id}")
         else:
             note_id = createnote(title=note_title, parent_id=notebook_id)
             log.info(f"创建新笔记《{note_title}》（{note_id}）")
