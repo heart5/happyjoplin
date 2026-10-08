@@ -18,8 +18,8 @@
 # 功能：读取设备IP/WiFi变化日志，分析并生成Markdown报告，更新至Joplin笔记。
 #
 # 结构：配置装载（load_config）→ 解析（parse_ip_log_file）→ 分析（analyze_ip_data）
-# → 图表（render_chart）→ 报告（render_report）→ 变化检测（detect_ip_changes）
-# → 笔记定位（resolve_note）→ 资源替换与发布（sync_note_resources）。
+# → 归属地反查（resolve_ip_geos）→ 图表（render_chart）→ 报告（render_report）
+# → 变化检测（detect_ip_changes）→ 笔记定位（resolve_note）→ 资源替换与发布（sync_note_resources）。
 
 # %% [markdown]
 # ## 导入依赖库
@@ -36,6 +36,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import requests
 from matplotlib.ticker import MaxNLocator
 
 plt.switch_backend("Agg")
@@ -75,6 +76,11 @@ IP_UPDATE_CONFIG_SECTION = "ip_update_status"
 DEFAULT_NOTEBOOK = "ewmobile"
 DEFAULT_REPORT_DAYS = 7
 CHART_PLACEHOLDER = "*(图表已更新至笔记附件)*"
+GEO_API_URL = "http://ip-api.com/json/{ip}"
+GEO_API_FIELDS = "status,country,regionName,city,isp"
+GEO_CACHE_SECTION = "geo_cache"
+GEO_CACHE_KEY = "ip_geos"
+GEO_CACHE_LIMIT = 200
 CJK_FONT_CANDIDATES = (
     "/system/fonts/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -308,6 +314,57 @@ def render_chart(chart_data: Dict) -> Optional[bytes]:
 
 
 # %% [markdown]
+# ### lookup_ip_geo(ip) / resolve_ip_geos(ips)
+
+# %%
+def lookup_ip_geo(ip: str) -> Optional[Dict[str, str]]:
+    """反查公网IP归属地（中文地名 + 运营商）；失败返回None."""
+    try:
+        resp = requests.get(
+            GEO_API_URL.format(ip=ip),
+            params={"fields": GEO_API_FIELDS, "lang": "zh-CN"},
+            timeout=8,
+        )
+        data = resp.json()
+    except Exception as e:
+        log.warning(f"反查公网IP归属地失败（{ip}）：{e}")
+        return None
+    if data.get("status") != "success":
+        log.warning(f"反查公网IP归属地未命中（{ip}）：{data}")
+        return None
+    country = str(data.get("country") or "").strip()
+    region = str(data.get("regionName") or "").strip()
+    city = str(data.get("city") or "").strip()
+    isp = str(data.get("isp") or "").strip()
+    if country and country != "中国":
+        place = " ".join(p for p in (country, city or region) if p)
+    else:
+        place = " ".join(p for p in (region, city) if p)
+    if not place:
+        return None
+    return {"place": place, "isp": isp}
+
+
+def resolve_ip_geos(ips) -> Dict[str, Dict[str, str]]:
+    """批量反查公网IP归属地（本地缓存，仅新IP发请求），返回 ip → {place, isp}."""
+    cache_str = getcfpoptionvalue(CONFIG_NAME, GEO_CACHE_SECTION, GEO_CACHE_KEY)
+    cache = json.loads(cache_str) if cache_str else {}
+    updated = False
+    for ip in dict.fromkeys(str(i) for i in ips if i):
+        if ip in cache:
+            continue
+        geo = lookup_ip_geo(ip)
+        if geo:
+            cache[ip] = geo
+            updated = True
+    if updated:
+        if len(cache) > GEO_CACHE_LIMIT:
+            cache = dict(list(cache.items())[-GEO_CACHE_LIMIT:])
+        setcfpoptionvalue(CONFIG_NAME, GEO_CACHE_SECTION, GEO_CACHE_KEY, json.dumps(cache, ensure_ascii=False))
+    return cache
+
+
+# %% [markdown]
 # ### _relative_time(ts: datetime) -> str
 
 # %%
@@ -329,11 +386,14 @@ def _relative_time(ts: datetime) -> str:
 # ### render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -> str
 
 # %%
-def render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -> str:
+def render_report(
+    analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes], geo: Optional[Dict[str, Dict[str, str]]] = None
+) -> str:
     """生成状态仪表盘式Markdown报告（图表以占位符替代，发布时替换为资源引用）."""
     if not analysis:
         return "# 🌐 IP 分析报告\n\n暂无有效数据。\n"
 
+    geo = geo or {}
     summary = analysis["summary"]
     latest = analysis.get("latest_record", {})
 
@@ -345,8 +405,16 @@ def render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -
         time_text = latest_time.strftime("%m-%d %H:%M") if hasattr(latest_time, "strftime") else str(latest_time)
         rel = _relative_time(latest_time)
         rel_text = f"（{rel}）" if rel else ""
+        public_ip = latest.get("public_ip")
+        geo_info = geo.get(public_ip) or {}
+        geo_text = ""
+        if geo_info.get("place"):
+            geo_text = f"（{geo_info['place']}"
+            if geo_info.get("isp"):
+                geo_text += f" · {geo_info['isp']}"
+            geo_text += "）"
         md_lines.append(f"📡 **当前网络** ｜ {latest.get('network', '未知')} · 本地 `{latest.get('local_ip', '未知')}`")
-        md_lines.append(f"🌍 **公网出口** ｜ `{latest.get('public_ip') or '未知'}`")
+        md_lines.append(f"🌍 **公网出口** ｜ `{public_ip or '未知'}`{geo_text}")
         md_lines.append(f"🕐 **最近上报** ｜ {time_text}{rel_text}")
         md_lines.append("")
 
@@ -373,7 +441,10 @@ def render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes]) -
             timestamp = entry.get("timestamp")
             if isinstance(timestamp, pd.Timestamp):
                 timestamp = timestamp.strftime("%m-%d %H:%M")
-            md_lines.append(f"| {timestamp} | `{entry.get('public_ip') or '未知'}` | {entry.get('network', '')} |")
+            entry_ip = entry.get("public_ip")
+            entry_place = (geo.get(entry_ip) or {}).get("place", "")
+            ip_cell = f"`{entry_ip or '未知'}`" + (f"（{entry_place}）" if entry_place else "")
+            md_lines.append(f"| {timestamp} | {ip_cell} | {entry.get('network', '')} |")
     else:
         md_lines.append("近期无公网IP变化。")
     md_lines.append("")
@@ -582,9 +653,14 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
         # 5. 分析数据
         analysis = analyze_ip_data(df, days=cfg.report_days)
 
+        # 5.5 反查公网IP归属地（本地缓存，仅新IP发请求）
+        geo_ips = [analysis["latest_record"].get("public_ip")]
+        geo_ips += [e.get("public_ip") for e in analysis.get("detail", {}).get("ip_change_log", [])]
+        geo_map = resolve_ip_geos(geo_ips)
+
         # 6. 生成图表与报告文本
         chart_image = render_chart(analysis.get("chart_data", {}))
-        report_content = render_report(analysis, cfg, chart_image)
+        report_content = render_report(analysis, cfg, chart_image, geo_map)
 
         # 7. 定位笔记并发布（含图表资源的安全替换）
         note_id = resolve_note(cfg)
