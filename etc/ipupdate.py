@@ -81,6 +81,7 @@ IP_UPDATE_CONFIG_SECTION = "ip_update_status"
 DEFAULT_NOTEBOOK = "ewmobile"
 DEFAULT_REPORT_DAYS = 7
 RECENT_LOG_LIMIT = 15
+WIFI_HOTSPOT_LIMIT = 7
 CHART_PLACEHOLDER = "*(图表已更新至笔记附件)*"
 # 报告标题的「（更新于…）」后缀（须完整闭合到结尾；新格式全角/旧格式半角括号均认）
 TITLE_UPDATE_SUFFIX_RE = re.compile(r"^\s*[（(]更新于[^）)]*[）)]\s*$")
@@ -259,12 +260,17 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
     # 2. 网络连接类型统计
     analysis["summary"]["network_stats"] = df_recent["network"].value_counts().to_dict()
 
-    # 3. WiFi热点统计 (Top 5) 并添加最近连接时间
+    # 3. WiFi热点统计：按最近连接时间倒序（渲染端限额），出口取该热点下公网IP众数
     wifi_stats = {}
     for wifi_name in df_recent["wifi_name"].dropna().unique():
         wifi_data = df_recent[df_recent["wifi_name"] == wifi_name]
-        wifi_stats[wifi_name] = {"count": len(wifi_data), "latest_time": wifi_data["timestamp"].max()}
-    sorted_wifi = sorted(wifi_stats.items(), key=lambda x: x[1]["count"], reverse=True)[:5]
+        exit_ips = wifi_data["public_ip"].dropna()
+        wifi_stats[wifi_name] = {
+            "count": len(wifi_data),
+            "latest_time": wifi_data["timestamp"].max(),
+            "exit_ip": exit_ips.mode().iloc[0] if not exit_ips.empty else None,
+        }
+    sorted_wifi = sorted(wifi_stats.items(), key=lambda kv: kv[1]["latest_time"], reverse=True)
     analysis["summary"]["wifi_stats"] = dict(sorted_wifi)
 
     # 4. 公网IP变化分析（首行无前序记录，不计入变化）
@@ -676,12 +682,6 @@ def render_report(
         md_lines.append(f"🕐 **最近上报** ｜ {time_text}{rel_text}")
         md_lines.append("")
 
-    # 图表前置（发布时替换为资源引用）
-    if chart_image:
-        md_lines.append(f"## 📈 图表\n\n{CHART_PLACEHOLDER}\n")
-    else:
-        md_lines.append("## 📈 图表\n\n*(图表生成跳过)*\n")
-
     # 近 N 天摘要：记录数 / 公网IP切换 / WiFi 次数
     wifi_count = summary.get("network_stats", {}).get("WiFi", 0)
     md_lines.append(f"## 🔄 近 {cfg.report_days} 天")
@@ -713,22 +713,33 @@ def render_report(
         md_lines.append("近期无记录。")
     md_lines.append("")
 
-    # 常连热点（Top 1）
+    # 近期热点（按最近连接倒序，最多 WIFI_HOTSPOT_LIMIT 个）
     wifi_stats = summary.get("wifi_stats", {})
     if wifi_stats:
-        wifi_name, wifi_data = next(iter(wifi_stats.items()))
-        latest_time = wifi_data.get("latest_time")
-        if isinstance(latest_time, pd.Timestamp):
-            latest_time = latest_time.strftime("%m-%d %H:%M")
-        md_lines.append(f"🏨 常连热点：{wifi_name}（{wifi_data.get('count', 0)} 次 · 最近 {latest_time}）\n")
+        md_lines.append("🏨 **近期热点**（按最近连接倒序）")
+        for wifi_name, wifi_data in list(wifi_stats.items())[:WIFI_HOTSPOT_LIMIT]:
+            latest_time = wifi_data.get("latest_time")
+            if isinstance(latest_time, pd.Timestamp):
+                latest_time = latest_time.strftime("%m-%d %H:%M")
+            exit_ip = wifi_data.get("exit_ip")
+            exit_place = (geo.get(exit_ip) or {}).get("place", "") if exit_ip else ""
+            exit_text = ""
+            if exit_ip:
+                exit_text = f" ｜ 出口 `{exit_ip}`" + (f"（{exit_place}）" if exit_place else "")
+            md_lines.append(f"- **{wifi_name}** · {latest_time} · {wifi_data.get('count', 0)} 次{exit_text}")
+        if len(wifi_stats) > WIFI_HOTSPOT_LIMIT:
+            md_lines.append(f"*（共 {len(wifi_stats)} 个热点，仅列最近 {WIFI_HOTSPOT_LIMIT} 个）*")
+        md_lines.append("")
 
-    # 技术信息折叠区
+    # 技术信息+图表折叠区（图表默认收起，发布时替换为资源引用）
     md_lines.append("<details>")
-    md_lines.append("<summary>📁 技术信息</summary>")
+    md_lines.append("<summary>📁 技术信息与图表</summary>")
     md_lines.append("")
     md_lines.append(f"设备 `{cfg.device_id}` ｜ 统计窗口 近 {cfg.report_days} 天")
     md_lines.append(f"日志 `{cfg.log_file}` ｜ 总记录 {analysis['total_records']:,} 条")
     md_lines.append(f"生成 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    md_lines.append("")
+    md_lines.append(CHART_PLACEHOLDER if chart_image else "*(图表生成跳过)*")
     md_lines.append("")
     md_lines.append("</details>")
 
