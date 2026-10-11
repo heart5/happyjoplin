@@ -94,6 +94,17 @@ PLACES_URL = "https://loc.xilong9.com/places"
 OSM_LINK_TEMPLATE = "https://www.openstreetmap.org/?mlat={lat}&mlon={lng}&zoom=15"
 # VPN接口/IP 等字段在日志契约中以这些字符串表示无值
 BLANK_VALUES = {"", "n/a", "na", "none", "unknown"}
+# WiFi 名「未知」语义集合：None/NaN 判空后，剩余归一为未命名的文本（Unknown_WiFi 已在解析层转 None）
+UNKNOWN_WIFI_TEXT = set(BLANK_VALUES) | {"unknown_wifi"}
+
+
+def _is_unknown_wifi(value: Any) -> bool:
+    """WiFi 名是否为「探测失败的未命名值」（而非真实网络名）."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return True
+    return str(value).strip().lower() in UNKNOWN_WIFI_TEXT
+
+
 RADIO_TYPE_MAP = {
     "nr": "5G NR",
     "lte": "LTE",
@@ -457,7 +468,10 @@ def collect_live_network_details() -> Dict[str, str]:
     """实时采集网络链路细节：WiFi 连接返回链路质量，否则返回基站信号；不可用返回 {}."""
     wifi_info = _run_termux_json(["termux-wifi-connectioninfo"], 8)
     if isinstance(wifi_info, dict) and str(wifi_info.get("supplicant_state", "")).upper() in {"COMPLETED", "CONNECTED"}:
-        details = {"ssid": str(wifi_info.get("ssid") or "").strip()}
+        ssid = str(wifi_info.get("ssid") or "").strip()
+        if ssid.lower() in {"<unknown ssid>", "null"}:
+            ssid = ""
+        details = {"ssid": ssid}
         text_parts = []
         rssi = wifi_info.get("rssi")
         if isinstance(rssi, (int, float)) and rssi > -127:
@@ -769,14 +783,27 @@ def detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, A
     for key, _display, conv in CHANGE_FIELDS:
         old_val = last_record.get(key, "")
         new_val = current_record.get(key, "")
+        if key == "wifi_name":
+            # 「未知不计变化」：探测失败的未命名值不视为网络变化；未知→已知则记变化（首次学习）
+            if _is_unknown_wifi(new_val):
+                continue
+            old_norm = None if _is_unknown_wifi(old_val) else str(old_val)
+            if old_norm != str(new_val):
+                changes[key] = {"old": old_norm, "new": str(new_val)}
+            continue
         if conv is not None:
             old_val, new_val = conv(old_val), conv(new_val)
         if old_val != new_val:
             changes[key] = {"old": old_val, "new": new_val}
 
     if changes:
+        # 「未知不覆盖已知」：探测失败时基线 WiFi 名保留最近已知值
+        merged = dict(current_record)
+        if _is_unknown_wifi(merged.get("wifi_name")):
+            old_wifi = last_record.get("wifi_name")
+            merged["wifi_name"] = None if _is_unknown_wifi(old_wifi) else old_wifi
         setcfpoptionvalue(
-            CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_record", json.dumps(current_record, ensure_ascii=False)
+            CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_record", json.dumps(merged, ensure_ascii=False)
         )
         setcfpoptionvalue(
             CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_update_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
