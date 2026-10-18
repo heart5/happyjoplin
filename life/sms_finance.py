@@ -34,6 +34,7 @@ import logging
 import os
 import re
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -357,6 +358,25 @@ def _get_sms_api_key() -> str:
         return ""
 
 
+_INTERNAL_KEY_CACHE = {"value": None, "expires": 0.0}
+
+
+def _get_internal_api_key() -> str:
+    now = time.time()
+    if _INTERNAL_KEY_CACHE["expires"] <= now:
+        key = os.environ.get("INTERNAL_API_KEY", "")
+        if not key:
+            try:
+                from func.jpfuncs import getinivaluefromcloud
+
+                key = str(getinivaluefromcloud("internal_api", "api_key") or "")
+            except Exception as e:
+                log.warning(f"读取云端 internal_api 密钥失败: {e}")
+                key = ""
+        _INTERNAL_KEY_CACHE.update(value=key, expires=now + 300)
+    return _INTERNAL_KEY_CACHE["value"]
+
+
 def _fetch_sms_api(date_from: str, date_to: str) -> list:
     """通过 Message API 获取财务短信（固定 P50Pro，保持账本历史口径）。"""
     import urllib.error, urllib.request, json
@@ -395,9 +415,14 @@ def _fetch_wechat_api(account: str, date_from: str, date_to: str) -> list:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    key = _get_internal_api_key()
+    if not key:
+        log.error("微信 API 密钥未配置：[internal_api] api_key")
+        return []
+    req = urllib.request.Request(url, headers={"X-API-Key": key})
 
     try:
-        resp = urllib.request.urlopen(url, timeout=30, context=ctx)
+        resp = urllib.request.urlopen(req, timeout=30, context=ctx)
         data = json.loads(resp.read().decode())
         return data.get("records", [])
     except Exception as e:

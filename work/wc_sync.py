@@ -27,12 +27,27 @@ import pathmagic
 
 with pathmagic.context():
     from func.datetimetools import normalize_time_to_unix
+    from func.jpfuncs import getinivaluefromcloud
 
 try:
     import requests
 except ImportError:
     print("需要安装 requests: pip install requests")
     sys.exit(1)
+
+_INTERNAL_KEY_CACHE = {"value": None, "expires": 0.0}
+
+
+def _api_headers():
+    now = time.time()
+    if _INTERNAL_KEY_CACHE["expires"] <= now:
+        try:
+            key = getinivaluefromcloud("internal_api", "api_key") or ""
+        except Exception:
+            key = ""
+        _INTERNAL_KEY_CACHE.update(value=key, expires=now + 300)
+    key = _INTERNAL_KEY_CACHE["value"]
+    return {"X-API-Key": key} if key else {}
 
 # ---------------------------------------------------------------------------
 # 进程锁：防止定时任务与手动测试同时运行
@@ -345,6 +360,7 @@ def _print_dashboard(conn, table, account, cursor_id, retry_ids, roots, write_ta
             try:
                 resp = requests.post(
                     f"{voice_url}/transcriptions/batch",
+                    headers=_api_headers(),
                     json={"account": account, "records": [
                         [normalize_time_to_unix(t), str(s)] for _, t, s, _, _ in chunk
                     ]},
@@ -440,6 +456,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.qingxd.com/vo
                 with open(fpath, "rb") as fh:
                     resp = requests.post(
                         f"{voice_url}/transcribe",
+                        headers=_api_headers(),
                         files={"file": (fname, fh)},
                         data={"account": account, "msg_time": nt,
                               "sender": str(sender), "send": str(send_val),
@@ -500,6 +517,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.qingxd.com/vo
             try:
                 resp = requests.post(
                     f"{voice_url}/transcriptions/batch",
+                    headers=_api_headers(),
                     json={"account": account, "records": [[nt, str(sender)]]},
                     timeout=30,
                 )
@@ -548,6 +566,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.qingxd.com/vo
             try:
                 resp = requests.post(
                     f"{voice_url}/transcriptions/batch",
+                    headers=_api_headers(),
                     json={"account": account, "records": [[t, s] for t, s in check_records]},
                     timeout=30,
                 )
@@ -598,6 +617,7 @@ def transcribe_records(db_path, account, voice_url="https://ollama.qingxd.com/vo
             try:
                 resp = requests.post(
                     f"{voice_url}/transcriptions/batch",
+                    headers=_api_headers(),
                     json={"account": account, "records": [[nt, str(sender)]]},
                     timeout=30,
                 )
@@ -681,6 +701,7 @@ def clean_transcribed_mp3(db_path, account, voice_url="https://ollama.qingxd.com
             check_records = [(normalize_time_to_unix(t), str(s)) for _, t, s in mp3_map]
             resp = requests.post(
                 f"{voice_url}/transcriptions/batch",
+                headers=_api_headers(),
                 json={"account": account, "records": [[t, s] for t, s in check_records]},
                 timeout=60,
             )
@@ -796,6 +817,7 @@ def push_records(db_path, account, api_url, write_target=2000, record_type=None,
             try:
                 resp = requests.post(
                     api_url,
+                    headers=_api_headers(),
                     json={"account": account, "records": records, "source": get_device_id()},
                     timeout=120,
                 )

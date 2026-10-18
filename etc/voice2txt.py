@@ -20,6 +20,7 @@
 import json
 import os
 import sqlite3 as lite
+import time
 import wave
 from datetime import datetime as _datetime
 
@@ -34,10 +35,26 @@ with pathmagic.context():
 
     from func.first import getdirmain
     from func.getid import getdevicename
+    from func.jpfuncs import getinivaluefromcloud
     from func.litetools import ifnotcreate
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
+
+
+_INTERNAL_KEY_CACHE = {"value": None, "expires": 0.0}
+
+
+def _api_headers():
+    now = time.time()
+    if _INTERNAL_KEY_CACHE["expires"] <= now:
+        try:
+            key = getinivaluefromcloud("internal_api", "api_key") or ""
+        except Exception:
+            key = ""
+        _INTERNAL_KEY_CACHE.update(value=key, expires=now + 300)
+    key = _INTERNAL_KEY_CACHE["value"]
+    return {"X-API-Key": key} if key else {}
 
 
 # %% [markdown]
@@ -155,6 +172,7 @@ def v2t_ollama(filepath, account, msg_time, sender, voice_url="https://ollama.qi
                 f"{voice_url}/transcribe",
                 files={"file": (os.path.basename(filepath), fh)},
                 data={"account": account, "msg_time": msg_time, "sender": sender, "source": source},
+                headers=_api_headers(),
                 timeout=120,
             )
         if resp.ok:
@@ -232,6 +250,7 @@ def batch_transcribe_voice(db_path, account, voice_url="https://ollama.qingxd.co
             resp = requests.post(
                 f"{voice_url}/transcriptions/batch",
                 json={"account": account, "records": [[t, s] for t, s in records]},
+                headers=_api_headers(),
                 timeout=30,
             )
             if resp.ok:
