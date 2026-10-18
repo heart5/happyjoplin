@@ -163,7 +163,7 @@ def cmd_import_sms(args):
     # 通过 HTTP API 获取短信
     import urllib.request, json, ssl
     sms_api = get_sms_api_url()
-    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000"
+    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000&device=P50Pro&kind=finance"
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -223,7 +223,7 @@ def cmd_import_all(args):
     from life.sms_finance import parse_sms_records
     import urllib.request, json, ssl
     sms_api = get_sms_api_url()
-    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000"
+    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000&device=P50Pro&kind=finance"
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE

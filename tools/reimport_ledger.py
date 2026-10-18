@@ -45,7 +45,7 @@ def fetch_sms_month(year: int, month: int) -> list:
     sms_api = get_sms_api_url()
     date_from = f"{year}-{month:02d}-01"
     date_to = f"{year}-{month+1:02d}-01" if month < 12 else f"{year+1}-01-01"
-    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000"
+    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000&device=P50Pro&kind=finance"
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False

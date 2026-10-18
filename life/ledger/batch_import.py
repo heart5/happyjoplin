@@ -70,7 +70,7 @@ def fetch_sms_financial(year: int, month: int) -> list:
     else:
         date_to = f"{year}-{month + 1:02d}-01"
 
-    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000"
+    url = f"{sms_api}?date_from={date_from}&date_to={date_to}&limit=50000&device=P50Pro&kind=finance"
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE

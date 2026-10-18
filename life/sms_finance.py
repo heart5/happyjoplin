@@ -31,6 +31,7 @@ SMS 短信财务解析模块。
 
 import argparse
 import logging
+import os
 import re
 import sys
 from collections import defaultdict
@@ -40,6 +41,7 @@ from pathlib import Path
 import pathmagic
 
 with pathmagic.context():
+    from func.configpr import getcfpoptionvalue
     from func.logme import log
     from life.ledger.cloudcfg import (
         get_sms_api_url, get_wechat_api_url,
@@ -338,19 +340,47 @@ def _parse_record(msg: dict) -> dict:
 # ── API 加载 ──
 
 
-def _fetch_sms_api(date_from: str, date_to: str) -> list:
-    """通过 Message API 获取短信数据。"""
-    import urllib.request, json, ssl
+def _get_sms_api_key() -> str:
+    key = (
+        getcfpoptionvalue("happyjphard", "sms_collector", "api_key")
+        or os.environ.get("SMS_API_KEY", "")
+        or getcfpoptionvalue("happyjpinifromcloud", "sms_collector", "api_key")
+    )
+    if key:
+        return str(key)
+    try:
+        from func.jpfuncs import getinivaluefromcloud
 
-    url = f"{SMS_API_URL}?date_from={date_from}&date_to={date_to}&limit=50000"
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+        return str(getinivaluefromcloud("sms_collector", "api_key") or "")
+    except Exception as e:
+        log.warning(f"读取云端 SMS API 密钥失败: {e}")
+        return ""
+
+
+def _fetch_sms_api(date_from: str, date_to: str) -> list:
+    """通过 Message API 获取财务短信（固定 P50Pro，保持账本历史口径）。"""
+    import urllib.error, urllib.request, json
+
+    url = (
+        f"{SMS_API_URL}?date_from={date_from}&date_to={date_to}&limit=50000"
+        "&device=P50Pro&kind=finance"
+    )
+    key = _get_sms_api_key()
+    if not key:
+        log.error("SMS API 密钥未配置：happyjphard.ini [sms_collector] api_key 或 SMS_API_KEY")
+        return []
+    req = urllib.request.Request(url, headers={"X-API-Key": key})
 
     try:
-        resp = urllib.request.urlopen(url, timeout=30, context=ctx)
+        resp = urllib.request.urlopen(req, timeout=30)
         data = json.loads(resp.read().decode())
         return data.get("records", [])
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            log.error(f"SMS API 鉴权失败（HTTP {e.code}）")
+        else:
+            log.warning(f"SMS API 调用失败: {e}")
+        return []
     except Exception as e:
         log.warning(f"SMS API 调用失败: {e}")
         return []
