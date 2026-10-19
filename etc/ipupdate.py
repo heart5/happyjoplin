@@ -265,6 +265,8 @@ def _parse_ip_log_line(line: str) -> Optional[Dict[str, Any]]:
             record[column] = value.strip()
     if not CORE_LOG_FIELDS.issubset(record):
         return None
+    # 记录日志是否带 Source 字段：源 token（含 unknown）随后会被归一为 None，借此区分旧格式与探测失败
+    record["source_recorded"] = "public_ip_source" in record
     # 探测失败哨兵归一为 None，避免进入分析与统计
     record["public_ip"] = _normalize_unknown(record.get("public_ip"), BLANK_VALUES)
     record["wifi_name"] = _normalize_unknown(record.get("wifi_name"), UNKNOWN_WIFI_TEXT)
@@ -337,9 +339,9 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
     }
 
     # 旧格式日志（升级前）没有新字段列，补齐为空列以便统一统计
-    for column in ("public_ip_cn", "public_ip_source", "wifi_bssid"):
+    for column in ("public_ip_cn", "public_ip_source", "wifi_bssid", "source_recorded"):
         if column not in df_recent.columns:
-            df_recent[column] = None
+            df_recent[column] = False if column == "source_recorded" else None
 
     # 2. 网络连接类型统计
     analysis["summary"]["network_stats"] = df_recent["network"].value_counts().to_dict()
@@ -377,7 +379,9 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
     # 端点来源分布（探测失败/旧日志归「未记录」）
     analysis["summary"]["source_stats"] = df_recent["public_ip_source"].fillna(SOURCE_UNRECORDED).value_counts().to_dict()
 
-    window_log = df_recent[["timestamp", "public_ip", "public_ip_cn", "public_ip_source", "network"]].copy()
+    window_log = df_recent[
+        ["timestamp", "public_ip", "public_ip_cn", "public_ip_source", "source_recorded", "network"]
+    ].copy()
     window_log["ip_changed"] = change_mask
     window_log["cn_changed"] = cn_change_mask
     analysis["detail"]["recent_log"] = [
@@ -386,6 +390,7 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
             "public_ip": None if pd.isna(row.public_ip) else row.public_ip,
             "public_ip_cn": None if pd.isna(row.public_ip_cn) else row.public_ip_cn,
             "public_ip_source": None if pd.isna(row.public_ip_source) else row.public_ip_source,
+            "source_recorded": bool(row.source_recorded) if not pd.isna(row.source_recorded) else False,
             "network": row.network,
             "ip_changed": bool(row.ip_changed),
             "cn_changed": bool(row.cn_changed),
@@ -840,19 +845,33 @@ def render_report(
                 timestamp = timestamp.strftime("%m-%d %H:%M")
             entry_ip = entry.get("public_ip")
             entry_place = (geo.get(entry_ip) or {}).get("place", "")
-            ip_cell = f"`{entry_ip or '未知'}`" + (f"（{entry_place}）" if entry_place else "")
+            if entry_ip:
+                ip_cell = f"`{entry_ip}`" + (f"（{entry_place}）" if entry_place else "")
+            elif entry.get("source_recorded"):
+                # 新格式行有来源字段却无 IP = 本轮探测全部失败；旧格式行则是当时未记录
+                ip_cell = "⚠️ 探测失败"
+            else:
+                ip_cell = "未记录"
             if entry.get("ip_changed"):
                 ip_cell = f"🔄 **{ip_cell}**"
+            network_text = entry.get("network") or "未知"
             if show_cn_col:
                 entry_cn = entry.get("public_ip_cn")
                 cn_place = (geo.get(entry_cn) or {}).get("place", "") if entry_cn else ""
-                cn_cell = (f"`{entry_cn}`" + (f"（{cn_place}）" if cn_place else "")) if entry_cn else "—"
+                if entry_cn:
+                    cn_cell = f"`{entry_cn}`" + (f"（{cn_place}）" if cn_place else "")
+                elif entry.get("source_recorded"):
+                    cn_cell = "探测失败"
+                else:
+                    cn_cell = "未记录"
                 if entry_cn and entry.get("cn_changed"):
                     cn_cell = f"🔄 **{cn_cell}**"
-                md_lines.append(f"| {timestamp} | {ip_cell} | {cn_cell} | {entry.get('network', '')} |")
+                md_lines.append(f"| {timestamp} | {ip_cell} | {cn_cell} | {network_text} |")
             else:
-                md_lines.append(f"| {timestamp} | {ip_cell} | {entry.get('network', '')} |")
+                md_lines.append(f"| {timestamp} | {ip_cell} | {network_text} |")
         if len(recent_log) > len(shown_log):
+            # 空行分隔，否则脚注会被 Markdown 归并为表格行（首格有字、其余空）
+            md_lines.append("")
             md_lines.append(f"*（共 {len(recent_log)} 条，仅列最近 {len(shown_log)} 条）*")
     else:
         md_lines.append("近期无记录。")
@@ -878,6 +897,7 @@ def render_report(
                     bssid_text += f"（最近 {wifi_data['latest_bssid']}）"
             md_lines.append(f"- **{wifi_name}** · {latest_time} · {wifi_data.get('count', 0)} 次{exit_text}{bssid_text}")
         if len(wifi_stats) > WIFI_HOTSPOT_LIMIT:
+            md_lines.append("")
             md_lines.append(f"*（共 {len(wifi_stats)} 个热点，仅列最近 {WIFI_HOTSPOT_LIMIT} 个）*")
         md_lines.append("")
 
