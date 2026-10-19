@@ -96,13 +96,29 @@ OSM_LINK_TEMPLATE = "https://www.openstreetmap.org/?mlat={lat}&mlon={lng}&zoom=1
 BLANK_VALUES = {"", "n/a", "na", "none", "unknown"}
 # WiFi 名「未知」语义集合：None/NaN 判空后，剩余归一为未命名的文本（Unknown_WiFi 已在解析层转 None）
 UNKNOWN_WIFI_TEXT = set(BLANK_VALUES) | {"unknown_wifi"}
+# 仅这两个字段的「无值」代表探测失败；VPN 的 N/A 是未连接状态，必须照常参与变化比较
+UNKNOWN_SETS = {"public_ip": BLANK_VALUES, "wifi_name": UNKNOWN_WIFI_TEXT}
 
 
-def _is_unknown_wifi(value: Any) -> bool:
-    """WiFi 名是否为「探测失败的未命名值」（而非真实网络名）."""
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return True
-    return str(value).strip().lower() in UNKNOWN_WIFI_TEXT
+def _sanitize_field_value(value: Any) -> Optional[str]:
+    """字段值转字符串；None/NaN 归一为 None，避免 NaN 进入比较与状态文件."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return text or None
+
+
+def _normalize_unknown(value: Any, unknown_texts: set) -> Optional[str]:
+    """sanitize 后再把哨兵文本（Unknown/N/A 等）视为无值."""
+    text = _sanitize_field_value(value)
+    if text is None or text.lower() in unknown_texts:
+        return None
+    return text
 
 
 RADIO_TYPE_MAP = {
@@ -284,8 +300,9 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
     sorted_wifi = sorted(wifi_stats.items(), key=lambda kv: kv[1]["latest_time"], reverse=True)
     analysis["summary"]["wifi_stats"] = dict(sorted_wifi)
 
-    # 4. 公网IP变化分析（首行无前序记录，不计入变化）
-    change_mask = df_recent["public_ip"].ne(df_recent["public_ip"].shift(1))
+    # 4. 公网IP变化分析（首行无前序记录、或任一端探测失败，均不计入变化）
+    prev_public_ip = df_recent["public_ip"].shift(1)
+    change_mask = df_recent["public_ip"].notna() & prev_public_ip.notna() & df_recent["public_ip"].ne(prev_public_ip)
     if not change_mask.empty:
         change_mask.iloc[0] = False
     analysis["summary"]["public_ip_changes"] = int(change_mask.sum())
@@ -769,6 +786,11 @@ def detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, A
     last_record_str = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_record")
     last_record = json.loads(last_record_str) if last_record_str else {}
 
+    # 统一清洗：NaN/None（pandas 会把探测失败变成 NaN）不进入比较与状态文件；N/A 等真实哨兵值按字段语义处理
+    current_record = dict(current_record)
+    for key, _display, _conv in CHANGE_FIELDS:
+        current_record[key] = _sanitize_field_value(current_record.get(key))
+
     if not last_record:
         # 首次运行，记录当前状态
         setcfpoptionvalue(
@@ -783,25 +805,28 @@ def detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, A
     for key, _display, conv in CHANGE_FIELDS:
         old_val = last_record.get(key, "")
         new_val = current_record.get(key, "")
-        if key == "wifi_name":
-            # 「未知不计变化」：探测失败的未命名值不视为网络变化；未知→已知则记变化（首次学习）
-            if _is_unknown_wifi(new_val):
+        unknown_set = UNKNOWN_SETS.get(key)
+        if unknown_set is not None:
+            # 「未知不计变化」：探测失败不视为变化、不覆盖已知值；未知→已知则记变化（首次学习）
+            old_val = _normalize_unknown(old_val, unknown_set)
+            new_val = _normalize_unknown(new_val, unknown_set)
+            if new_val is None:
                 continue
-            old_norm = None if _is_unknown_wifi(old_val) else str(old_val)
-            if old_norm != str(new_val):
-                changes[key] = {"old": old_norm, "new": str(new_val)}
-            continue
+        else:
+            old_val = _sanitize_field_value(old_val)
+            new_val = _sanitize_field_value(new_val)
         if conv is not None:
-            old_val, new_val = conv(old_val), conv(new_val)
+            old_val = conv(old_val) if old_val is not None else None
+            new_val = conv(new_val) if new_val is not None else None
         if old_val != new_val:
             changes[key] = {"old": old_val, "new": new_val}
 
     if changes:
-        # 「未知不覆盖已知」：探测失败时基线 WiFi 名保留最近已知值
+        # 「未知不覆盖已知」：公网IP/WiFi 探测失败时保留最近已知值；VPN 的 N/A 是真实状态，照常写入
         merged = dict(current_record)
-        if _is_unknown_wifi(merged.get("wifi_name")):
-            old_wifi = last_record.get("wifi_name")
-            merged["wifi_name"] = None if _is_unknown_wifi(old_wifi) else old_wifi
+        for key, unknown_set in UNKNOWN_SETS.items():
+            if merged.get(key) is None:
+                merged[key] = _normalize_unknown(last_record.get(key), unknown_set)
         setcfpoptionvalue(
             CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_record", json.dumps(merged, ensure_ascii=False)
         )
@@ -944,12 +969,12 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
             "timestamp": latest_row["timestamp"].isoformat()
             if hasattr(latest_row["timestamp"], "isoformat")
             else str(latest_row["timestamp"]),
-            "network": latest_row["network"],
-            "wifi_name": latest_row["wifi_name"],
-            "public_ip": latest_row["public_ip"],
-            "local_ip": latest_row["local_ip"],
-            "vpn_interface": latest_row["vpn_interface"],
-            "vpn_ip": latest_row["vpn_ip"],
+            "network": _sanitize_field_value(latest_row["network"]),
+            "wifi_name": _sanitize_field_value(latest_row["wifi_name"]),
+            "public_ip": _sanitize_field_value(latest_row["public_ip"]),
+            "local_ip": _sanitize_field_value(latest_row["local_ip"]),
+            "vpn_interface": _sanitize_field_value(latest_row["vpn_interface"]),
+            "vpn_ip": _sanitize_field_value(latest_row["vpn_ip"]),
         }
 
         # 3. 检测IP变化
