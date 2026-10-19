@@ -96,8 +96,41 @@ OSM_LINK_TEMPLATE = "https://www.openstreetmap.org/?mlat={lat}&mlon={lng}&zoom=1
 BLANK_VALUES = {"", "n/a", "na", "none", "unknown"}
 # WiFi 名「未知」语义集合：None/NaN 判空后，剩余归一为未命名的文本（Unknown_WiFi 已在解析层转 None）
 UNKNOWN_WIFI_TEXT = set(BLANK_VALUES) | {"unknown_wifi"}
-# 仅这两个字段的「无值」代表探测失败；VPN 的 N/A 是未连接状态，必须照常参与变化比较
-UNKNOWN_SETS = {"public_ip": BLANK_VALUES, "wifi_name": UNKNOWN_WIFI_TEXT}
+# 这些字段的「无值」代表探测失败：不计变化、不覆盖已知值；VPN 的 N/A 是未连接状态，必须照常参与变化比较
+UNKNOWN_SETS = {
+    "public_ip": BLANK_VALUES,
+    "wifi_name": UNKNOWN_WIFI_TEXT,
+    "public_ip_cn": BLANK_VALUES,
+    "public_ip_source": BLANK_VALUES,
+}
+# 日志行字段 → DataFrame 列；未知键忽略（采集端新增字段不破坏旧报告端）
+LOG_FIELD_MAP = {
+    "Network": "network",
+    "WiFi_Name": "wifi_name",
+    "Public_IP": "public_ip",
+    "Local_IP": "local_ip",
+    "VPN_Interface": "vpn_interface",
+    "VPN_IP": "vpn_ip",
+    "Public_IP_Source": "public_ip_source",
+    "Public_IP_CN": "public_ip_cn",
+    "WiFi_BSSID": "wifi_bssid",
+}
+LOG_TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| ")
+# 缺少任一核心字段的畸形行跳过（旧 7 字段行含这两个字段，仍可解析）
+CORE_LOG_FIELDS = {"network", "local_ip"}
+# 端点来源 token → 报告展示名
+SOURCE_LABELS = {
+    "ipsb": "ip.sb",
+    "icanhazip": "icanhazip",
+    "aws-checkip": "AWS checkip",
+    "ipinfo": "ipinfo",
+    "ifconfig": "ifconfig.me",
+    "hcx-echo": "HCX 自建",
+}
+SOURCE_UNRECORDED = "未记录"
+BSSID_RE = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
+# 仅随状态记录/报告展示、不参与变化比较的字段（端点切换、AP 漫游不应触发报告刷写）
+STATE_EXTRA_FIELDS = ("public_ip_source", "wifi_bssid")
 
 
 def _sanitize_field_value(value: Any) -> Optional[str]:
@@ -119,6 +152,23 @@ def _normalize_unknown(value: Any, unknown_texts: set) -> Optional[str]:
     if text is None or text.lower() in unknown_texts:
         return None
     return text
+
+
+def _valid_bssid(value: Any) -> Optional[str]:
+    """返回归一化的小写 BSSID；N/A、Unknown、非 MAC 文本均视为无值."""
+    text = _sanitize_field_value(value)
+    if text is None:
+        return None
+    text = text.lower()
+    return text if BSSID_RE.match(text) else None
+
+
+def _source_label(value: Any) -> str:
+    """端点来源 token 转展示名；缺失展示为「未记录」."""
+    token = _sanitize_field_value(value)
+    if token is None:
+        return SOURCE_UNRECORDED
+    return SOURCE_LABELS.get(token.lower(), token)
 
 
 RADIO_TYPE_MAP = {
@@ -154,6 +204,7 @@ CJK_FONT_CANDIDATES = (
 # 变化检测字段表：(记录键, 展示名, 比较前转换)
 CHANGE_FIELDS: Tuple[Tuple[str, str, Optional[type]], ...] = (
     ("public_ip", "公网IP", None),
+    ("public_ip_cn", "国内公网IP", None),
     ("network", "网络类型", None),
     ("wifi_name", "WiFi", str),
     ("local_ip", "本地IP", None),
@@ -195,49 +246,47 @@ def load_config() -> IpConfig:
 # ### parse_ip_log_file(log_path: Path) -> pd.DataFrame
 
 # %%
+def _parse_ip_log_line(line: str) -> Optional[Dict[str, Any]]:
+    """解析单行日志为记录字典；非日志行或缺少核心字段返回None.
+
+    宽松键值解析：按 " | " 切段、每段 "键: 值"；未知键忽略，新增字段（Source/CN/BSSID）
+    缺失时为 None，因此旧 7 字段行与畸形行可共存。
+    """
+    match = LOG_TIMESTAMP_RE.match(line)
+    if not match:
+        return None
+    record: Dict[str, Any] = {"timestamp": pd.to_datetime(match.group(1))}
+    for segment in line[match.end():].split(" | "):
+        key, sep, value = segment.partition(": ")
+        if not sep:
+            continue
+        column = LOG_FIELD_MAP.get(key.strip())
+        if column is not None:
+            record[column] = value.strip()
+    if not CORE_LOG_FIELDS.issubset(record):
+        return None
+    # 探测失败哨兵归一为 None，避免进入分析与统计
+    record["public_ip"] = _normalize_unknown(record.get("public_ip"), BLANK_VALUES)
+    record["wifi_name"] = _normalize_unknown(record.get("wifi_name"), UNKNOWN_WIFI_TEXT)
+    record["public_ip_cn"] = _normalize_unknown(record.get("public_ip_cn"), BLANK_VALUES)
+    record["public_ip_source"] = _normalize_unknown(record.get("public_ip_source"), BLANK_VALUES)
+    record["wifi_bssid"] = _sanitize_field_value(record.get("wifi_bssid"))
+    return record
+
+
 def parse_ip_log_file(log_path: Path) -> pd.DataFrame:
     """解析结构化的IP日志文件，返回DataFrame。
 
     格式：2026-03-09 00:35:02 | Network: WiFi | WiFi_Name: yj8510 | Public_IP: 219.76.131.102 | ...
+    旧 7 字段行与新增 9 字段行（Public_IP_Source / Public_IP_CN / WiFi_BSSID）均可解析。
     """
     data = []
-    pattern = re.compile(
-        r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \| "
-        r"Network: (\w+) \| "
-        r"WiFi_Name: ([^|]+) \| "
-        r"Public_IP: ([^|]+) \| "
-        r"Local_IP: ([^|]+) \| "
-        r"VPN_Interface: ([^|]+) \| "
-        r"VPN_IP: ([^|\n]+)"
-    )
     try:
         with open(log_path, "r", encoding="utf-8") as f:
             for line in f:
-                match = pattern.match(line.strip())
-                if match:
-                    (
-                        timestamp,
-                        network,
-                        wifi_name,
-                        public_ip,
-                        local_ip,
-                        vpn_intf,
-                        vpn_ip,
-                    ) = match.groups()
-                    # 清洗数据，将"Unknown"替换为None或空字符串以便分析
-                    public_ip = None if public_ip.strip() == "Unknown" else public_ip.strip()
-                    wifi_name = None if wifi_name.strip() == "Unknown_WiFi" else wifi_name.strip()
-                    data.append(
-                        {
-                            "timestamp": pd.to_datetime(timestamp),
-                            "network": network.strip(),
-                            "wifi_name": wifi_name,
-                            "public_ip": public_ip,
-                            "local_ip": local_ip.strip(),
-                            "vpn_interface": vpn_intf.strip(),
-                            "vpn_ip": vpn_ip.strip(),
-                        }
-                    )
+                record = _parse_ip_log_line(line.strip())
+                if record is not None:
+                    data.append(record)
         df = pd.DataFrame(data)
         if not df.empty:
             df = df.sort_values("timestamp").reset_index(drop=True)
@@ -282,7 +331,15 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
         "local_ip": latest_row["local_ip"],
         "vpn_interface": latest_row["vpn_interface"],
         "vpn_ip": latest_row["vpn_ip"],
+        "public_ip_source": None if pd.isna(latest_row.get("public_ip_source")) else latest_row.get("public_ip_source"),
+        "public_ip_cn": None if pd.isna(latest_row.get("public_ip_cn")) else latest_row.get("public_ip_cn"),
+        "wifi_bssid": None if pd.isna(latest_row.get("wifi_bssid")) else latest_row.get("wifi_bssid"),
     }
+
+    # 旧格式日志（升级前）没有新字段列，补齐为空列以便统一统计
+    for column in ("public_ip_cn", "public_ip_source", "wifi_bssid"):
+        if column not in df_recent.columns:
+            df_recent[column] = None
 
     # 2. 网络连接类型统计
     analysis["summary"]["network_stats"] = df_recent["network"].value_counts().to_dict()
@@ -292,28 +349,46 @@ def analyze_ip_data(df: pd.DataFrame, days: int = DEFAULT_REPORT_DAYS) -> Dict:
     for wifi_name in df_recent["wifi_name"].dropna().unique():
         wifi_data = df_recent[df_recent["wifi_name"] == wifi_name]
         exit_ips = wifi_data["public_ip"].dropna()
+        # 仅统计合法 MAC（Unknown/N/A 不计为 AP）；行序已按时间升序，最后一个即最近
+        bssids = [b for b in (_valid_bssid(v) for v in wifi_data["wifi_bssid"]) if b]
         wifi_stats[wifi_name] = {
             "count": len(wifi_data),
             "latest_time": wifi_data["timestamp"].max(),
             "exit_ip": exit_ips.mode().iloc[0] if not exit_ips.empty else None,
+            "bssid_count": len(set(bssids)),
+            "latest_bssid": bssids[-1] if bssids else None,
         }
     sorted_wifi = sorted(wifi_stats.items(), key=lambda kv: kv[1]["latest_time"], reverse=True)
     analysis["summary"]["wifi_stats"] = dict(sorted_wifi)
 
     # 4. 公网IP变化分析（首行无前序记录、或任一端探测失败，均不计入变化）
-    prev_public_ip = df_recent["public_ip"].shift(1)
-    change_mask = df_recent["public_ip"].notna() & prev_public_ip.notna() & df_recent["public_ip"].ne(prev_public_ip)
-    if not change_mask.empty:
-        change_mask.iloc[0] = False
+    def _change_mask(series: pd.Series) -> pd.Series:
+        prev = series.shift(1)
+        mask = series.notna() & prev.notna() & series.ne(prev)
+        if not mask.empty:
+            mask.iloc[0] = False
+        return mask
+
+    change_mask = _change_mask(df_recent["public_ip"])
+    cn_change_mask = _change_mask(df_recent["public_ip_cn"])
     analysis["summary"]["public_ip_changes"] = int(change_mask.sum())
-    window_log = df_recent[["timestamp", "public_ip", "network"]].copy()
+    analysis["summary"]["public_ip_cn_changes"] = int(cn_change_mask.sum())
+
+    # 端点来源分布（探测失败/旧日志归「未记录」）
+    analysis["summary"]["source_stats"] = df_recent["public_ip_source"].fillna(SOURCE_UNRECORDED).value_counts().to_dict()
+
+    window_log = df_recent[["timestamp", "public_ip", "public_ip_cn", "public_ip_source", "network"]].copy()
     window_log["ip_changed"] = change_mask
+    window_log["cn_changed"] = cn_change_mask
     analysis["detail"]["recent_log"] = [
         {
             "timestamp": row.timestamp,
             "public_ip": None if pd.isna(row.public_ip) else row.public_ip,
+            "public_ip_cn": None if pd.isna(row.public_ip_cn) else row.public_ip_cn,
+            "public_ip_source": None if pd.isna(row.public_ip_source) else row.public_ip_source,
             "network": row.network,
             "ip_changed": bool(row.ip_changed),
+            "cn_changed": bool(row.cn_changed),
         }
         for row in window_log.itertuples(index=False)
     ]
@@ -659,6 +734,20 @@ def _render_location_line(location: Dict[str, Any]) -> str:
 
 
 # %% [markdown]
+# ### _format_geo(geo_info: Optional[Dict]) -> str
+
+# %%
+def _format_geo(geo_info: Optional[Dict[str, str]]) -> str:
+    """归属地渲染为（地名 · 运营商）；无地名返回空串."""
+    if not geo_info or not geo_info.get("place"):
+        return ""
+    text = geo_info["place"]
+    if geo_info.get("isp"):
+        text += f" · {geo_info['isp']}"
+    return f"（{text}）"
+
+
+# %% [markdown]
 # ### render_report(analysis: Dict, cfg: IpConfig, chart_image: Optional[bytes], geo/live/location) -> str
 
 # %%
@@ -689,17 +778,13 @@ def render_report(
         rel = _relative_time(latest_time)
         rel_text = f"（{rel}）" if rel else ""
         public_ip = latest.get("public_ip")
-        geo_info = geo.get(public_ip) or {}
-        geo_text = ""
-        if geo_info.get("place"):
-            geo_text = f"（{geo_info['place']}"
-            if geo_info.get("isp"):
-                geo_text += f" · {geo_info['isp']}"
-            geo_text += "）"
+        geo_text = _format_geo(geo.get(public_ip))
         network = str(latest.get("network", "未知"))
         ssid = str(live.get("ssid") or "").strip() or str(latest.get("wifi_name") or "").strip()
         ssid_text = f" · {ssid}" if network == "WiFi" and ssid else ""
-        md_lines.append(f"📡 **当前网络** ｜ {network}{ssid_text} · 本地 `{latest.get('local_ip', '未知')}`")
+        bssid = _valid_bssid(latest.get("wifi_bssid")) if network == "WiFi" else None
+        bssid_text = f" · AP {bssid}" if bssid else ""
+        md_lines.append(f"📡 **当前网络** ｜ {network}{ssid_text}{bssid_text} · 本地 `{latest.get('local_ip', '未知')}`")
         if live.get("signal_label") and live.get("signal_text"):
             md_lines.append(f"📶 **{live['signal_label']}** ｜ {live['signal_text']}")
         location_line = _render_location_line(location)
@@ -709,24 +794,45 @@ def render_report(
         vpn_ip = str(latest.get("vpn_ip") or "").strip()
         if vpn_intf.lower() not in BLANK_VALUES and vpn_ip.lower() not in BLANK_VALUES:
             md_lines.append(f"🔒 **VPN** ｜ {vpn_intf} · `{vpn_ip}`")
-        md_lines.append(f"🌍 **公网出口** ｜ `{public_ip or '未知'}`{geo_text}")
+        source_text = f" · 来源 {_source_label(latest.get('public_ip_source'))}"
+        md_lines.append(f"🌍 **公网出口** ｜ `{public_ip or '未知'}`{geo_text}{source_text}")
+        public_cn = latest.get("public_ip_cn")
+        if public_cn:
+            if public_ip and public_cn == public_ip:
+                md_lines[-1] += " · 国内同出口"
+            else:
+                md_lines.append(f"🇨🇳 **国内出口** ｜ `{public_cn}`{_format_geo(geo.get(public_cn))}")
         md_lines.append(f"🕐 **最近上报** ｜ {time_text}{rel_text}")
         md_lines.append("")
 
-    # 近 N 天摘要：记录数 / 公网IP切换 / WiFi 次数
+    # 近 N 天摘要：记录数 / 国际与国内出口切换 / 端点来源 / WiFi 次数
     wifi_count = summary.get("network_stats", {}).get("WiFi", 0)
     md_lines.append(f"## 🔄 近 {cfg.report_days} 天")
     md_lines.append(
-        f"{analysis['recent_records']} 条记录 ｜ **{summary.get('public_ip_changes', 0)} 次** 公网IP切换 ｜ "
-        f"WiFi **{wifi_count}** 次"
+        f"{analysis['recent_records']} 条记录 ｜ **{summary.get('public_ip_changes', 0)} 次** 国际IP切换 ｜ "
+        f"**{summary.get('public_ip_cn_changes', 0)} 次** 国内出口切换 ｜ WiFi **{wifi_count}** 次"
     )
+    source_stats = summary.get("source_stats", {})
+    if source_stats:
+        top_sources = sorted(source_stats.items(), key=lambda kv: kv[1], reverse=True)[:4]
+        source_parts = " · ".join(f"{_source_label(token)} {count}" for token, count in top_sources)
+        md_lines.append(f"🔌 **端点来源** ｜ {source_parts}")
     md_lines.append("")
 
-    # 记录表：列出统计窗口内全部记录（新→旧），🔄加粗行为公网IP切换点
+    # 记录表：列出统计窗口内全部记录（新→旧），🔄加粗行为对应出口切换点；
+    # 国内出口与公网出口不同时动态增加「国内IP」列，否则保持三列
     recent_log = analysis.get("detail", {}).get("recent_log", [])
     if recent_log:
-        md_lines.append("| 时间 | 公网IP | 网络 |")
-        md_lines.append("|:---|:---|:---|")
+        show_cn_col = any(
+            entry.get("public_ip_cn") and entry.get("public_ip_cn") != entry.get("public_ip")
+            for entry in recent_log
+        )
+        if show_cn_col:
+            md_lines.append("| 时间 | 公网IP | 国内IP | 网络 |")
+            md_lines.append("|:---|:---|:---|:---|")
+        else:
+            md_lines.append("| 时间 | 公网IP | 网络 |")
+            md_lines.append("|:---|:---|:---|")
         shown_log = recent_log[-RECENT_LOG_LIMIT:]
         for entry in reversed(shown_log):
             timestamp = entry.get("timestamp")
@@ -737,7 +843,15 @@ def render_report(
             ip_cell = f"`{entry_ip or '未知'}`" + (f"（{entry_place}）" if entry_place else "")
             if entry.get("ip_changed"):
                 ip_cell = f"🔄 **{ip_cell}**"
-            md_lines.append(f"| {timestamp} | {ip_cell} | {entry.get('network', '')} |")
+            if show_cn_col:
+                entry_cn = entry.get("public_ip_cn")
+                cn_place = (geo.get(entry_cn) or {}).get("place", "") if entry_cn else ""
+                cn_cell = (f"`{entry_cn}`" + (f"（{cn_place}）" if cn_place else "")) if entry_cn else "—"
+                if entry_cn and entry.get("cn_changed"):
+                    cn_cell = f"🔄 **{cn_cell}**"
+                md_lines.append(f"| {timestamp} | {ip_cell} | {cn_cell} | {entry.get('network', '')} |")
+            else:
+                md_lines.append(f"| {timestamp} | {ip_cell} | {entry.get('network', '')} |")
         if len(recent_log) > len(shown_log):
             md_lines.append(f"*（共 {len(recent_log)} 条，仅列最近 {len(shown_log)} 条）*")
     else:
@@ -757,7 +871,12 @@ def render_report(
             exit_text = ""
             if exit_ip:
                 exit_text = f" ｜ 出口 `{exit_ip}`" + (f"（{exit_place}）" if exit_place else "")
-            md_lines.append(f"- **{wifi_name}** · {latest_time} · {wifi_data.get('count', 0)} 次{exit_text}")
+            bssid_text = ""
+            if wifi_data.get("bssid_count"):
+                bssid_text = f" ｜ {wifi_data['bssid_count']} 个 AP"
+                if wifi_data.get("latest_bssid"):
+                    bssid_text += f"（最近 {wifi_data['latest_bssid']}）"
+            md_lines.append(f"- **{wifi_name}** · {latest_time} · {wifi_data.get('count', 0)} 次{exit_text}{bssid_text}")
         if len(wifi_stats) > WIFI_HOTSPOT_LIMIT:
             md_lines.append(f"*（共 {len(wifi_stats)} 个热点，仅列最近 {WIFI_HOTSPOT_LIMIT} 个）*")
         md_lines.append("")
@@ -789,6 +908,12 @@ def detect_ip_changes(current_record: Dict[str, Any]) -> Tuple[bool, Dict[str, A
     # 统一清洗：NaN/None（pandas 会把探测失败变成 NaN）不进入比较与状态文件；N/A 等真实哨兵值按字段语义处理
     current_record = dict(current_record)
     for key, _display, _conv in CHANGE_FIELDS:
+        current_record[key] = _sanitize_field_value(current_record.get(key))
+    # 探测失败类字段先归一无值，合并阶段据此保留最近已知值（Source 随公网IP粘滞）
+    for key, unknown_set in UNKNOWN_SETS.items():
+        current_record[key] = _normalize_unknown(current_record.get(key), unknown_set)
+    # 展示用字段只净化、不参与变化比较
+    for key in STATE_EXTRA_FIELDS:
         current_record[key] = _sanitize_field_value(current_record.get(key))
 
     if not last_record:
@@ -975,6 +1100,9 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
             "local_ip": _sanitize_field_value(latest_row["local_ip"]),
             "vpn_interface": _sanitize_field_value(latest_row["vpn_interface"]),
             "vpn_ip": _sanitize_field_value(latest_row["vpn_ip"]),
+            "public_ip_source": _sanitize_field_value(latest_row.get("public_ip_source")),
+            "public_ip_cn": _sanitize_field_value(latest_row.get("public_ip_cn")),
+            "wifi_bssid": _sanitize_field_value(latest_row.get("wifi_bssid")),
         }
 
         # 3. 检测IP变化
@@ -993,9 +1121,14 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
         # 5. 分析数据
         analysis = analyze_ip_data(df, days=cfg.report_days)
 
-        # 5.5 反查公网IP归属地（本地缓存，仅新IP发请求）
-        geo_ips = [analysis["latest_record"].get("public_ip")]
-        geo_ips += [e.get("public_ip") for e in analysis.get("detail", {}).get("recent_log", [])]
+        # 5.5 反查公网IP归属地（本地缓存，仅新IP发请求；国际与国内出口都查）
+        geo_ips = [
+            analysis["latest_record"].get("public_ip"),
+            analysis["latest_record"].get("public_ip_cn"),
+        ]
+        for entry in analysis.get("detail", {}).get("recent_log", []):
+            geo_ips.append(entry.get("public_ip"))
+            geo_ips.append(entry.get("public_ip_cn"))
         geo_map = resolve_ip_geos(geo_ips)
 
         # 5.6 实时网络与定位（termux-api；失败优雅省略）
