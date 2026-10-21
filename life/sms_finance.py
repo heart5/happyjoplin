@@ -50,7 +50,10 @@ with pathmagic.context():
         get_loan_platforms,
         get_loan_disbursement_keywords, get_loan_repayment_keywords,
     )
-    from life.sms_bank_parsers import dispatch as bank_parser_dispatch, parse_to_dict
+    from life.sms_bank_parsers import (
+        dispatch as bank_parser_dispatch, parse_to_dict,
+        _is_plausible_tx, _is_hard_non_tx,
+    )
 
 log = logging.getLogger("sms_finance")
 
@@ -67,6 +70,10 @@ SMS_API_URL = get_sms_api_url()
 WECHAT_API_URL = get_wechat_api_url()
 BANK_SHORT_CODES = get_bank_short_codes()
 LOAN_PLATFORMS = get_loan_platforms()
+_LOAN_EXTRA = [
+    "海尔消费", "湖北消费", "平安消费金融", "中原消费金融",
+    "还呗", "美团生活费", "度小满", "抖音月付",
+]
 
 # ── 正则模式 ──
 
@@ -77,6 +84,38 @@ _RE_CONFIRM_REPAYMENT = re.compile(r"(?<![如若]已)成功还款")
 
 # 交易失败关键词
 _RE_FAILURE_KW = ["交易失败", "因额度不足", "因余额不足失败", "余额不足失败"]
+
+# 账单/逾期/催收类提醒：不是实际交易。含此类措辞且无真实交易信号时直接跳过。
+_RE_ADVISORY = re.compile(
+    r"(逾期|催收|最低还款|剩余应还|应还款额|应还金额|还需还款|未还清|未按时|"
+    r"还款失败|扣款失败|自动还款失败|将取消|提起诉讼|影响征信|影响您的信用|"
+    r"请速|请及时|温馨提醒|如已还请忽略|已还勿理会|金额预计|手续费|"
+    r"欠费|保单|停效|保费|月缴|预存|保障效力|保障延续|"
+    r"账单提醒|本期账单|账单周期|将于.*扣款|扣款日前)"
+)
+# 非银行机构（商户/平台）的提醒、营销、退款、验证码类消息
+_RE_MERCHANT_ADVISORY = re.compile(
+    r"(退款|退费|应还|应扣款|待还|将从|自动扣款|还款日|最后还款日|请确保|"
+    r"账单已?出账|账单待还|欠费|透支|可享受|最高补贴|活动持续|"
+    r"一键预约|详询|办理|领取|回复R|退订|已还请忽略|已忽略|"
+    r"动态密码|验证码|校验码|切勿泄露|"
+    r"可登录.*支付|详细查询并支付|"
+    r"(?:成功)?开通.{0,12}(?:功能|服务)|小额免密|免密功能|"
+    r"以银行账户实际到账)"
+)
+_RE_TX_SIGNAL = re.compile(
+    r"(还款交易|还款入账|成功还款|已自动还款|自动还款已扣|入账后该卡本期|还款支出|"
+    r"存入\s*[￥¥]?\s*\d|转出\s*[￥¥]?\s*\d|支出人民币\s*\d|消费[￥¥]\s*\d|"
+    r"消费人民币\s*\d|消费\s*\d+(?:\.\d+)?\s*元|入账\s*[￥¥]?\s*\d|转入\s*[￥¥]?\s*\d|"
+    r"收款\s*\d|扣款人民币\s*\d|快捷支付\s*\d|取款人民币\s*\d|扣收.*?人民币\s*\d|"
+    r"转至他行人民币\s*\d|转账汇款人民币\s*\d|转账\s*[￥¥]\s*\d|扣款归还个贷|"
+    r"信用卡还款(?:人民币|[￥¥])?\s*\d|"
+    r"(?:已|成功)扣款|扣款成功|缴费成功)"
+)
+
+
+def _is_advisory(body: str) -> bool:
+    return bool(_RE_ADVISORY.search(body)) and not _RE_TX_SIGNAL.search(body)
 
 # ── 银行/机构名识别 ──
 
@@ -115,10 +154,7 @@ def _detect_org(number: str, body: str) -> str:
 
 def _is_loan_platform(org: str) -> bool:
     """判断是否贷款平台。"""
-    for p in LOAN_PLATFORMS:
-        if p in org:
-            return True
-    return False
+    return any(p in org for p in LOAN_PLATFORMS + _LOAN_EXTRA)
 
 
 def _is_loan_disbursement(body: str) -> bool:
@@ -126,6 +162,8 @@ def _is_loan_disbursement(body: str) -> bool:
     # 先排除提醒/广告/失败类误匹配
     if any(kw in body for kw in ("预计", "申请", "评估", "可提现", "额度", "失败")):
         return False
+    if any(kw in body for kw in ("放款至", "发放至", "已发放")):
+        return True
     return any(kw in body for kw in get_loan_disbursement_keywords())
 
 
@@ -142,6 +180,8 @@ def _is_loan_repayment(body: str) -> bool:
     if any(kw in body for kw in ("还款成功", "还款已成功",
                                    "已自动还款", "已主动还款",
                                    "自动还款成功")):
+        return True
+    if re.search(r"(?:已|成功)(?:于[^。]{0,20})?还款\s*[\d,.]+元", body):
         return True
 
     # 2) "代扣"+"失败"已在上面 catch，来自贷款平台的代扣就是实际还款
@@ -249,9 +289,9 @@ def _reclassify_loan(result: dict, body: str):
     返回重分类后的 result，或 None（贷款平台提醒消息，应跳过）。
     """
     org = result.get("payment_method", "")
-    if not org:
+    if not _is_loan_platform(org):
         # 也检查正文是否含已知贷款平台名
-        for p in get_loan_platforms():
+        for p in LOAN_PLATFORMS + _LOAN_EXTRA:
             if p in body:
                 org = p
                 result["payment_method"] = p
@@ -283,16 +323,30 @@ def _parse_record(msg: dict) -> dict:
     body = str(msg.get("body", ""))
     number = str(msg.get("number", ""))
     received = str(msg.get("received", ""))
+    # 去掉金额中的千分位逗号（5,500.00 → 5500.00），避免只截到后三位
+    parse_body = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", body)
+
+    # 转账验证码短信含金额但不是交易本身；运营商账单/保险提醒同理
+    if _is_hard_non_tx(body):
+        return {"amount": 0.0, "time": received, "_skip": True}
+    org = _detect_org(number, body)
+    is_bank_org = any(k in org for k in ("银行", "农商行", "农信", "信用社", "信用卡"))
+    if not is_bank_org and _RE_MERCHANT_ADVISORY.search(body):
+        return {"amount": 0.0, "time": received, "_skip": True}
+    if _is_advisory(body):
+        return {"amount": 0.0, "time": received, "_skip": True}
+    if "失败" in body and any(kw in body for kw in ("扣款", "还款", "交易", "充值", "缴费")):
+        return {"amount": 0.0, "time": received, "_skip": True}
 
     # 1) 尝试银行专用解析器
-    parsed = bank_parser_dispatch(number, body, received)
+    parsed = bank_parser_dispatch(number, parse_body, received)
     if parsed is not None and not parsed._skip:
         result = parse_to_dict(parsed)
         result["time"] = received
         # 银行解析器（尤其兜底 _parse_fallback）可能没识别贷款平台，
         # 检查是否应重分类为贷款交易
         if not result.get("is_loan"):
-            reclassified = _reclassify_loan(result, body)
+            reclassified = _reclassify_loan(result, parse_body)
             if reclassified is None:
                 # 贷款平台提醒消息，跳过
                 return {"amount": 0.0, "time": received, "_skip": True}
@@ -305,13 +359,18 @@ def _parse_record(msg: dict) -> dict:
     # 过滤失败交易
     if any(kw in body for kw in _RE_FAILURE_KW):
         return {"amount": 0.0, "time": received, "_skip": True}
+    if not _is_plausible_tx(parse_body):
+        return {"amount": 0.0, "time": received, "_skip": True}
 
-    org = _detect_org(number, body)
     is_loan = _is_loan_platform(org)
-    amount = _parse_amount(body, org)
-    direction = _detect_direction(body, org, is_loan)
-    merchant = _extract_merchant(body) or org
-    card_suffix = _extract_card_suffix(body)
+    amount = _parse_amount(parse_body, org)
+    direction = _detect_direction(parse_body, org, is_loan)
+    merchant = _extract_merchant(parse_body) or org
+    card_suffix = _extract_card_suffix(parse_body)
+    detail = "unknown"
+    if not is_loan and re.search(
+            r"(转出|转入|转账|汇款|收款方|收款人)", parse_body):
+        detail = "transfer_out" if direction == "支出" else "transfer_in"
 
     if is_loan:
         if _is_loan_disbursement(body):
@@ -333,6 +392,7 @@ def _parse_record(msg: dict) -> dict:
         "payment_method": org,
         "card_suffix": card_suffix,
         "is_loan": is_loan,
+        "tx_type_detail": detail,
         "source": "sms",
         "source_text": body[:120],
     }
@@ -441,6 +501,9 @@ def parse_sms_records(sms_list: list) -> list:
             rec = _parse_record(msg)
             if rec["amount"] <= 0:
                 continue
+            # 稳定事件标识：同一条短信在多设备间 content_hash 相同
+            if msg.get("content_hash"):
+                rec["source_event_id"] = msg["content_hash"]
             records.append(rec)
         except Exception as e:
             log.warning(f"解析短信失败: {e}")

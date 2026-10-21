@@ -48,6 +48,13 @@ logger = log
 
 __all__ = ["ParsedSMS", "dispatch", "register_bank", "register_fallback"]
 
+# 商户名中出现这些关键词 → 贷款还款（用于网上支付/快捷支付兜底）
+_LOAN_MERCHANT_KW = (
+    "京东金融", "借呗", "花呗", "微粒贷", "美团月付", "美团借钱",
+    "洋钱罐", "小赢", "宜享花", "招联", "中邮", "分期乐",
+    "马上消费", "安逸花", "白条", "网商贷", "度小满", "有钱花",
+)
+
 # ── 返回数据结构 ──
 
 
@@ -137,7 +144,8 @@ def _extract_amount(body: str) -> float:
 # 交易失败/退款/非实际交易关键词
 _FAILURE_KW = ["交易失败", "因额度不足失败", "因余额不足失败",
                "余额不足失败", "未成功", "额度不足交易失败",
-               "存在风险", "交易未成功"]
+               "存在风险", "交易未成功",
+               "充值失败", "缴费失败", "还款失败", "扣款失败"]
 # 退款/退税 —— 是实际发生的交易（方向为收入）
 _REFUND_KW = ["退款", "退税"]
 
@@ -354,10 +362,37 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
     if m_quick:
         amount = float(m_quick.group(2))
         merchant = m_quick.group(1)
+        is_transfer = "转账" in merchant
         return ParsedSMS(
             amount=amount, direction="支出", card_suffix=card_suffix,
             merchant=merchant, counterparty=merchant, bank_name="招商银行",
-            category="未分类-其他", tx_type_detail="consumption",
+            category="社交-转账" if is_transfer else "未分类-其他",
+            tx_type_detail="transfer_out" if is_transfer else "consumption",
+        )
+
+    # 银联在线支付扣款 → 消费支出（商户在括号内）
+    m_union_pay = re.search(
+        r"银联扣款人民币(\d+\.?\d*)元.*?特约[）)]?\s*(.+?)[）)]", body)
+    if m_union_pay:
+        merchant = _strip_trailing(m_union_pay.group(2))
+        return ParsedSMS(
+            amount=float(m_union_pay.group(1)), direction="支出",
+            card_suffix=card_suffix, merchant=merchant, counterparty=merchant,
+            bank_name="招商银行", category="未分类-其他",
+            tx_type_detail="consumption",
+        )
+
+    # 格式3b：在XX快捷支付/网上支付 → 消费支出（商户名常被截断）
+    m_online_pay = re.search(r"在(.{2,80}?)(?:快捷支付|网上支付)(\d+\.?\d*)元", body)
+    if m_online_pay:
+        amount = float(m_online_pay.group(2))
+        merchant = _strip_trailing(m_online_pay.group(1))
+        is_transfer = "转账" in merchant
+        return ParsedSMS(
+            amount=amount, direction="支出", card_suffix=card_suffix,
+            merchant=merchant, counterparty=merchant, bank_name="招商银行",
+            category="社交-转账" if is_transfer else "未分类-其他",
+            tx_type_detail="transfer_out" if is_transfer else "consumption",
         )
 
     # 格式13：本行ATM无卡取款
@@ -374,7 +409,7 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
     if amount > 0:
         if "转至他行" in body or "转出" in body:
             direction, td = "支出", "transfer_out"
-        elif "收款" in body or "入账" in body or "转入" in body:
+        elif "收款" in body or "入账" in body or "转入" in body or "存入" in body:
             direction, td = "收入", "transfer_in"
         else:
             direction, td = "支出", "consumption"
@@ -461,6 +496,21 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
             tx_type_detail="transfer_out",
         )
 
+    # --- 贵账户跨行汇款转出转出资金 → 支出（含对方户名）---
+    m_cross_out2 = re.search(
+        r"贵账户\*?(\d{4})于.*?跨行汇款转出(?:转出)?资金(\d+\.?\d*)元"
+        r".*?对方户名[：:]?\s*(.*?)(?:，|。|$)", body)
+    if m_cross_out2:
+        cp = _strip_trailing(m_cross_out2.group(3))
+        return ParsedSMS(
+            amount=float(m_cross_out2.group(2)), direction="支出",
+            card_suffix=m_cross_out2.group(1),
+            merchant=cp or "跨行汇款转出", counterparty=cp,
+            bank_name="交通银行",
+            category="内部-转账" if "白晔峰" in cp else "社交-转账",
+            tx_type_detail="transfer_out",
+        )
+
     # --- 格式2：贵账户转出 → 支出 ---
     m_cross_out = re.search(r"贵账户\*?(\d{4})于.*?转出(\d+\.?\d*)元.*?摘要[：:]?\s*(.*?)(?:。|$)", body)
     if m_cross_out:
@@ -477,16 +527,22 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
             tx_type_detail="loan_repayment" if is_loan_repay else "transfer_out",
         )
 
-    # --- 格式6：网上支付 → 支出 ---
-    m_online = re.search(r"您尾号\*?(\d{4})的卡于.*?在(.+?)网上支付(\d+\.?\d*)元", body)
+    # --- 格式6：网上支付/快捷支付 → 支出（可能为贷款还款）---
+    m_online = re.search(
+        r"您尾号\*?(\d{4})的卡.*?在(.+?)(?:网上支付|快捷支付)(\d+\.?\d*)元", body)
     if m_online:
+        merchant = _strip_trailing(m_online.group(2))
+        is_loan = any(k in merchant for k in _LOAN_MERCHANT_KW)
+        is_transfer = "转账" in merchant
         return ParsedSMS(
             amount=float(m_online.group(3)), direction="支出",
             card_suffix=m_online.group(1),
-            merchant=_strip_trailing(m_online.group(2)),
-            counterparty=_strip_trailing(m_online.group(2)),
-            bank_name="交通银行",
-            tx_type_detail="consumption",
+            merchant=merchant, counterparty=merchant, bank_name="交通银行",
+            is_loan=is_loan,
+            category=("借贷-还款" if is_loan else
+                      "社交-转账" if is_transfer else "未分类-其他"),
+            tx_type_detail=("loan_repayment" if is_loan else
+                            "transfer_out" if is_transfer else "consumption"),
         )
 
     # 兜底
@@ -503,10 +559,19 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
 
     if amount > 0:
         direction = "收入" if any(kw in body for kw in ["转入", "存入", "汇入"]) else "支出"
+        detail = "unknown"
+        if re.search(r"(转出|转入|转账|汇款)", body):
+            detail = "transfer_out" if direction == "支出" else "transfer_in"
+        m_party = re.search(r"对方户名[：:]?\s*(.*?)(?:，|。|$)", body)
+        counterparty = _strip_trailing(m_party.group(1)) if m_party else ""
         return ParsedSMS(
             amount=amount, direction=direction,
             card_suffix=card_suffix,
-            merchant="", counterparty="", bank_name="交通银行",
+            merchant=counterparty or ("转账" if detail != "unknown" else ""),
+            counterparty=counterparty, bank_name="交通银行",
+            category=("内部-转账" if "白晔峰" in counterparty else
+                      "社交-转账" if detail != "unknown" else "未分类-其他"),
+            tx_type_detail=detail,
         )
 
     return None
@@ -721,12 +786,15 @@ def _parse_abc(body: str, number: str) -> Optional[ParsedSMS]:
     # --- 格式1：银联入账/入账/奖金/代付 → 收入/支出 ---
     m_income = re.search(r"您尾号(\d{4})账户.*?完成(.+?)交易人民币(-?\d+\.?\d*)", body)
     if m_income:
-        amt = abs(float(m_income.group(3)))
+        signed = float(m_income.group(3))
+        amt = abs(signed)
         txn_type = m_income.group(2)
-        # 判断方向：含"向XXX完成"表示为转出
-        if "向" in body and "完成" in body:
+        # "向您尾号…账户完成" = 对方转入；负金额 = 支出；其余正金额 = 收入
+        if "向您尾号" in body:
+            direction, detail_type = "收入", "transfer_in"
+        elif signed < 0:
             direction = "支出"
-            detail_type = "transfer_out"
+            detail_type = "transfer_out" if "向" in body else "consumption"
         else:
             direction = "收入"
             detail_type = "salary" if "奖金" in txn_type else "income"
@@ -734,7 +802,9 @@ def _parse_abc(body: str, number: str) -> Optional[ParsedSMS]:
             amount=amt, direction=direction,
             card_suffix=m_income.group(1),
             merchant=txn_type, counterparty="", bank_name="农业银行",
-            category="收入-工资" if detail_type == "salary" else "未分类-其他",
+            category=("收入-工资" if detail_type == "salary"
+                      else "收入-转账" if detail_type == "transfer_in"
+                      else "未分类-其他"),
             tx_type_detail=detail_type,
         )
 
@@ -905,6 +975,41 @@ def _parse_spdb(body: str, number: str) -> Optional[ParsedSMS]:
 
 # ── 兜底解析器 ──
 
+# 兜底解析没有银行专用格式约束，须要求真实交易措辞，避免把
+# 运营商营销/余额提醒/保险缴费提醒里的金额当成流水。
+_RE_STRONG_TX = re.compile(
+    r"(消费|支付|扣款|扣费|支出|转入|转出|存入|取款|入账|到账|汇款|"
+    r"缴费成功|充值成功|成功充值|成功缴费|退款|退费|"
+    r"还款成功|放款|代扣|转账|转入资金|网络支付|快捷支付)")
+_RE_SOFT_NON_TX = re.compile(
+    r"(积分|兑换|权益|领取|回馈|余额不足|可用余额|已用尽|即将|"
+    r"温馨提醒|温馨提示|保单|保费|如已|请及时|点击|套餐|验证码|拒收|储值账户)")
+
+# 运营商账单/余额提醒、保险缴费提醒、额度调整/分期营销：无论如何都不是流水
+_RE_HARD_NON_TX = re.compile(
+    r"(余额不足|可用余额|积分兑换|积分超过|网龄回馈|话费账单|账单已送达|"
+    r"消费项目|套餐及|即将缴费|即将交费|储值账户|"
+    r"额度已?(?:调至|调整|提升|降低)|综合信用评估|分期还款方案|"
+    r"已分\d+期|账单分期|分期后.{0,20}无须还款|"
+    r"验证码|密码序号|动态密码|动态口令|切勿泄露|语音用尽|已用尽)")
+
+
+def _is_hard_non_tx(body: str) -> bool:
+    return bool(_RE_HARD_NON_TX.search(body))
+
+
+def _is_plausible_tx(body: str) -> bool:
+    if "失败" in body:
+        return False
+    if _is_hard_non_tx(body):
+        return False
+    if not _RE_STRONG_TX.search(body):
+        return False
+    if _RE_SOFT_NON_TX.search(body) and not re.search(r"(扣款|消费|支付)", body):
+        return False
+    return True
+
+
 @register_fallback
 def _parse_fallback(body: str, number: str) -> Optional[ParsedSMS]:
     """兜底：尝试从正文提取银行名、金额。
@@ -922,6 +1027,11 @@ def _parse_fallback(body: str, number: str) -> Optional[ParsedSMS]:
                          merchant="", counterparty="", bank_name=_extract_body_org(body) or number,
                          _skip=True)
 
+    if not _is_plausible_tx(body):
+        return ParsedSMS(amount=0, direction="支出", card_suffix="",
+                         merchant="", counterparty="", bank_name=_extract_body_org(body) or number,
+                         _skip=True)
+
     amount = _extract_amount(body)
     if amount <= 0:
         return None
@@ -932,14 +1042,25 @@ def _parse_fallback(body: str, number: str) -> Optional[ParsedSMS]:
     if m:
         card_suffix = m.group(1)
 
-    _income_kw = ["收入", "入账", "存入", "转入", "汇款", "到账", "代付"]
-    direction = "收入" if any(kw in body for kw in _income_kw) else "支出"
+    # “汇款转出”含汇款二字，须先判断支出词，避免误判为收入
+    if re.search(r"(转出|支出|消费|扣款|取款|支取)", body):
+        direction = "支出"
+    elif any(kw in body for kw in ("收入", "入账", "存入", "转入", "到账", "代付", "收款")):
+        direction = "收入"
+    else:
+        direction = "支出"
+
+    detail = "unknown"
+    if re.search(r"(转出|转入|转账|汇款|转至他行)", body):
+        detail = "transfer_out" if direction == "支出" else "transfer_in"
+    elif "收款方" in body and "消费" not in body:
+        detail = "transfer_out" if direction == "支出" else "transfer_in"
 
     return ParsedSMS(
         amount=amount, direction=direction,
         card_suffix=card_suffix,
         merchant="", counterparty="", bank_name=bank_name,
-        tx_type_detail="unknown",
+        tx_type_detail=detail,
     )
 
 

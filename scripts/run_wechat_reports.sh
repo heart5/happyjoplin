@@ -1,6 +1,7 @@
 #!/bin/bash
-# 微信数据月报生成 & 上传 Joplin
+# 微信数据月报（人际关系）生成 & 上传 Joplin
 # 每月 1 日 03:00 由 cron 触发，处理上月数据
+# 财务部分已迁移至 scripts/finance_reports.sh（统一复式账本）
 set -e
 cd "$(dirname "$0")/.."
 
@@ -15,17 +16,12 @@ MONTH_LABEL="${YEAR}年${MONTH}月"
 
 echo "=== 微信数据月报 ${MONTH_LABEL} ==="
 
-# 1. 财务月报
-echo "--- 生成财务月报 ---"
-python life/wechat_finance.py --account "$ACCOUNT" --month "${YEAR}-${MONTH}" -o "${REPORT_DIR}/finance_${YEAR}${MONTH}.md"
-echo "财务月报完成"
-
-# 2. 人际关系月报
+# 1. 人际关系月报
 echo "--- 生成人际关系月报 ---"
 python life/wechat_relationship.py --account "$ACCOUNT" --month "${YEAR}-${MONTH}" -o "${REPORT_DIR}/relationship_${YEAR}${MONTH}.md"
 echo "人际关系月报完成"
 
-# 3. 合并为完整月报
+# 2. 合并为完整月报
 echo "--- 合并月报 ---"
 COMBINED="${REPORT_DIR}/wechat_monthly_${YEAR}${MONTH}.md"
 
@@ -39,17 +35,10 @@ cat > "$COMBINED" << EOF
 
 EOF
 
-echo "" >> "$COMBINED"
-cat "${REPORT_DIR}/finance_${YEAR}${MONTH}.md" >> "$COMBINED"
-
-echo "" >> "$COMBINED"
-echo "---" >> "$COMBINED"
-echo "" >> "$COMBINED"
 cat "${REPORT_DIR}/relationship_${YEAR}${MONTH}.md" >> "$COMBINED"
-
 echo "月报合并完成: $COMBINED"
 
-# 4. 上传到 Joplin
+# 3. 上传到 Joplin
 echo "--- 上传 Joplin ---"
 python -m func.tools.md2note "$COMBINED" \
     --title "微信数据月报 - ${MONTH_LABEL}" \

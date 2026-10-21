@@ -1,58 +1,71 @@
-# 账户余额跟踪报告
-
-from datetime import datetime
+# 个人财务系统 — 账户余额报告
 
 from ..db import Database
-from ..accounts import AccountManager
 from ..transactions import TransactionManager
+from .common import money, now_text
+from .monthly import BOOK_LABELS
 
 __all__ = ["generate_balance_report"]
 
+_TYPE_LABELS = {
+    "bank": "储蓄卡", "payment": "支付平台", "credit_card": "信用卡",
+    "loan": "贷款", "investment": "投资", "cash": "现金",
+}
+
 
 def generate_balance_report(db: Database, year: int, month: int,
+                            book: str = "personal",
                             account_id: int = None) -> str:
-    """生成账户余额跟踪报告。"""
-    acct_mgr = AccountManager(db)
-    tx_mgr = TransactionManager(db, acct_mgr)
+    tx_mgr = TransactionManager(db, book=book)
+    for b in (["personal", "work"] if book == "all" else [book]):
+        tx_mgr.calculate_all_balances(year, month, book=b)
 
-    accounts = acct_mgr.list_accounts()
+    books = ["personal", "work"] if book == "all" else [book]
+    placeholders = ",".join("?" * len(books))
+    next_month = (f"{year + 1:04d}-01-01" if month == 12
+                  else f"{year:04d}-{month + 1:02d}-01")
+    sql = (
+        "SELECT ab.*, a.name, a.type, a.book, a.bank, a.card_suffix"
+        " FROM account_balances ab JOIN accounts a ON ab.account_id = a.id"
+        f" WHERE a.book IN ({placeholders}) AND ab.year=? AND ab.month=?"
+        " AND a.is_active=1 AND a.opening_date IS NOT NULL"
+        " AND a.opening_date < ?"
+    )
+    params = books + [year, month, next_month]
     if account_id:
-        accounts = [a for a in accounts if a.id == account_id]
+        sql += " AND a.id=?"
+        params.append(account_id)
+    sql += (" ORDER BY CASE a.type WHEN 'loan' THEN 3 WHEN 'credit_card' THEN 2"
+            " ELSE 1 END, a.book, a.id")
+    rows = db.fetchall(sql, params)
 
-    lines = []
-    lines.append(f"# 账户余额跟踪 — {year}年{month}月")
+    lines = [f"# 账户余额 — {year}年{month:02d}月", ""]
+    lines.append(f"> 生成：{now_text()} ｜ 仅含已设余额锚点的账户")
     lines.append("")
 
-    for acct in accounts:
-        history = tx_mgr.list_balance_history(acct.id, months=12)
-        if not history:
+    assets = [r for r in rows if r["type"] not in ("credit_card", "loan")]
+    liabilities = [r for r in rows if r["type"] in ("credit_card", "loan")]
+
+    for title, group in (("资产账户", assets), ("负债账户", liabilities)):
+        if not group:
             continue
-
-        lines.append(f"## {acct.name}")
-        lines.append("")
-        lines.append(f"类型：{acct.type}")
-        if acct.bank:
-            lines.append(f"  \n银行：{acct.bank} 尾号{acct.card_suffix}")
-        lines.append("")
-
-        is_liability = acct.type in ("bank_credit", "loan")
-        inc_label = "流入" if not is_liability else "还款(负债↓)"
-        out_label = "流出" if not is_liability else "消费/放款(负债↑)"
-
-        lines.append(f"| 月份 | 期初 | {inc_label} | {out_label} | 期末 | 状态 |")
-        lines.append(f"|------|------|--------|--------|------|------|")
-        for h in reversed(history):
-            status = "估算" if h.is_estimated else "已校准"
+        lines += [f"## {title}", "",
+                  "| 账套 | 账户 | 类型 | 期初 | 流入 | 流出 | 期末 | 状态 |",
+                  "|------|------|------|------|------|------|------|------|"]
+        for r in group:
             lines.append(
-                f"| {h.year}-{h.month:02d} | ¥{h.opening_balance:,.2f} "
-                f"| ¥{h.total_inflow:,.2f} | ¥{h.total_outflow:,.2f} "
-                f"| ¥{h.closing_balance:,.2f} | {status} |"
-            )
+                f"| {BOOK_LABELS.get(r['book'], r['book'])} | {r['name']} | "
+                f"{_TYPE_LABELS.get(r['type'], r['type'])} | "
+                f"{money(r['opening_balance'])} | {money(r['total_inflow'])} | "
+                f"{money(r['total_outflow'])} | {money(r['closing_balance'])} | "
+                f"{'估算' if r['is_estimated'] else '已校准'} |")
         lines.append("")
 
-    lines.append("---")
-    lines.append(f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}*")
-    lines.append("*标记为「估算」的余额尚未手动校准*")
-    lines.append("")
-
+    asset_total = sum(r["closing_balance"] for r in assets)
+    liability_total = sum(r["closing_balance"] for r in liabilities)
+    lines += ["## 合计", "", "| 项目 | 金额 |", "|------|------|"]
+    lines.append(f"| 资产合计 | {money(asset_total)} |")
+    lines.append(f"| 负债合计 | {money(liability_total)} |")
+    lines.append(f"| 净资产 | {money(asset_total - liability_total)} |")
+    lines += ["", "---", f"*生成时间：{now_text()}*", ""]
     return "\n".join(lines)

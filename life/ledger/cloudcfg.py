@@ -24,7 +24,7 @@ with pathmagic.context():
 
 _DEFAULT_SMS_API_URL = "https://ollama.qingxd.com/sms/query"
 _DEFAULT_WECHAT_API_URL = "https://ollama.qingxd.com/wechat/query"
-_DEFAULT_MERGE_WINDOW = 30
+_DEFAULT_MERGE_WINDOW = 180
 
 _DEFAULT_BANK_SHORT_CODES = {
     "95555": "招商银行", "95588": "工商银行", "95599": "农业银行",
@@ -60,37 +60,46 @@ _DEFAULT_BANK_NAMES = [
     "招商银行", "工商银行", "农业银行", "中国银行", "交通银行",
     "建设银行", "广发银行", "光大银行", "民生银行", "浦发银行",
     "中信银行", "华夏银行", "兴业银行", "邮储银行", "平安银行",
-    "微众银行", "网商银行",
+    "微众银行", "网商银行", "武汉农商行", "武汉农村商业银行",
 ]
 
 _DEFAULT_LOAN_PLATFORMS = [
     "洋钱罐", "小赢卡贷", "宜享花", "招联金融",
-    "中邮消金", "中邮消费金融",
+    "中邮消金", "中邮消费金融", "中邮消费",
     "京东金融", "花呗", "借呗", "微粒贷", "木吉网络",
     "美团月付", "美团借钱", "分期乐", "安逸花", "马上消费",
-    "京东白条", "网银在线京东白条",
+    "马上消费金融", "京东白条", "网银在线京东白条",
+    "海尔消费", "湖北消费", "平安消费金融", "中原消费金融",
+    "还呗", "美团生活费", "度小满", "抖音月付",
 ]
 
 _DEFAULT_LOAN_DISBURSEMENT_KEYWORDS = ["放款", "借款到账", "贷款发放", "借款成功", "借款已到账"]
 _DEFAULT_LOAN_REPAYMENT_KEYWORDS = ["还款", "自动扣款", "扣款"]
 
 _DEFAULT_PAYMENT_METHOD_MAP = {
-    "广发信用卡": ("bank_credit", "广发银行"),
-    "招商银行信用卡": ("bank_credit", "招商银行"),
-    "建设银行信用卡": ("bank_credit", "建设银行"),
-    "工商银行信用卡": ("bank_credit", "工商银行"),
-    "农业银行信用卡": ("bank_credit", "农业银行"),
-    "中国银行信用卡": ("bank_credit", "中国银行"),
-    "交通银行信用卡": ("bank_credit", "交通银行"),
-    "零钱": ("wechat_wallet", None),
-    "微信支付": ("wechat_wallet", None),
-    "中国银行": ("bank_debit", "中国银行"),
-    "交通银行": ("bank_debit", "交通银行"),
-    "农业银行": ("bank_debit", "农业银行"),
-    "广发银行": ("bank_debit", "广发银行"),
+    "广发信用卡": ("credit_card", "广发银行"),
+    "招商银行信用卡": ("credit_card", "招商银行"),
+    "建设银行信用卡": ("credit_card", "建设银行"),
+    "工商银行信用卡": ("credit_card", "工商银行"),
+    "农业银行信用卡": ("credit_card", "农业银行"),
+    "中国银行信用卡": ("credit_card", "中国银行"),
+    "交通银行信用卡": ("credit_card", "交通银行"),
+    "零钱": ("payment", None),
+    "微信支付": ("payment", None),
+    "支付宝": ("payment", None),
+    "中国银行": ("bank", "中国银行"),
+    "交通银行": ("bank", "交通银行"),
+    "农业银行": ("bank", "农业银行"),
+    "广发银行": ("bank", "广发银行"),
     "京东白条": ("loan", "京东白条"),
     "南京银行(白条分分卡)": ("loan", "南京银行"),
 }
+
+_DEFAULT_MAIN_WECHAT_DB = "/data/codebase/joplinai/data/wcitemsall_merged.db"
+_DEFAULT_SMS_DB = "~/work/joplin-message-center/data/sms_received.db"
+_DEFAULT_WX2_DB = "~/work/joplin-message-center/data/wx2_chat.db"
+_DEFAULT_MAIN_WECHAT_TABLE = "wc_白晔峰"
+_DEFAULT_WORK_WECHAT_TABLE = "chatitems"
 
 # ── 进程级缓存 ──
 
@@ -180,3 +189,31 @@ def get_loan_repayment_keywords() -> list:
 def get_payment_method_map() -> dict:
     _ensure_loaded()
     return _cache.get("payment_method_map", dict(_DEFAULT_PAYMENT_METHOD_MAP))
+
+
+def _path(key: str, default: str) -> str:
+    _ensure_loaded()
+    import os
+    return os.path.expanduser(str(_cache.get(key, default)))
+
+
+def get_sms_db_path() -> str:
+    return _path("sms_db_path", _DEFAULT_SMS_DB)
+
+
+def get_main_wechat_db_path() -> str:
+    return _path("main_wechat_db_path", _DEFAULT_MAIN_WECHAT_DB)
+
+
+def get_wx2_db_path() -> str:
+    return _path("wx2_db_path", _DEFAULT_WX2_DB)
+
+
+def get_main_wechat_table() -> str:
+    _ensure_loaded()
+    return str(_cache.get("main_wechat_table", _DEFAULT_MAIN_WECHAT_TABLE))
+
+
+def get_work_wechat_table() -> str:
+    _ensure_loaded()
+    return str(_cache.get("work_wechat_table", _DEFAULT_WORK_WECHAT_TABLE))

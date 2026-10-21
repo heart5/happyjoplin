@@ -1,96 +1,74 @@
-# 净资产报告
-
-from collections import defaultdict
-from datetime import datetime
+# 个人财务系统 — 净资产报告
 
 from ..db import Database
-from ..accounts import AccountManager
 from ..transactions import TransactionManager
+from .common import money, now_text
 
 __all__ = ["generate_net_worth_report"]
 
+_TYPE_LABELS = {
+    "bank": "储蓄卡", "payment": "支付平台", "credit_card": "信用卡",
+    "loan": "贷款", "investment": "投资", "cash": "现金",
+}
 
-def generate_net_worth_report(db: Database, date: str = None) -> str:
-    """生成净资产报告 Markdown。"""
-    if date is None:
-        date = datetime.now().strftime("%Y-%m-%d")
 
-    acct_mgr = AccountManager(db)
-    tx_mgr = TransactionManager(db, acct_mgr)
-    snapshot = tx_mgr.snapshot_net_worth(date)
+def generate_net_worth_report(db: Database, date_str: str,
+                              book: str = "combined") -> str:
+    tx_mgr = TransactionManager(db, book="personal")
+    snap = tx_mgr.snapshot_net_worth(date_str, book=book, anchored_only=True)
 
-    year, month = int(date[:4]), int(date[5:7])
-
-    lines = []
-    lines.append(f"# 净资产报告 — {year}年{month}月")
+    title_book = {"combined": "全部账套", "personal": "个人", "work": "工作号"}[book]
+    lines = [f"# 净资产报告 — {date_str}", ""]
+    lines.append(f"> 口径：{title_book} ｜ 生成：{now_text()}")
+    lines.append("")
+    lines.append(f"> 仅统计已设余额锚点的账户：纳入 {snap['included_accounts']} 个，"
+                 f"未纳入 {snap['skipped_accounts']} 个。"
+                 f"未锚定账户的流水不足以推算真实余额，不参与合计。")
     lines.append("")
 
-    # 总览
-    lines.append("## 总览")
-    lines.append("")
-    lines.append(f"| 指标 | 数值 |")
-    lines.append(f"|------|------|")
-    lines.append(f"| 总资产 | ¥{snapshot['total_assets']:,.2f} |")
-    lines.append(f"| 总负债 | ¥{snapshot['total_liabilities']:,.2f} |")
-    lines.append(f"| **净资产** | **¥{snapshot['net_worth']:,.2f}** |")
+    lines += ["## 一、总览", "", "| 指标 | 数值 |", "|------|------|"]
+    lines.append(f"| 总资产 | {money(snap['total_assets'])} |")
+    lines.append(f"| 总负债 | {money(snap['total_liabilities'])} |")
+    lines.append(f"| **净资产（已锚定账户）** | **{money(snap['net_worth'])}** |")
     lines.append("")
 
-    # 按类型分组
-    by_type = defaultdict(list)
-    for name, info in snapshot["details"].items():
-        by_type[info["type"]].append((name, info))
+    details = snap["details"]
+    assets = {k: v for k, v in details.items() if not v["is_liability"]}
+    liabilities = {k: v for k, v in details.items() if v["is_liability"]}
 
-    type_labels = {
-        "bank_debit": "储蓄卡",
-        "bank_credit": "信用卡（负债）",
-        "wechat_wallet": "微信零钱",
-        "alipay": "支付宝",
-        "loan": "贷款（负债）",
-        "cash": "现金",
-    }
-    type_order = ["bank_debit", "wechat_wallet", "alipay", "bank_credit", "loan", "cash"]
-
-    lines.append("## 账户明细")
-    lines.append("")
-    lines.append("| 类型 | 账户 | 余额 | 状态 |")
-    lines.append("|------|------|------|------|")
-    for t in type_order:
-        if t not in by_type:
-            continue
-        for name, info in by_type[t]:
-            balance = info["balance"]
-            is_liability = info.get("is_liability", False)
-            bal_str = f"¥{balance:,.2f}" if not is_liability else f"(¥{balance:,.2f})"
-            bal_display = f"**{bal_str}**" if t in ("bank_debit", "wechat_wallet") else bal_str
-            label = type_labels.get(t, t)
-            lines.append(f"| {label} | {name} | {bal_display} | {'📉 负债' if is_liability else '✓'} |")
+    lines += ["## 二、资产", "", "| 账户 | 账套 | 类型 | 余额 |",
+              "|------|------|------|------|"]
+    for name, v in sorted(assets.items(), key=lambda x: -x[1]["balance"]):
+        lines.append(f"| {name} | {v['book']} | "
+                     f"{_TYPE_LABELS.get(v['type'], v['type'])} | "
+                     f"{money(v['balance'])} |")
     lines.append("")
 
-    # 月度趋势
-    lines.append("## 月度趋势")
+    lines += ["## 三、负债", "", "| 账户 | 账套 | 类型 | 余额 |",
+              "|------|------|------|------|"]
+    for name, v in sorted(liabilities.items(), key=lambda x: -x[1]["balance"]):
+        lines.append(f"| {name} | {v['book']} | "
+                     f"{_TYPE_LABELS.get(v['type'], v['type'])} | "
+                     f"{money(v['balance'])} |")
     lines.append("")
-    prev_snapshots = db.fetchall(
-        "SELECT * FROM net_worth_snapshots WHERE snapshot_date <= ? ORDER BY snapshot_date DESC LIMIT 6",
-        (date,),
+
+    trend = db.fetchall(
+        """SELECT snapshot_date, total_assets, total_liabilities, net_worth
+           FROM net_worth_snapshots WHERE book=?
+           ORDER BY snapshot_date DESC LIMIT 12""",
+        (book,),
     )
-    if prev_snapshots:
-        lines.append("| 月份 | 资产 | 负债 | 净资产 | 环比 |")
-        lines.append("|------|------|------|--------|------|")
-        prev_nw = None
-        for snap in reversed(prev_snapshots):
-            nw = snap["net_worth"]
-            if prev_nw is not None and prev_nw > 0:
-                pct = (nw - prev_nw) / prev_nw * 100
-                trend = f"{pct:+.1f}%"
-            else:
-                trend = "—"
-            lines.append(f"| {snap['snapshot_date']} | ¥{snap['total_assets']:,.2f} | ¥{snap['total_liabilities']:,.2f} | **¥{nw:,.2f}** | {trend} |")
-            prev_nw = nw
+    if trend:
+        lines += ["## 四、历史趋势", "",
+                  "| 日期 | 总资产 | 总负债 | 净资产 |",
+                  "|------|------|------|------|"]
+        for r in reversed(trend):
+            lines.append(f"| {r['snapshot_date']} | {money(r['total_assets'])} | "
+                         f"{money(r['total_liabilities'])} | {money(r['net_worth'])} |")
         lines.append("")
 
-    lines.append("---")
-    lines.append(f"*报告生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}*")
-    lines.append("*数据来源：微信聊天记录 + 手机短信 + 分类账*")
-    lines.append("")
-
+    lines += ["---",
+              "*余额由锚点余额/账单金额起按流水滚算；信用卡以账单口径为准，"
+              "可能不含未出账单消费。*",
+              f"*生成时间：{now_text()}*", ""]
     return "\n".join(lines)

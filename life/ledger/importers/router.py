@@ -1,52 +1,97 @@
 # 自动归类引擎 — 微信+SMS 归并、账户匹配、路由决策
 
-import json
-import re
 import hashlib
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional
 
 from ..db import Database
 from ..accounts import AccountManager
-from ..cloudcfg import get_merge_window, get_loan_platforms
+from ..cloudcfg import get_merge_window, get_loan_platforms, get_bank_names
 from ..models import Account, AccountFlow
 
 __all__ = ["FlowRouter"]
 
 MERGE_WINDOW = get_merge_window()
+TRANSFER_MERGE_WINDOW = 1800
+
+_GENERIC_TRANSFER_KW = (
+    "跨行", "他行", "转账", "汇款", "转入", "转出",
+    "财付通", "支付宝", "微信", "零钱",
+)
 
 
 class FlowRouter:
-    """将原始财务事件归并为 account_flows。
+    """将原始财务事件路由为 account_flows。
 
-    核心逻辑：
-    1. 归并：同笔交易的多个通知 (WeChat paid + SMS bank) 合并
-    2. 账户匹配：payment_method/bank+card_suffix → account_id
-    3. 路由：单条分录（常规收支）vs 双条分录（贷款放款/还款）
+    1. 归并：同笔交易的微信通知 + 银行短信（同额、时间窗内）
+    2. 账户匹配：按 book 隔离，支付方式/银行+卡尾号
+    3. 路由：单腿收支，或双蹆（贷款、信用卡还款、零钱充值/提现）
     """
 
-    def __init__(self, db: Database, acct_mgr: AccountManager):
+    def __init__(self, db: Database, acct_mgr: AccountManager, book: str = "personal"):
         self.db = db
         self.acct_mgr = acct_mgr
-        self._cat_cache = {}  # category_name → category_id
+        self.book = book
+        self._cat_cache = {}
 
-    @staticmethod
-    def _detect_loan_platform(text: str):
-        """从交易描述中检测实际贷款平台名。"""
+    _LOAN_HINTS = (
+        ("小赢", "小赢卡贷"),
+        ("白条", "京东白条"),
+        ("京东金融", "京东金融"),
+        ("马上消费", "马上消费金融"),
+        ("中邮", "中邮消金"),
+        ("安逸花", "马上消费金融"),
+        ("招联", "招联金融"),
+        ("个贷", "招商银行个贷"),
+    )
+
+    @classmethod
+    def _detect_loan_platform(cls, text: str):
         if not text:
             return None
         for p in get_loan_platforms():
             if p in text:
                 return p
+        for kw, platform in cls._LOAN_HINTS:
+            if kw in text:
+                return platform
         return None
 
-    def route_events(self, wechat_events: list, sms_records: list) -> list:
-        """主入口：归并 + 匹配 + 路由。返回 AccountFlow 列表。"""
-        flows = []
-        used_sms = set()
+    @staticmethod
+    def _flow_dir(evt: dict) -> str:
+        return "outflow" if evt.get("direction", "支出") == "支出" else "inflow"
 
-        # 建立 WeChat 事件索引: (date, amount) → [(event, idx)]
+    @staticmethod
+    def _is_zero_wallet_evt(evt: dict) -> bool:
+        return (evt.get("category") == "内部-转账"
+                and evt.get("merchant") in ("零钱提现", "零钱充值"))
+
+    @staticmethod
+    def _is_wallet_bank_sms(sms: dict) -> bool:
+        text = sms.get("source_text") or ""
+        direction = sms.get("direction", "支出")
+        return (("零钱提现" in text and direction == "收入")
+                or ("零钱充值" in text and direction == "支出"))
+
+    @staticmethod
+    def _transfer_match_ok(wx_evt: dict, sms: dict) -> bool:
+        wm = (wx_evt.get("merchant") or "").strip()
+        sm = (sms.get("merchant") or "").strip()
+        if wm == sm:
+            return True
+        generic = lambda m: (not m) or any(k in m for k in _GENERIC_TRANSFER_KW)
+        return generic(wm) or generic(sm)
+
+    # ── 主入口 ──
+
+    def route_events(self, wechat_events: list, sms_records: list) -> list:
+        flows = []
+        sms_records = self._dedup_sms(sms_records)
+        used_sms = set()
+        used_wx = set()
+
         wx_index = defaultdict(list)
         for i, evt in enumerate(wechat_events):
             date = (evt.get("time") or "")[:10]
@@ -54,138 +99,241 @@ class FlowRouter:
             if amt > 0:
                 wx_index[(date, amt)].append((evt, i))
 
-        used_wx = set()
-
-        # Phase 1: SMS 找 WeChat 归并
+        # Phase 1: SMS 找微信归并
         for si, sms in enumerate(sms_records):
             date = (sms.get("time") or "")[:10]
             amt = round(sms.get("amount", 0), 2)
             if amt <= 0:
                 continue
 
-            candidates = wx_index.get((date, amt), [])
+            sms_dir = self._flow_dir(sms)
+            wallet_sms = self._is_wallet_bank_sms(sms)
             matched = None
-            for wx_evt, wi in candidates:
+            for wx_evt, wi in wx_index.get((date, amt), []):
                 if wi in used_wx:
                     continue
-                # 内部转账（零钱提现/充值）不归并，它们是跨账户的不同交易腿
+                # 零钱提现/充值：短信已给银行腿+钱包腿时，丢弃微信钱包侧通知
+                if self._is_zero_wallet_evt(wx_evt):
+                    if wallet_sms and self._time_diff_seconds(
+                            wx_evt.get("time", ""), sms.get("time", "")) <= TRANSFER_MERGE_WINDOW:
+                        matched = (wx_evt, wi, "wallet")
+                        break
+                    continue
                 if wx_evt.get("category") == "内部-转账":
                     continue
-                # 检查时间窗口
-                if self._time_diff_seconds(wx_evt.get("time", ""), sms.get("time", "")) <= MERGE_WINDOW:
-                    matched = (wx_evt, wi)
-                    break
+                if self._flow_dir(wx_evt) != sms_dir:
+                    continue
+                transfer_like = (wx_evt.get("category") or "") in (
+                    "社交-转账", "收入-转账")
+                window = TRANSFER_MERGE_WINDOW if transfer_like else MERGE_WINDOW
+                if self._time_diff_seconds(
+                        wx_evt.get("time", ""), sms.get("time", "")) > window:
+                    continue
+                if transfer_like and not self._transfer_match_ok(wx_evt, sms):
+                    continue
+                matched = (wx_evt, wi, "merge")
+                break
 
             if matched:
-                wx_evt, wi = matched
-                used_wx.add(wi)
+                wx_evt, wi, kind = matched
                 used_sms.add(si)
-                # 归并：payment_method 从微信取，card_suffix 从短信取
-                merged = self._merge_event(wx_evt, sms)
-                flows.append(merged)
+                if kind == "wallet":
+                    for other, oi in wx_index.get((date, amt), []):
+                        if (self._is_zero_wallet_evt(other)
+                                and other.get("merchant") == wx_evt.get("merchant")):
+                            used_wx.add(oi)
+                    self._extend(flows, self._route_single_sms(sms))
+                else:
+                    used_wx.add(wi)
+                    flows.append(self._merge_event(wx_evt, sms))
             else:
-                # SMS 独立路由
-                f = self._route_single_sms(sms)
-                if f:
-                    flows.extend(f if isinstance(f, list) else [f])
+                self._extend(flows, self._route_single_sms(sms))
                 used_sms.add(si)
 
-        # Phase 2: 未被归并的 WeChat 事件
+        # Phase 2: 未归并的微信事件
         for i, evt in enumerate(wechat_events):
             if i in used_wx:
                 continue
-            amt = round(evt.get("amount", 0), 2)
-            if amt <= 0:
+            if round(evt.get("amount", 0), 2) <= 0:
                 continue
             f = self._route_single_wechat(evt)
             if f:
                 flows.append(f)
 
-        # Phase 3: 未被处理的 SMS（兜底）
+        # Phase 3: 未处理的 SMS（兜底）
         for si, sms in enumerate(sms_records):
             if si in used_sms:
                 continue
-            f = self._route_single_sms(sms)
-            if f:
-                flows.extend(f if isinstance(f, list) else [f])
+            self._extend(flows, self._route_single_sms(sms))
 
-        # 去重：同一 account_id + amount + 日期 ±1天 + direction 的合并
-        flows = self._dedup_flows(flows)
-
-        # 按时间排序
-        flows.sort(key=lambda f: f.tx_date or "")
+        # 只去除同一来源事件的精确重复，保留同日同额的不同交易
+        flows = self._dedup(flows)
+        self._reclassify_internal_transfers(flows)
+        self._reclassify_loan_bank_legs(flows)
+        flows.sort(key=lambda f: (f.tx_date or "", f.tx_time or ""))
         return flows
+
+    def _reclassify_internal_transfers(self, flows: list):
+        """银行卡支出提醒 + 同日同额他行转入短信 = 本人账户间转账。"""
+        transfers_in = [
+            f for f in flows
+            if f.source == "sms" and f.direction == "inflow"
+            and f.tx_type == "transfer" and f.account_id
+        ]
+        for f in flows:
+            if (f.source != self._wechat_source() or f.direction != "outflow"
+                    or f.tx_type != "consumption" or not f.account_id):
+                continue
+            for inc in transfers_in:
+                if (f.tx_date == inc.tx_date
+                        and abs(f.amount - inc.amount) <= 0.01
+                        and f.account_id != inc.account_id
+                        and self._time_diff_seconds(f.tx_time, inc.tx_time)
+                        <= TRANSFER_MERGE_WINDOW):
+                    f.tx_type = "transfer"
+                    f.category_id = self._get_category_id("内部-转账")
+                    f.counterparty = inc.merchant or f.counterparty
+                    break
+
+    def _reclassify_loan_bank_legs(self, flows: list):
+        """贷款平台还款确认 + 同日同额银行卡支出提醒 = 贷款还款的银行腿。"""
+        loan_legs = [
+            f for f in flows
+            if f.source == "sms" and f.tx_type == "loan_repayment"
+            and f.direction == "inflow"
+        ]
+        for f in flows:
+            if (f.source != self._wechat_source() or f.direction != "outflow"
+                    or f.tx_type != "consumption" or not f.account_id):
+                continue
+            row = self.db.fetchone(
+                "SELECT type FROM accounts WHERE id=?", (f.account_id,))
+            if not row or row["type"] not in ("bank", "credit_card"):
+                continue
+            mer = f.merchant or ""
+            if not (any(b in mer for b in get_bank_names())
+                    or any(k in mer for k in ("金融", "消费金融", "还款"))):
+                continue
+            for leg in loan_legs:
+                if (f.tx_date == leg.tx_date
+                        and abs(f.amount - leg.amount) <= 0.01
+                        and self._time_diff_seconds(f.tx_time, leg.tx_time)
+                        <= 43200):
+                    f.tx_type = "loan_repayment"
+                    f.category_id = self._get_category_id("借贷-还款")
+                    break
 
     # ── 归并 ──
 
     def _merge_event(self, wx_evt: dict, sms: dict) -> AccountFlow:
-        """归并微信和短信通知为一条流水。"""
         amt = round(wx_evt.get("amount", 0), 2)
         direction = "outflow" if wx_evt.get("direction", "支出") == "支出" else "inflow"
         payment_method = wx_evt.get("payment_method", "") or sms.get("payment_method", "")
-        card_suffix = sms.get("card_suffix", "")
+        card_suffix = sms.get("card_suffix") or wx_evt.get("card_suffix", "")
         org = sms.get("payment_method", "")
         merchant = wx_evt.get("merchant", "") or sms.get("merchant", "")
-
-        account = self._resolve_account(payment_method, card_suffix, org)
         cat_name = wx_evt.get("category", "未分类-其他")
-        cat_id = self._get_category_id(cat_name)
-        group_id = self._make_group_id(wx_evt, sms)
+
+        # 归并时以短信发卡行+尾号为准，微信侧“Acquirer 某某银行”
+        # 只是收单行，会把交易记到错误的卡上
+        account = None
+        if org and card_suffix:
+            account = self.acct_mgr.match_by_bank_sms(
+                org, card_suffix, self.book,
+                "credit_card" if "信用卡" in (sms.get("source_text") or "") else "bank")
+        if account is None:
+            account = self._resolve_wechat_account(payment_method, card_suffix, org)
+        wx_sid = self._event_sid(wx_evt, self._wechat_prefix())
+        sms_sid = self._event_sid(sms, "sms")
+        sid = "|".join(sorted([wx_sid, sms_sid]))
+
+        # 银行短信能识别还款/贷款等特殊类型时，优先采用短信侧口径
+        sms_type = self._sms_tx_type_from_record(sms)
+        wx_type = self._wechat_tx_type(cat_name, direction)
+        if sms_type in ("credit_card_repayment", "loan_disbursement",
+                        "loan_repayment", "fee"):
+            tx_type = sms_type
+        elif "transfer" in (sms_type, wx_type):
+            tx_type = "transfer"
+        else:
+            tx_type = wx_type
+        if tx_type == "credit_card_repayment":
+            category_name, merchant = "内部-转账", "信用卡还款"
+        elif tx_type == "transfer":
+            category_name = cat_name if wx_type == "transfer" else "内部-转账"
+        elif tx_type == "loan_repayment":
+            category_name = "借贷-还款"
+        elif tx_type == "loan_disbursement":
+            category_name = "借贷-放款"
+        else:
+            category_name = cat_name
 
         return AccountFlow(
+            book=self.book,
             tx_date=(wx_evt.get("time") or "")[:10],
             tx_time=wx_evt.get("time", ""),
             amount=amt,
-            account_id=account.id if account else 0,
+            account_id=account.id if account else None,
             direction=direction,
-            tx_type="expense" if direction == "outflow" else "income",
-            category_id=cat_id,
+            tx_type=tx_type,
+            category_id=self._get_category_id(category_name),
             merchant=merchant,
             counterparty=merchant,
-            source="wechat",
-            source_group_id=group_id,
-            raw_data=json.dumps({"wechat": wx_evt.get("source_text", ""), "sms": sms.get("source_text", "")},
-                                ensure_ascii=False),
+            source=self._wechat_source(),
+            source_event_id=sid,
+            source_group_id=self._group_id(sid, amt),
+            raw_data=json.dumps({
+                "wechat": wx_evt.get("source_text", ""),
+                "sms": sms.get("source_text", ""),
+            }, ensure_ascii=False),
         )
 
-    # ── 单条 WeChat 路由 ──
+    # ── 微信单腿 ──
 
     def _route_single_wechat(self, evt: dict) -> Optional[AccountFlow]:
         direction = "outflow" if evt.get("direction", "支出") == "支出" else "inflow"
         payment_method = evt.get("payment_method", "")
         merchant = evt.get("merchant", "")
-
         cat_name = evt.get("category", "未分类-其他")
-        # 收入类（转账入账）→ inflow
-        if direction == "inflow":
-            account = self.acct_mgr.get_wechat_wallet()
+
+        if self.book == "work":
+            account = self.acct_mgr.get_wechat_wallet("work")
+        elif evt.get("source") in ("bank_expense", "bank_income"):
+            account = self.acct_mgr.match_by_bank_sms(
+                evt.get("org", ""), evt.get("card_suffix", ""), self.book,
+                "credit_card" if "信用卡" in (evt.get("source_text") or "") else "bank")
+            if account is None:
+                account = self._resolve_wechat_account(
+                    payment_method, evt.get("card_suffix", ""), evt.get("org", ""))
+        elif direction == "inflow":
+            account = self.acct_mgr.get_wechat_wallet(self.book)
         else:
-            account = self._resolve_account(payment_method, "", "")
+            account = self._resolve_wechat_account(
+                payment_method, evt.get("card_suffix", ""), "")
 
-        if account is None:
-            return None
-
+        sid = self._event_sid(evt, self._wechat_prefix())
         return AccountFlow(
+            book=self.book,
             tx_date=(evt.get("time") or "")[:10],
             tx_time=evt.get("time", ""),
             amount=round(evt.get("amount", 0), 2),
-            account_id=account.id,
+            account_id=account.id if account else None,
             direction=direction,
-            tx_type="expense" if direction == "outflow" else "income",
+            tx_type=self._wechat_tx_type(cat_name, direction),
             category_id=self._get_category_id(cat_name),
             merchant=merchant,
             counterparty=merchant,
-            source="wechat",
-            source_group_id=self._make_group_id(evt),
+            source=self._wechat_source(),
+            source_event_id=sid,
+            source_group_id=self._group_id(sid, evt.get("amount", 0)),
             raw_data=json.dumps({"wechat": evt.get("source_text", "")}, ensure_ascii=False),
         )
 
-    # ── 单条 SMS 路由 ──
+    # ── SMS 路由 ──
 
     def _route_single_sms(self, sms: dict) -> Optional[list]:
-        """SMS 可能产生 1 条（常规）或 2 条（贷款放款/还款）流水。"""
         amt = round(sms.get("amount", 0), 2)
-        if amt <= 0:
+        if amt <= 0 or sms.get("_skip"):
             return None
 
         is_loan = sms.get("is_loan", False)
@@ -194,250 +342,394 @@ class FlowRouter:
         org = sms.get("payment_method", "")
         card_suffix = sms.get("card_suffix", "")
         merchant = sms.get("merchant", "")
+        source_text = sms.get("source_text", "")
+        detail = sms.get("tx_type_detail", "")
+        sid = self._event_sid(sms, "sms")
+        f_dir = "outflow" if direction == "支出" else "inflow"
 
         if is_loan:
-            # 从交易描述检测实际贷款平台（银行短信中可能含贷款平台名如中邮消费金融还款）
-            loan_org = self._detect_loan_platform(merchant) or org
+            # 识别不到平台时不要用银行名冒充贷款账户
+            loan_org = (self._detect_loan_platform(merchant)
+                        or self._detect_loan_platform(source_text)
+                        or "其他贷款")
             return self._route_loan(sms, amt, category, org, card_suffix, merchant, loan_org)
 
-        # 常规银行交易
-        account = self.acct_mgr.match_by_bank_sms(org, card_suffix)
+        # 信用卡还款：每侧短信只记自己这一腿，跨行/跨账户不强行配对
+        cc_flow = self._route_cc_repayment(
+            sms, amt, org, card_suffix, source_text, detail)
+        if cc_flow is not None:
+            return cc_flow
+
+        prefer_type = "credit_card" if "信用卡" in source_text else "bank"
+        account = self.acct_mgr.match_by_bank_sms(org, card_suffix, self.book, prefer_type)
+        if account is None and "支付宝" in source_text:
+            account = self.acct_mgr.get_alipay(self.book)
+        if account is None and ("微信" in source_text or "零钱" in source_text):
+            account = self.acct_mgr.get_wechat_wallet(self.book)
+
+        # 零钱充值/提现：银行腿 + 钱包腿
+        if "零钱充值" in source_text and f_dir == "outflow":
+            return self._wallet_transfer(sms, amt, f_dir, account, "零钱充值", bank_leg=True)
+        if "零钱提现" in source_text and f_dir == "inflow":
+            return self._wallet_transfer(sms, amt, f_dir, account, "零钱提现", bank_leg=True)
+
+        tx_type = self._sms_tx_type(detail, category, f_dir)
+
+        flows = [AccountFlow(
+            book=self.book,
+            tx_date=(sms.get("time") or "")[:10],
+            tx_time=sms.get("time", ""),
+            amount=amt,
+            account_id=account.id if account else None,
+            direction=f_dir,
+            tx_type=tx_type,
+            category_id=self._get_category_id("内部-转账" if tx_type == "transfer" else category),
+            merchant=merchant,
+            counterparty=sms.get("counterparty") or merchant,
+            source="sms",
+            source_event_id=sid,
+            source_group_id=self._group_id(sid, amt),
+            raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
+        )]
+        return flows
+
+    def _sms_tx_type_from_record(self, sms: dict) -> str:
+        text = sms.get("source_text") or ""
+        detail = sms.get("tx_type_detail") or ""
+        category = sms.get("category") or "未分类-其他"
+        if (any(k in text for k in self._CC_OUTFLOW_KW)
+                or detail == "repayment_in"
+                or any(k in text for k in self._CC_INFLOW_KW)):
+            return "credit_card_repayment"
+        if sms.get("is_loan"):
+            return ("loan_disbursement" if category == "借贷-放款"
+                    else "loan_repayment")
+        return self._sms_tx_type(detail, category, self._flow_dir(sms))
+
+    def _sms_tx_type(self, detail: str, category: str, f_dir: str) -> str:
+        if detail == "loan_repayment":
+            return "loan_repayment"
+        if detail == "repayment_in":
+            return "credit_card_repayment"
+        if detail == "fee":
+            return "fee"
+        if detail in ("transfer", "transfer_in", "transfer_out",
+                      "withdrawal", "deposit", "cash_deposit"):
+            return "transfer"
+        if category.startswith(("内部-", "社交-转账")) or category == "收入-转账":
+            return "transfer"
+        if category.startswith("收入-") or f_dir == "inflow":
+            return "income"
+        return "consumption"
+
+    # ── 贷款双侧 ──
+
+    def _route_loan(self, sms: dict, amt: float, category: str,
+                    org: str, card_suffix: str, merchant: str,
+                    loan_org: str = None) -> Optional[list]:
+        loan_acct = self.acct_mgr.get_or_create_loan(loan_org or org, self.book)
+        source_text = sms.get("source_text", "")
+        sid = self._event_sid(sms, "sms")
+        group = self._group_id(sid, amt)
+        pair = "loan|" + hashlib.sha1(
+            f"{self.book}|{sid}|{amt:.2f}".encode()).hexdigest()[:16]
+        raw = json.dumps({"sms": source_text}, ensure_ascii=False)
+        tx_date = (sms.get("time") or "")[:10]
+        bank_acct = self.acct_mgr.match_by_bank_sms(
+            org, card_suffix, self.book,
+            "credit_card" if "信用卡" in source_text else "bank")
+
+        if category == "借贷-放款":
+            tx_type = "loan_disbursement"
+            bank_dir, loan_dir = "inflow", "outflow"
+        else:
+            tx_type = "loan_repayment"
+            bank_dir, loan_dir = "outflow", "inflow"
+
+        legs = []
+        if bank_acct:
+            legs.append(AccountFlow(
+                book=self.book, tx_date=tx_date, tx_time=sms.get("time", ""),
+                amount=amt, account_id=bank_acct.id, direction=bank_dir,
+                tx_type=tx_type, category_id=self._get_category_id(category),
+                merchant=merchant, counterparty=org, source="sms",
+                source_event_id=sid, source_group_id=group, pair_key=pair,
+                raw_data=raw,
+            ))
+        legs.append(AccountFlow(
+            book=self.book, tx_date=tx_date, tx_time=sms.get("time", ""),
+            amount=amt, account_id=loan_acct.id, direction=loan_dir,
+            tx_type=tx_type, category_id=self._get_category_id(category),
+            merchant=merchant, counterparty=bank_acct.name if bank_acct else org,
+            source="sms", source_event_id=sid, source_group_id=group,
+            pair_key=pair, raw_data=raw,
+        ))
+        return legs
+
+    # ── 信用卡还款（单侧）──
+
+    _CC_INFLOW_KW = ("还款入账", "自动还款已扣", "成功还款", "信用卡还款人民币")
+    _CC_OUTFLOW_KW = ("信用卡还款交易", "信用卡卡号还款", "还款支出",
+                      "的信用卡还款")
+
+    def _route_cc_repayment(self, sms: dict, amt: float, org: str,
+                            card_suffix: str, source_text: str,
+                            detail: str) -> Optional[AccountFlow]:
+        """还款短信只记发卡行这一腿；另一腿由对侧短信独立入账。"""
+        is_inflow = (detail == "repayment_in"
+                     or any(k in source_text for k in self._CC_INFLOW_KW))
+        is_outflow = any(k in source_text for k in self._CC_OUTFLOW_KW)
+        if not is_inflow and not is_outflow:
+            return None
+
+        if is_outflow:
+            account = self.acct_mgr.match_by_bank_sms(
+                org, card_suffix, self.book, "bank")
+            f_dir = "outflow"
+        else:
+            account = (self.acct_mgr.match_by_bank_sms(
+                org, card_suffix, self.book, "credit_card")
+                or self._find_credit_card(source_text, org, card_suffix))
+            f_dir = "inflow"
         if account is None:
             return None
 
-        f_dir = "outflow" if direction == "支出" else "inflow"
-        tx_type = "expense" if direction == "支出" else "income"
-
-        flows = [AccountFlow(
+        sid = self._event_sid(sms, "sms")
+        return AccountFlow(
+            book=self.book,
             tx_date=(sms.get("time") or "")[:10],
             tx_time=sms.get("time", ""),
             amount=amt,
             account_id=account.id,
             direction=f_dir,
-            tx_type=tx_type,
-            category_id=self._get_category_id(category),
-            merchant=merchant,
-            counterparty=merchant,
+            tx_type="credit_card_repayment",
+            category_id=self._get_category_id("内部-转账"),
+            merchant="信用卡还款入账" if is_inflow else "信用卡还款",
+            counterparty=account.name,
             source="sms",
-            source_group_id=self._make_group_id(sms),
-            raw_data=json.dumps({"sms": sms.get("source_text", "")}, ensure_ascii=False),
-        )]
-
-        # 零钱充值：银行卡→微信零钱，同步生成微信零钱入账
-        source_text = sms.get("source_text", "")
-        if "零钱充值" in source_text and f_dir == "outflow":
-            wx_acct = self.acct_mgr.get_wechat_wallet()
-            if wx_acct:
-                flows.append(AccountFlow(
-                    tx_date=(sms.get("time") or "")[:10],
-                    tx_time=sms.get("time", ""),
-                    amount=amt,
-                    account_id=wx_acct.id,
-                    direction="inflow",
-                    tx_type="transfer",
-                    category_id=self._get_category_id("内部-转账"),
-                    merchant="零钱充值",
-                    counterparty="零钱充值",
-                    source="sms",
-                    source_group_id=self._make_group_id(sms),
-                    raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
-                ))
-
-        # 信用卡还款：储蓄卡→信用卡，同步生成信用卡入账（负债减少）
-        tx_type_detail = sms.get("tx_type_detail", "")
-        is_cc_repayment = (
-            tx_type_detail == "transfer" and account.type == "bank_debit" and f_dir == "outflow"
-        ) or (
-            "信用卡还款" in source_text and "还款" in source_text
+            source_event_id=sid,
+            source_group_id=self._group_id(sid, amt),
+            raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
         )
-        if is_cc_repayment:
-            bank = AccountManager._normalize_bank_name(org)
-            if bank:
-                credit_acct = self._find_credit_card_for_bank(bank)
-                if credit_acct and not self._has_credit_inflow(credit_acct.id, amt, sms.get("time", "")):
-                    flows.append(AccountFlow(
-                        tx_date=(sms.get("time") or "")[:10],
-                        tx_time=sms.get("time", ""),
-                        amount=amt,
-                        account_id=credit_acct.id,
-                        direction="inflow",
-                        tx_type="transfer",
-                        category_id=self._get_category_id("内部-转账"),
-                        merchant="信用卡还款入账",
-                        counterparty=account.name,
-                        source="sms",
-                        source_group_id=self._make_group_id(sms),
-                        raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
-                    ))
 
-        return flows
+    # ── 短信内部去重 ──
 
-    def _route_loan(self, sms: dict, amt: float, category: str,
-                    org: str, card_suffix: str, merchant: str,
-                    loan_org: str = None) -> Optional[list]:
-        """贷款放款/还款 → 双条分录。"""
-        loan_acct = self.acct_mgr.get_or_create_loan(loan_org or org)
-        source_text = sms.get("source_text", "")
-        raw_data_loan = json.dumps({"sms": source_text}, ensure_ascii=False) if source_text else None
+    def _dedup_sms(self, records: list) -> list:
+        """贷款还款：银行扣款通知与平台确认通知同额同日时保留银行侧。"""
+        if not records:
+            return records
+        used = set()
+        kept = []
+        n = len(records)
+        for i, a in enumerate(records):
+            if i in used:
+                continue
+            if a.get("is_loan"):
+                for j in range(i + 1, n):
+                    if j in used:
+                        continue
+                    b = records[j]
+                    if not b.get("is_loan"):
+                        continue
+                    if abs(a.get("amount", 0) - b.get("amount", 0)) >= 0.01:
+                        continue
+                    if (a.get("time") or "")[:10] != (b.get("time") or "")[:10]:
+                        continue
+                    if self._is_bank_side(a) != self._is_bank_side(b):
+                        kept.append(a if self._is_bank_side(a) else b)
+                        used.add(i)
+                        used.add(j)
+                        break
+                else:
+                    kept.append(a)
+                    used.add(i)
+                continue
+            kept.append(a)
+            used.add(i)
+        return self._dedup_similar(kept)
 
-        if category == "借贷-放款":
-            # 放款：银行 inflow + 负债 outflow（负债增加）
-            bank_acct = self.acct_mgr.match_by_bank_sms(org, card_suffix)
-            if bank_acct is None:
-                # 无法匹配银行账户，只记贷款端
-                return [AccountFlow(
-                    tx_date=(sms.get("time") or "")[:10],
-                    tx_time=sms.get("time", ""),
-                    amount=amt,
-                    account_id=loan_acct.id,
-                    direction="outflow",  # 负债增加
-                    tx_type="loan_disbursement",
-                    category_id=self._get_category_id(category),
-                    merchant=merchant,
-                    counterparty=org,
-                    source="sms", raw_data=raw_data_loan,
-                    source_group_id=self._make_group_id(sms),
-                )]
+    def _dedup_similar(self, records: list) -> list:
+        """同一笔交易的双通知（银行扣款 + 平台/缴费确认）合并为一条。"""
+        result = []
+        for rec in records:
+            for idx, prev in enumerate(result):
+                if self._same_sms_txn(prev, rec):
+                    if self._sms_score(rec) > self._sms_score(prev):
+                        result[idx] = rec
+                    break
+            else:
+                result.append(rec)
+        return result
 
-            group_id = self._make_group_id(sms)
-            f1 = AccountFlow(
-                tx_date=(sms.get("time") or "")[:10],
-                tx_time=sms.get("time", ""),
-                amount=amt,
-                account_id=bank_acct.id,
-                direction="inflow",  # 钱进银行账户
-                tx_type="loan_disbursement",
-                category_id=self._get_category_id(category),
-                merchant=merchant,
-                counterparty=org,
-                source="sms", raw_data=raw_data_loan,
-                source_group_id=group_id,
-            )
-            f2 = AccountFlow(
-                tx_date=(sms.get("time") or "")[:10],
-                tx_time=sms.get("time", ""),
-                amount=amt,
-                account_id=loan_acct.id,
-                direction="outflow",  # 负债增加
-                tx_type="loan_disbursement",
-                category_id=self._get_category_id(category),
-                merchant=merchant,
-                counterparty=bank_acct.name if bank_acct else "",
-                source="sms", raw_data=raw_data_loan,
-                source_group_id=group_id,
-            )
-            return [f1, f2]
+    @staticmethod
+    def _sms_score(rec: dict) -> float:
+        score = min(len(rec.get("source_text") or "") / 200.0, 1.0)
+        pm = rec.get("payment_method") or ""
+        if any(k in pm for k in ("银行", "支付宝", "微信", "电信", "移动", "联通")):
+            score += 2
+        if rec.get("card_suffix"):
+            score += 1
+        if rec.get("merchant") and rec.get("merchant") != rec.get("payment_method"):
+            score += 1
+        if rec.get("category") not in (None, "", "未分类-其他"):
+            score += 1
+        return score
 
-        elif category in ("借贷-还款", "借贷-其他"):
-            # 还款：银行 outflow + 负债 inflow（负债减少）
-            bank_acct = self.acct_mgr.match_by_bank_sms(org, card_suffix)
-            if bank_acct is None:
-                return [AccountFlow(
-                    tx_date=(sms.get("time") or "")[:10],
-                    tx_time=sms.get("time", ""),
-                    amount=amt,
-                    account_id=loan_acct.id,
-                    direction="inflow",  # 负债减少
-                    tx_type="loan_repayment",
-                    category_id=self._get_category_id(category),
-                    merchant=merchant,
-                    counterparty=org,
-                    source="sms", raw_data=raw_data_loan,
-                    source_group_id=self._make_group_id(sms),
-                )]
-
-            group_id = self._make_group_id(sms)
-            f1 = AccountFlow(
-                tx_date=(sms.get("time") or "")[:10],
-                tx_time=sms.get("time", ""),
-                amount=amt,
-                account_id=bank_acct.id,
-                direction="outflow",  # 钱从银行出去
-                tx_type="loan_repayment",
-                category_id=self._get_category_id(category),
-                merchant=merchant,
-                counterparty=org,
-                source="sms", raw_data=raw_data_loan,
-                source_group_id=group_id,
-            )
-            f2 = AccountFlow(
-                tx_date=(sms.get("time") or "")[:10],
-                tx_time=sms.get("time", ""),
-                amount=amt,
-                account_id=loan_acct.id,
-                direction="inflow",  # 负债减少
-                tx_type="loan_repayment",
-                category_id=self._get_category_id(category),
-                merchant=merchant,
-                counterparty=bank_acct.name if bank_acct else "",
-                source="sms", raw_data=raw_data_loan,
-                source_group_id=group_id,
-            )
-            return [f1, f2]
-
-        return None
-
-    # ── 信用卡双条分录 ──
-
-    def _find_credit_card_for_bank(self, bank_name: str) -> Optional[Account]:
-        """找到指定银行的信用卡账户（还款双条分录用）。"""
-        row = self.db.fetchone(
-            "SELECT * FROM accounts WHERE type='bank_credit' AND bank=? AND is_active=1 ORDER BY id LIMIT 1",
-            (bank_name,),
-        )
-        if row:
-            return AccountManager._row_to_account(row)
-        return None
-
-    def _has_credit_inflow(self, credit_acct_id: int, amount: float, tx_date: str, days: int = 2) -> bool:
-        """检查信用卡在时间窗口内是否已有同等金额的还款入账（防重复）。"""
-        try:
-            dt = datetime.strptime(tx_date[:10], "%Y-%m-%d")
-            start = (dt - timedelta(days=days)).strftime("%Y-%m-%d")
-            end = (dt + timedelta(days=days)).strftime("%Y-%m-%d")
-        except (ValueError, TypeError):
+    def _same_sms_txn(self, a: dict, b: dict) -> bool:
+        if a.get("is_loan") or b.get("is_loan"):
             return False
-        row = self.db.fetchone(
-            """SELECT COUNT(*) as cnt FROM account_flows
-               WHERE account_id=? AND direction='inflow' AND amount=?
-               AND tx_date BETWEEN ? AND ?""",
-            (credit_acct_id, amount, start, end),
-        )
-        return row and row["cnt"] > 0
+        if abs(round(a.get("amount", 0), 2) - round(b.get("amount", 0), 2)) > 0.01:
+            return False
+        if a.get("direction") != b.get("direction"):
+            return False
+        if (a.get("time") or "")[:10] != (b.get("time") or "")[:10]:
+            return False
+        if self._time_diff_seconds(a.get("time", ""), b.get("time", "")) > 600:
+            return False
+        if a.get("card_suffix") != b.get("card_suffix"):
+            return False
+        if a.get("payment_method") == b.get("payment_method"):
+            return True
+        kw = ("充值", "缴费", "话费")
+        return all(any(k in (r.get("source_text") or "") for k in kw)
+                   for r in (a, b))
+
+    @staticmethod
+    def _is_bank_side(rec: dict) -> bool:
+        text = " ".join([
+            rec.get("source_text", ""), rec.get("merchant", ""),
+            rec.get("payment_method", ""),
+        ])
+        return any(bank in text for bank in get_bank_names())
+
+    def _find_credit_card(self, source_text: str, org: str,
+                          card_suffix: str) -> Optional[Account]:
+        """从短信正文定位被还款的信用卡（可能与他行储蓄卡跨行还款）。"""
+        from ..cloudcfg import get_bank_names
+        banks = [b for b in get_bank_names() if b in (source_text or "")]
+        if card_suffix:
+            row = self.db.fetchone(
+                "SELECT * FROM accounts WHERE book=? AND type='credit_card'"
+                " AND card_suffix=? AND is_active=1",
+                (self.book, card_suffix),
+            )
+            if row:
+                return self.acct_mgr._row_to_account(row)
+        for bank in banks:
+            if bank != AccountManager._normalize_bank_name(org):
+                row = self.db.fetchone(
+                    "SELECT * FROM accounts WHERE book=? AND type='credit_card'"
+                    " AND bank=? AND is_active=1 ORDER BY id LIMIT 1",
+                    (self.book, bank),
+                )
+                if row:
+                    return self.acct_mgr._row_to_account(row)
+        return self.acct_mgr.match_by_bank_sms(org, None, self.book, "credit_card")
+
+    # ── 零钱充值/提现双侧 ──
+
+    def _wallet_transfer(self, sms: dict, amt: float, bank_dir: str,
+                         bank_acct: Optional[Account], label: str,
+                         bank_leg: bool = True) -> list:
+        sid = self._event_sid(sms, "sms")
+        group = self._group_id(sid, amt)
+        pair = "wallet|" + hashlib.sha1(
+            f"{self.book}|{sid}|{amt:.2f}".encode()).hexdigest()[:16]
+        raw = json.dumps({"sms": sms.get("source_text", "")}, ensure_ascii=False)
+        tx_date = (sms.get("time") or "")[:10]
+        cat = self._get_category_id("内部-转账")
+        wallet = self.acct_mgr.get_wechat_wallet(self.book)
+        legs = []
+        if bank_acct:
+            legs.append(AccountFlow(
+                book=self.book, tx_date=tx_date, tx_time=sms.get("time", ""),
+                amount=amt, account_id=bank_acct.id, direction=bank_dir,
+                tx_type="transfer", category_id=cat, merchant=label,
+                counterparty="微信零钱", source="sms", source_event_id=sid,
+                source_group_id=group, pair_key=pair, raw_data=raw,
+            ))
+        if wallet:
+            legs.append(AccountFlow(
+                book=self.book, tx_date=tx_date, tx_time=sms.get("time", ""),
+                amount=amt, account_id=wallet.id,
+                direction="inflow" if bank_dir == "outflow" else "outflow",
+                tx_type="transfer", category_id=cat, merchant=label,
+                counterparty=bank_acct.name if bank_acct else "",
+                source="sms", source_event_id=sid, source_group_id=group,
+                pair_key=pair, raw_data=raw,
+            ))
+        return legs
 
     # ── 辅助 ──
 
-    def _resolve_account(self, payment_method: str, card_suffix: str, org: str) -> Optional[Account]:
-        """统一账户解析入口。"""
-        if not payment_method:
-            return None
-
-        # 先尝试按 payment_method 匹配
-        acct = self.acct_mgr.match_by_payment_method(payment_method, card_suffix)
-        if acct:
-            return acct
-
-        # 降级：按银行短信匹配
-        if org:
-            acct = self.acct_mgr.match_by_bank_sms(org, card_suffix)
+    def _resolve_wechat_account(self, payment_method: str, card_suffix: str,
+                                org: str) -> Optional[Account]:
+        if self.book == "work":
+            return self.acct_mgr.get_wechat_wallet("work")
+        # 尾号最可靠；同一尾号优先信用卡，避免把卡交易记到储蓄卡
+        if card_suffix:
+            row = self.db.fetchone(
+                "SELECT * FROM accounts WHERE book=? AND card_suffix=?"
+                " AND is_active=1 ORDER BY"
+                " CASE WHEN type='credit_card' THEN 0 WHEN type='bank' THEN 1"
+                " ELSE 2 END, id LIMIT 1",
+                (self.book, card_suffix),
+            )
+            if row:
+                return self.acct_mgr._row_to_account(row)
+        if payment_method:
+            acct = self.acct_mgr.match_by_payment_method(
+                payment_method, card_suffix, self.book)
             if acct:
                 return acct
+        if org:
+            prefer = "credit_card" if "信用卡" in org else None
+            acct = self.acct_mgr.match_by_bank_sms(org, card_suffix, self.book, prefer)
+            if acct:
+                return acct
+        return self.acct_mgr.get_wechat_wallet(self.book)
 
-        # 兜底：微信零钱
-        return self.acct_mgr.get_wechat_wallet()
+    def _wechat_source(self) -> str:
+        return "wechat_work" if self.book == "work" else "wechat_main"
+
+    def _wechat_prefix(self) -> str:
+        return "wx2" if self.book == "work" else "wxmain"
+
+    def _wechat_tx_type(self, category: str, direction: str) -> str:
+        if category == "借贷-放款":
+            return "loan_disbursement"
+        if category == "借贷-还款":
+            return "loan_repayment"
+        if category.startswith("内部-") or category in ("社交-转账", "收入-转账"):
+            return "transfer"
+        if category.startswith("收入-") or direction == "inflow":
+            return "income"
+        return "consumption"
+
+    def _event_sid(self, evt: dict, prefix: str) -> str:
+        sid = evt.get("source_event_id")
+        if sid:
+            return str(sid)
+        ids = evt.get("source_ids")
+        if ids:
+            return f"{prefix}:" + ",".join(str(i) for i in sorted(ids))
+        raw = "|".join([
+            str(evt.get("time", "")), f"{float(evt.get('amount', 0)):.2f}",
+            str(evt.get("merchant", "")), str(evt.get("direction", "")),
+            str(evt.get("payment_method", "")),
+        ])
+        return f"{prefix}:h{hashlib.sha1(raw.encode()).hexdigest()[:16]}"
 
     def _get_category_id(self, name: str) -> Optional[int]:
         if not name:
             return None
         if name in self._cat_cache:
             return self._cat_cache[name]
-
         row = self.db.fetchone("SELECT id FROM categories WHERE name=?", (name,))
         if row:
             self._cat_cache[name] = row["id"]
             return row["id"]
 
-        # 自动创建
         direction = "expense"
         if name.startswith("收入-"):
             direction = "income"
@@ -460,49 +752,32 @@ class FlowRouter:
             return 9999
 
     @staticmethod
-    def _make_group_id(*items) -> str:
-        raw = "|".join(str(i.get("time", "") or "") + str(round(i.get("amount", 0), 2)) for i in items if i)
-        return hashlib.md5(raw.encode()).hexdigest()[:12]
+    def _group_id(sid: str, amt: float) -> str:
+        return hashlib.sha1(f"{sid}|{float(amt):.2f}".encode()).hexdigest()[:16]
 
     @staticmethod
-    def _dedup_flows(flows: list) -> list:
-        """去除重复流水。
+    def _extend(flows: list, result):
+        if not result:
+            return
+        if isinstance(result, list):
+            flows.extend(result)
+        else:
+            flows.append(result)
 
-        精确匹配：相同 account + amount + date + direction。
-        贷款近匹配：相同 account + amount + direction，日期在 ±2 天内。
+    @staticmethod
+    def _dedup(flows: list) -> list:
+        """同一事件 id 或完全相同的交易内容只保留一条。
+
+        合并微信库会同时导出双侧消息，事件 id 不同但时间、金额、
+        商户、账户完全一致，必须按内容再兜底一次。
         """
-        seen_exact = set()
-        seen_loan = []  # [(account_id, amount, direction, tx_date)]
+        seen = set()
         result = []
         for f in flows:
-            amt = round(f.amount, 2)
-            key = (f.account_id, amt, f.tx_date, f.direction)
-
-            # 精确匹配
-            if key in seen_exact:
+            key = (f.source, f.tx_date, (f.tx_time or "")[:19],
+                   round(f.amount, 2), f.account_id, f.direction)
+            if key in seen:
                 continue
-            seen_exact.add(key)
-
-            # 贷款近匹配：同一 account + amount + direction 且在 ±3 天内
-            is_loan_type = f.tx_type in ("loan_repayment", "loan_disbursement")
-            if is_loan_type:
-                try:
-                    f_date = datetime.strptime(f.tx_date[:10], "%Y-%m-%d").date()
-                except (ValueError, TypeError):
-                    result.append(f)
-                    continue
-
-                is_dup = False
-                for sid, s_amt, s_dir, s_date in seen_loan:
-                    if sid == f.account_id and s_amt == amt and s_dir == f.direction:
-                        d_diff = abs((f_date - s_date).days)
-                        if d_diff <= 3:
-                            is_dup = True
-                            break
-
-                if is_dup:
-                    continue
-                seen_loan.append((f.account_id, amt, f.direction, f_date))
-
+            seen.add(key)
             result.append(f)
         return result
