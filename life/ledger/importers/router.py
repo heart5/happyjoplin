@@ -285,6 +285,8 @@ class FlowRouter:
                         <= 43200):
                     f.tx_type = "loan_repayment"
                     f.category_id = self._get_category_id("借贷-还款")
+                    # 与贷款腿共用 pair_key，报告按配对去重、不重复计总额
+                    f.pair_key = leg.pair_key
                     break
 
     # ── 归并 ──
