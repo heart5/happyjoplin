@@ -1,9 +1,10 @@
-# 个人财务系统 — 四源同步（HCX 本地执行）
+# 个人财务系统 — 多源同步（HCX 本地执行）
 #
 # 数据源：
-#   sms        HCX /sms/query?kind=finance&merge=1（全部设备，content_hash 去重）
-#   wechat_main 主号微信合并库 wcitemsall_merged.db（本地 SQLite）
-#   wechat_work 工作号微信 wx2_chat.db（本地 SQLite）
+#   sms          HCX /sms/query?kind=finance&merge=1（全部设备，content_hash 去重）
+#   wechat_main  主号微信合并库 wcitemsall_merged.db（本地 SQLite）
+#   wechat_work  工作号微信 wx2_chat.db（本地 SQLite）
+#   notification 三机系统通知（HCX /inbox/notification/query，仅个人账套）
 #
 # 每月按 book 原子重建：任一数据源失败则整月跳过，不写入半成品。
 
@@ -43,13 +44,14 @@ from life.wechat_finance import (
     load_category_map,
 )
 from life.sms_finance import parse_sms_records, _get_sms_api_key
+from .notifications import fetch_notifications
 
 __all__ = ["FinanceSync", "sync_range", "main"]
 
 TZ = timezone(timedelta(hours=8))
 
 BOOK_SOURCES = {
-    "personal": ("sms", "wechat_main"),
+    "personal": ("sms", "wechat_main", "notification"),
     "work": ("wechat_work",),
 }
 
@@ -224,6 +226,7 @@ FETCHERS = {
     "sms": fetch_sms,
     "wechat_main": fetch_main_wechat,
     "wechat_work": fetch_work_wechat,
+    "notification": fetch_notifications,
 }
 
 
@@ -231,7 +234,7 @@ FETCHERS = {
 
 
 class FinanceSync:
-    """按 book/月 拉取四源数据并原子重建账本。"""
+    """按 book/月 拉取多源数据并原子重建账本。"""
 
     def __init__(self, db: Database = None):
         self.db = db or Database()
@@ -274,15 +277,17 @@ class FinanceSync:
 
         for source in sources:
             try:
-                records, count, digest = FETCHERS[source](month_key)
+                records, count, digest, *extra = FETCHERS[source](month_key)
+                signals = extra[0] if extra else []
             except Exception as e:
                 log.error(f"[{book}] {month_key} {source} 拉取失败：{e}")
                 if not dry_run:
                     self._mark(book, source, month_key, "", "failed", 0, str(e)[:500])
                 failed = True
                 continue
-            payloads[source] = (records, count, digest)
-            log.info(f"[{book}] {month_key} {source}: {len(records)}/{count} 条")
+            payloads[source] = (records, count, digest, signals)
+            log.info(f"[{book}] {month_key} {source}: {len(records)}/{count} 条"
+                     + (f"（信号 {len(signals)} 条）" if signals else ""))
 
         if failed:
             return {"book": book, "month": month_key, "status": "failed"}
@@ -290,7 +295,7 @@ class FinanceSync:
         unchanged = all(
             (b := self._batch(book, source, month_key))
             and b["status"] == "ok" and b["md5"] == digest
-            for source, (_, _, digest) in payloads.items()
+            for source, (_, _, digest, _) in payloads.items()
         )
         if unchanged and not force:
             log.info(f"[{book}] {month_key} 数据未变，跳过")
@@ -305,9 +310,15 @@ class FinanceSync:
         wechat_events = [r for s in ("wechat_main", "wechat_work")
                          if s in payloads for r in payloads[s][0]]
         sms_records = payloads["sms"][0] if "sms" in payloads else []
+        notification_events = (payloads["notification"][0]
+                               if "notification" in payloads else [])
+        notification_signals = (payloads["notification"][3]
+                                if "notification" in payloads else [])
         try:
             result = self.tx_mgr(book).import_merged(
-                wechat_events, sms_records, month_key)
+                wechat_events, sms_records, month_key,
+                notification_events=notification_events,
+                notification_signals=notification_signals)
         except Exception as e:
             log.error(f"[{book}] {month_key} 入库失败：{e}")
             for source in sources:

@@ -1,6 +1,61 @@
 # 个人财务系统 — 数据库 Schema（finance.db，复式账本）
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+ACCOUNT_FLOWS_SQL = """
+CREATE TABLE IF NOT EXISTS account_flows (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    book            TEXT    NOT NULL CHECK(book IN ('personal','work')),
+    tx_date         TEXT    NOT NULL,
+    tx_time         TEXT,
+    amount          REAL    NOT NULL CHECK(amount > 0),
+    account_id      INTEGER REFERENCES accounts(id),
+    direction       TEXT    NOT NULL CHECK(direction IN ('inflow','outflow')),
+    tx_type         TEXT    NOT NULL DEFAULT 'consumption'
+                    CHECK(tx_type IN (
+                        'consumption', 'income', 'transfer',
+                        'loan_disbursement', 'loan_repayment',
+                        'credit_card_repayment', 'refund', 'fee', 'adjustment'
+                    )),
+    category_id     INTEGER REFERENCES categories(id),
+    merchant        TEXT,
+    description     TEXT,
+    counterparty    TEXT,
+    source          TEXT    NOT NULL
+                    CHECK(source IN ('sms','wechat_main','wechat_work','notification','manual')),
+    source_event_id TEXT,
+    dedup_key       TEXT    NOT NULL UNIQUE,
+    source_group_id TEXT,
+    pair_key        TEXT,
+    linked_flow_id  INTEGER REFERENCES account_flows(id),
+    raw_data        TEXT,
+    is_reconciled   INTEGER DEFAULT 0,
+    notes           TEXT,
+    created_at      TEXT    DEFAULT (datetime('now','localtime')),
+    updated_at      TEXT    DEFAULT (datetime('now','localtime'))
+);
+"""
+
+FLOW_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_flows_book_date ON account_flows(book, tx_date);
+CREATE INDEX IF NOT EXISTS idx_flows_account   ON account_flows(account_id);
+CREATE INDEX IF NOT EXISTS idx_flows_category  ON account_flows(category_id);
+CREATE INDEX IF NOT EXISTS idx_flows_source    ON account_flows(source, tx_date);
+CREATE INDEX IF NOT EXISTS idx_flows_pair      ON account_flows(pair_key);
+"""
+
+_ACCOUNT_FLOWS_NEW_SQL = ACCOUNT_FLOWS_SQL.replace(
+    "CREATE TABLE IF NOT EXISTS account_flows",
+    "CREATE TABLE account_flows_new",
+)
+
+_ACCOUNT_FLOWS_COLUMNS = (
+    "id", "book", "tx_date", "tx_time", "amount", "account_id", "direction",
+    "tx_type", "category_id", "merchant", "description", "counterparty",
+    "source", "source_event_id", "dedup_key", "source_group_id", "pair_key",
+    "linked_flow_id", "raw_data", "is_reconciled", "notes",
+    "created_at", "updated_at",
+)
 
 SCHEMA_SQL = """
 
@@ -42,43 +97,33 @@ CREATE TABLE IF NOT EXISTS categories (
 );
 
 -- 核心流水表（dedup_key 全局唯一，重复导入幂等）
-CREATE TABLE IF NOT EXISTS account_flows (
+""" + ACCOUNT_FLOWS_SQL + FLOW_INDEX_SQL + """
+
+-- 通知观察信号（还款提醒/剩余应还/额度；不入账，保留历史快照）
+CREATE TABLE IF NOT EXISTS notification_signals (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    book            TEXT    NOT NULL CHECK(book IN ('personal','work')),
-    tx_date         TEXT    NOT NULL,
-    tx_time         TEXT,
-    amount          REAL    NOT NULL CHECK(amount > 0),
-    account_id      INTEGER REFERENCES accounts(id),
-    direction       TEXT    NOT NULL CHECK(direction IN ('inflow','outflow')),
-    tx_type         TEXT    NOT NULL DEFAULT 'consumption'
-                    CHECK(tx_type IN (
-                        'consumption', 'income', 'transfer',
-                        'loan_disbursement', 'loan_repayment',
-                        'credit_card_repayment', 'refund', 'fee', 'adjustment'
+    book            TEXT    NOT NULL DEFAULT 'personal',
+    source_event_id TEXT    NOT NULL,
+    notif_id        INTEGER,
+    device          TEXT,
+    package         TEXT,
+    bank            TEXT,
+    card_suffix     TEXT,
+    signal_type     TEXT    NOT NULL CHECK(signal_type IN (
+                        'available_credit', 'remaining_due', 'minimum_payment',
+                        'due_date', 'credit_limit', 'paid_amount'
                     )),
-    category_id     INTEGER REFERENCES categories(id),
-    merchant        TEXT,
-    description     TEXT,
-    counterparty    TEXT,
-    source          TEXT    NOT NULL
-                    CHECK(source IN ('sms','wechat_main','wechat_work','manual')),
-    source_event_id TEXT,
-    dedup_key       TEXT    NOT NULL UNIQUE,
-    source_group_id TEXT,
-    pair_key        TEXT,
-    linked_flow_id  INTEGER REFERENCES account_flows(id),
-    raw_data        TEXT,
-    is_reconciled   INTEGER DEFAULT 0,
-    notes           TEXT,
+    amount          REAL,
+    value_text      TEXT,
+    content_hash    TEXT,
+    observed_at     TEXT,
+    raw_text        TEXT,
     created_at      TEXT    DEFAULT (datetime('now','localtime')),
-    updated_at      TEXT    DEFAULT (datetime('now','localtime'))
+    UNIQUE(book, source_event_id, signal_type, content_hash)
 );
 
-CREATE INDEX IF NOT EXISTS idx_flows_book_date ON account_flows(book, tx_date);
-CREATE INDEX IF NOT EXISTS idx_flows_account   ON account_flows(account_id);
-CREATE INDEX IF NOT EXISTS idx_flows_category  ON account_flows(category_id);
-CREATE INDEX IF NOT EXISTS idx_flows_source    ON account_flows(source, tx_date);
-CREATE INDEX IF NOT EXISTS idx_flows_pair      ON account_flows(pair_key);
+CREATE INDEX IF NOT EXISTS idx_signals_card
+    ON notification_signals(book, card_suffix, signal_type, observed_at);
 
 -- 导入批次（内容 md5 未变则整批跳过）
 CREATE TABLE IF NOT EXISTS import_batches (
@@ -230,9 +275,49 @@ def make_identity_key(book, acct_type, bank=None, card_suffix=None,
     ])
 
 
+def _migrate_flows_source(conn):
+    """v1→v2：SQLite 不能改 CHECK，只能重建 account_flows。
+
+    老库按 sqlite_master 里的建表 SQL 判断，已迁移或新库直接跳过。
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='account_flows'"
+    ).fetchone()
+    if row is None:
+        return
+    sql = row[0] or ""
+    if "'notification'" in sql:
+        return
+
+    cols = ", ".join(_ACCOUNT_FLOWS_COLUMNS)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(_ACCOUNT_FLOWS_NEW_SQL)
+        conn.execute(
+            f"INSERT INTO account_flows_new ({cols})"
+            f" SELECT {cols} FROM account_flows"
+        )
+        conn.execute("DROP TABLE account_flows")
+        conn.execute("ALTER TABLE account_flows_new RENAME TO account_flows")
+        for stmt in FLOW_INDEX_SQL.split(";"):
+            if stmt.strip():
+                conn.execute(stmt)
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"account_flows 迁移后外键异常：{violations[:5]}")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
 def init_db(conn):
-    """初始化数据库：建表 + 种子数据。"""
+    """初始化数据库：建表 + 迁移 + 种子数据。"""
     conn.executescript(SCHEMA_SQL)
+    _migrate_flows_source(conn)
 
     existing = {r["name"] for r in conn.execute("SELECT name FROM categories").fetchall()}
     for name, direction in SEED_CATEGORIES:
@@ -254,7 +339,8 @@ def init_db(conn):
             (book, name, acct_type, bank, suffix, inst, platform, active, key),
         )
 
-    if not conn.execute("SELECT 1 FROM schema_version").fetchone():
+    if not conn.execute("SELECT 1 FROM schema_version WHERE version=?",
+                        (SCHEMA_VERSION,)).fetchone():
         conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
 
     conn.commit()

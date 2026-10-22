@@ -24,6 +24,7 @@ with pathmagic.context():
 
 _DEFAULT_SMS_API_URL = "https://ollama.qingxd.com/sms/query"
 _DEFAULT_WECHAT_API_URL = "https://ollama.qingxd.com/wechat/query"
+_DEFAULT_NOTIFICATION_API_URL = "https://ollama.qingxd.com/inbox/notification/query"
 _DEFAULT_MERGE_WINDOW = 180
 
 _DEFAULT_BANK_SHORT_CODES = {
@@ -148,6 +149,11 @@ def get_sms_api_url() -> str:
 def get_wechat_api_url() -> str:
     _ensure_loaded()
     return str(_cache.get("wechat_api_url", _DEFAULT_WECHAT_API_URL))
+
+
+def get_notification_api_url() -> str:
+    _ensure_loaded()
+    return str(_cache.get("notification_api_url", _DEFAULT_NOTIFICATION_API_URL))
 
 
 def get_merge_window() -> int:

@@ -70,7 +70,7 @@ def generate_monthly_report(db: Database, year: int, month: int,
 
     label = BOOK_LABELS.get(book, book)
     lines = [f"# {label}财务月报 — {month_label(year, month)}", ""]
-    lines.append(f"> 数据源：{'短信 + 主号微信' if book == 'personal' else '工作号微信'}"
+    lines.append(f"> 数据源：{'短信 + 主号微信 + 通知' if book == 'personal' else '工作号微信'}"
                  f" ｜ 生成：{now_text()}")
     lines.append("")
 

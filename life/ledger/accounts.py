@@ -130,8 +130,13 @@ class AccountManager:
 
     def match_by_bank_sms(self, org: str, card_suffix: str,
                           book: str = "personal",
-                          prefer_type: str = None) -> Optional[Account]:
-        """根据银行短信匹配账户。prefer_type 可为 credit_card / bank。"""
+                          prefer_type: str = None,
+                          allow_create: bool = True) -> Optional[Account]:
+        """根据银行短信匹配账户。prefer_type 可为 credit_card / bank。
+
+        allow_create=False 用于通知等弱来源：绝不新建银行账户，
+        且带尾号时不做同银行其他卡的降级匹配。
+        """
         bank = self._normalize_bank_name(org)
         if not bank:
             return None
@@ -147,6 +152,8 @@ class AccountManager:
             row = self.db.fetchone(sql, params)
             if row:
                 return self._row_to_account(row)
+            if not allow_create:
+                return None
             if prefer_type:
                 return self.get_or_create_bank_card(bank, card_suffix, prefer_type, book)
 

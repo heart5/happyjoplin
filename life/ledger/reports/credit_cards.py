@@ -73,6 +73,23 @@ def _available_credit(days: int = 45) -> dict:
     return latest
 
 
+def _notification_signals(db: Database, days: int = 120) -> dict:
+    """各卡/机构的通知观察信号，最新一条为准。"""
+    start = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    rows = db.fetchall(
+        """SELECT card_suffix, bank, signal_type, amount, value_text, observed_at
+           FROM notification_signals
+           WHERE book='personal' AND observed_at >= ?
+           ORDER BY observed_at DESC, id DESC""",
+        (start,),
+    )
+    latest = {}
+    for r in rows:
+        key = r["card_suffix"] or r["bank"] or "其他"
+        latest.setdefault(key, {}).setdefault(r["signal_type"], r)
+    return latest
+
+
 def generate_credit_cards_report(db: Database, as_of: str = None,
                                  with_sms: bool = True) -> str:
     anchor = datetime.strptime(as_of, "%Y-%m-%d") if as_of else datetime.now()
@@ -110,12 +127,13 @@ def generate_credit_cards_report(db: Database, as_of: str = None,
             spend[r["account_id"]] += r["amount"]
 
     credit = _available_credit() if with_sms else {}
+    signals = _notification_signals(db)
     next_month = (f"{year + 1:04d}-01-01" if month == 12
                   else f"{year:04d}-{month + 1:02d}-01")
 
     lines = [f"# 信用卡状态（自动） — {as_of or anchor.strftime('%Y-%m-%d')}", ""]
-    lines.append(f"> 还款来自账本；欠款仅列已设账单锚点的卡；"
-                 f"可用额度来自最近短信 ｜ 生成：{now_text()}")
+    lines.append(f"> 还款/欠款来自账本；额度与还款提醒分「短信」「通知」两区块"
+                 f" ｜ 生成：{now_text()}")
     lines.append("")
 
     lines += ["## 卡片概览", "",
@@ -133,7 +151,7 @@ def generate_credit_cards_report(db: Database, as_of: str = None,
     lines.append("")
 
     if credit:
-        lines += ["## 短信可用额度", "",
+        lines += ["## 短信额度观察", "",
                   "| 尾号 | 可用额度 | 超限金额 | 短信日期 |",
                   "|------|------|------|------|"]
         for c in cards:
@@ -150,8 +168,46 @@ def generate_credit_cards_report(db: Database, as_of: str = None,
         lines.append("*可用额度取最近一条含「当前可用额度」的短信；负数或超限表示已超信用额度。*")
         lines.append("")
     else:
-        lines += ["## 短信可用额度", "",
+        lines += ["## 短信额度观察", "",
                   "未获取到额度短信（可稍后重试或检查短信 API）。", ""]
+
+    lines += ["## 通知额度与还款观察", ""]
+    sig_rows = []
+    card_tails = {c["card_suffix"] for c in cards if c["card_suffix"]}
+    for c in cards:
+        tail = c["card_suffix"]
+        info = signals.get(tail)
+        if info:
+            sig_rows.append((f"{c['bank'] or ''} {tail}".strip(), info))
+    for key, info in signals.items():
+        if key not in card_tails:
+            sig_rows.append((key, info))
+
+    if sig_rows:
+        lines += ["| 卡/机构 | 剩余应还 | 最低还款 | 到期日 | 可用额度 | 信用额度 | 观察时间 |",
+                  "|------|------|------|------|------|------|------|"]
+
+        def _sig_value(info, kind):
+            row = info.get(kind)
+            if not row:
+                return "—"
+            if kind == "due_date":
+                return row["value_text"] or "—"
+            return money(row["amount"]) if row["amount"] is not None else "—"
+
+        for name, info in sig_rows:
+            observed = max(r["observed_at"] or "" for r in info.values())
+            lines.append(
+                f"| {name} | {_sig_value(info, 'remaining_due')} | "
+                f"{_sig_value(info, 'minimum_payment')} | "
+                f"{_sig_value(info, 'due_date')} | "
+                f"{_sig_value(info, 'available_credit')} | "
+                f"{_sig_value(info, 'credit_limit')} | {observed or '—'} |")
+        lines.append("")
+    else:
+        lines += ["暂无通知额度/还款观察（通知自 2026-10-21 起采集）。", ""]
+    lines.append("*通知观察来自手机系统通知的提醒类信息，仅作参考，不生成流水。*")
+    lines.append("")
 
     lines += ["---", f"*生成时间：{now_text()} ｜ 数据来源：finance.db*", ""]
     return "\n".join(lines)

@@ -189,13 +189,20 @@ def publish_status(db: Database, publisher: JoplinPublisher,
         """SELECT book, source, period, status, row_count, error, finished_at
            FROM import_batches ORDER BY period DESC, book, source LIMIT 40""")
     total = db.fetchone("SELECT COUNT(*) AS n FROM account_flows")["n"]
+    notif = db.fetchone(
+        "SELECT COUNT(*) AS n, MAX(tx_date) AS last FROM account_flows"
+        " WHERE source='notification'")
+    signals = db.fetchone(
+        "SELECT COUNT(*) AS n, MAX(observed_at) AS last FROM notification_signals")
     last_ok = db.fetchone(
         "SELECT MAX(finished_at) AS t FROM import_batches WHERE status='ok'")["t"]
     failed = [r for r in rows if r["status"] == "failed"]
 
     lines = ["# 财务系统运行状态", ""]
     lines.append(f"> 更新时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"
-                 f" ｜ 流水总数：{total}")
+                 f" ｜ 流水总数：{total}"
+                 f" ｜ 通知流水：{notif['n']}（最近 {notif['last'] or '—'}）"
+                 f" ｜ 通知信号：{signals['n']}（最近 {signals['last'] or '—'}）")
     lines.append("")
     if failed:
         lines += ["## 失败批次", ""]
@@ -211,6 +218,25 @@ def publish_status(db: Database, publisher: JoplinPublisher,
                      f"{r['status']} | {r['row_count']} | "
                      f"{r['finished_at'] or '—'} |")
     lines.append("")
+
+    recent_notif = db.fetchall(
+        """SELECT f.tx_date, f.amount, f.direction, f.tx_type, f.merchant,
+                  a.name AS account_name
+           FROM account_flows f
+           LEFT JOIN accounts a ON a.id = f.account_id
+           WHERE f.source='notification'
+           ORDER BY f.tx_date DESC, f.id DESC LIMIT 10""")
+    if recent_notif:
+        lines += ["## 通知入账流水（最近 10 条）", "",
+                  "| 日期 | 金额 | 方向 | 类型 | 账户 | 摘要 |",
+                  "|------|------|------|------|------|------|"]
+        for r in recent_notif:
+            direction = "收入" if r["direction"] == "inflow" else "支出"
+            account = r["account_name"] or "—（未匹配）"
+            lines.append(f"| {r['tx_date']} | {r['amount']:,.2f} | {direction} | "
+                         f"{r['tx_type']} | {account} | {r['merchant'] or '—'} |")
+        lines.append("")
+
     lines.append(f"**最近成功同步**：{last_ok or '—'}")
     lines += ["", "---", "*由 finance sync 自动维护*", ""]
 

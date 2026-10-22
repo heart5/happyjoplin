@@ -58,10 +58,15 @@ class TransactionManager:
         return self.import_merged([], sms_records, month_key)
 
     def import_merged(self, wechat_events: list, sms_records: list,
-                      month_key: str = "", rebuild: bool = True) -> dict:
+                      month_key: str = "", rebuild: bool = True,
+                      notification_events: list = None,
+                      notification_signals: list = None) -> dict:
         """归并导入：先清当月非手工流水，再写入。"""
-        flows = self.router.route_events(wechat_events, sms_records)
-        inserted = self._save_flows(flows, clear_month=month_key if rebuild else None)
+        flows = self.router.route_events(
+            wechat_events, sms_records, notification_events or [])
+        inserted = self._save_flows(
+            flows, clear_month=month_key if rebuild else None,
+            notification_signals=notification_signals)
         by_source = {}
         for f in flows:
             by_source[f.source] = by_source.get(f.source, 0) + 1
@@ -88,12 +93,13 @@ class TransactionManager:
         cur = conn.execute(
             """DELETE FROM account_flows
                WHERE book=? AND tx_date>=? AND tx_date<?
-                 AND source IN ('sms','wechat_main','wechat_work')""",
+                 AND source IN ('sms','wechat_main','wechat_work','notification')""",
             (self.book, start, end),
         )
         return cur.rowcount
 
-    def _save_flows(self, flows: list, clear_month: str = None) -> int:
+    def _save_flows(self, flows: list, clear_month: str = None,
+                    notification_signals: list = None) -> int:
         rows = []
         for f in flows:
             d = self._flow_to_dict(f)
@@ -116,6 +122,21 @@ class TransactionManager:
                     list(d.values()),
                 )
                 written += cur.rowcount
+            if notification_signals:
+                for sig in notification_signals:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO notification_signals
+                           (book, source_event_id, notif_id, device, package,
+                            bank, card_suffix, signal_type, amount, value_text,
+                            content_hash, observed_at, raw_text)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (sig.get("book") or self.book, sig.get("source_event_id"),
+                         sig.get("notif_id"), sig.get("device"), sig.get("package"),
+                         sig.get("bank"), sig.get("card_suffix"),
+                         sig.get("signal_type"), sig.get("amount"),
+                         sig.get("value_text"), sig.get("content_hash"),
+                         sig.get("observed_at"), sig.get("raw_text")),
+                    )
             self._link_pairs(conn)
         log.info(f"[{self.book}] 写入 {written}/{len(rows)} 条流水")
         return written

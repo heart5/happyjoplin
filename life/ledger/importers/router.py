@@ -15,6 +15,8 @@ __all__ = ["FlowRouter"]
 
 MERGE_WINDOW = get_merge_window()
 TRANSFER_MERGE_WINDOW = 1800
+NOTIF_FLOW_WINDOW = 600
+NOTIF_SMS_WINDOW = 21600
 
 _GENERIC_TRANSFER_KW = (
     "跨行", "他行", "转账", "汇款", "转入", "转出",
@@ -45,6 +47,7 @@ class FlowRouter:
         ("安逸花", "马上消费金融"),
         ("招联", "招联金融"),
         ("个贷", "招商银行个贷"),
+        ("经营贷", "网商银行经营贷"),
     )
 
     @classmethod
@@ -86,7 +89,8 @@ class FlowRouter:
 
     # ── 主入口 ──
 
-    def route_events(self, wechat_events: list, sms_records: list) -> list:
+    def route_events(self, wechat_events: list, sms_records: list,
+                     notification_events: list = None) -> list:
         flows = []
         sms_records = self._dedup_sms(sms_records)
         used_sms = set()
@@ -166,12 +170,72 @@ class FlowRouter:
                 continue
             self._extend(flows, self._route_single_sms(sms))
 
+        # Phase 4: 通知独有交易（微信/短信优先；通知不自动新建银行账户）
+        for evt in self._dedup_notifications(
+                notification_events or [], sms_records, flows):
+            self._extend(flows, self._route_single_sms(
+                evt, source="notification", allow_create=False))
+
         # 只去除同一来源事件的精确重复，保留同日同额的不同交易
         flows = self._dedup(flows)
         self._reclassify_internal_transfers(flows)
         self._reclassify_loan_bank_legs(flows)
         flows.sort(key=lambda f: (f.tx_date or "", f.tx_time or ""))
         return flows
+
+    def _dedup_notifications(self, notifications: list, sms_records: list,
+                             routed_flows: list) -> list:
+        """通知与已路由流水/SMS 同笔去重。
+
+        微信支付成功提醒常与银行 App 动账通知成对出现（时间差数十秒），
+        故对已路由流水用 ±10 分钟；短信可能延迟，仍用 ±6 小时。
+        """
+        def same_tx(amount: float, direction: str, suffix: str,
+                    time: str, window: float) -> bool:
+            if abs(round(amount, 2) - amt) > 0.01:
+                return False
+            if direction != evt_dir:
+                return False
+            if suffix and evt_suffix and suffix != evt_suffix:
+                return False
+            t1, t2 = evt_time, time or ""
+            if not t1 or not t2:
+                return False
+            return self._time_diff_seconds(t1, t2) <= window
+
+        kept = []
+        for evt in notifications:
+            amt = round(evt.get("amount", 0), 2)
+            if amt <= 0:
+                continue
+            evt_dir = self._flow_dir(evt)
+            evt_suffix = evt.get("card_suffix") or ""
+            evt_time = evt.get("time") or ""
+            # 贷款/卡还款通知是账户侧另一腿，可能与付款腿同额同时，不算重复
+            account_leg = (evt.get("is_loan")
+                           or evt.get("tx_type_detail") == "repayment_in")
+
+            if not account_leg and any(
+                    same_tx(f.amount, f.direction, "", f.tx_time,
+                            NOTIF_FLOW_WINDOW) for f in routed_flows):
+                continue
+            if any(same_tx(sms.get("amount", 0), self._flow_dir(sms),
+                           sms.get("card_suffix") or "", sms.get("time") or "",
+                           NOTIF_SMS_WINDOW)
+                   and self._same_notif_leg(evt, sms) for sms in sms_records):
+                continue
+            kept.append(evt)
+        return kept
+
+    @staticmethod
+    def _same_notif_leg(evt: dict, other: dict) -> bool:
+        """贷款/卡还款通知只与同类型账户腿去重，不与付款腿互斥。"""
+        if evt.get("is_loan") or other.get("is_loan"):
+            return bool(evt.get("is_loan")) and bool(other.get("is_loan"))
+        detail = evt.get("tx_type_detail")
+        if detail == "repayment_in" or other.get("tx_type_detail") == "repayment_in":
+            return detail == other.get("tx_type_detail")
+        return True
 
     def _reclassify_internal_transfers(self, flows: list):
         """银行卡支出提醒 + 同日同额他行转入短信 = 本人账户间转账。"""
@@ -199,8 +263,8 @@ class FlowRouter:
         """贷款平台还款确认 + 同日同额银行卡支出提醒 = 贷款还款的银行腿。"""
         loan_legs = [
             f for f in flows
-            if f.source == "sms" and f.tx_type == "loan_repayment"
-            and f.direction == "inflow"
+            if f.source in ("sms", "notification")
+            and f.tx_type == "loan_repayment" and f.direction == "inflow"
         ]
         for f in flows:
             if (f.source != self._wechat_source() or f.direction != "outflow"
@@ -331,7 +395,8 @@ class FlowRouter:
 
     # ── SMS 路由 ──
 
-    def _route_single_sms(self, sms: dict) -> Optional[list]:
+    def _route_single_sms(self, sms: dict, source: str = "sms",
+                          allow_create: bool = True) -> Optional[list]:
         amt = round(sms.get("amount", 0), 2)
         if amt <= 0 or sms.get("_skip"):
             return None
@@ -344,7 +409,7 @@ class FlowRouter:
         merchant = sms.get("merchant", "")
         source_text = sms.get("source_text", "")
         detail = sms.get("tx_type_detail", "")
-        sid = self._event_sid(sms, "sms")
+        sid = self._event_sid(sms, source)
         f_dir = "outflow" if direction == "支出" else "inflow"
 
         if is_loan:
@@ -352,16 +417,20 @@ class FlowRouter:
             loan_org = (self._detect_loan_platform(merchant)
                         or self._detect_loan_platform(source_text)
                         or "其他贷款")
-            return self._route_loan(sms, amt, category, org, card_suffix, merchant, loan_org)
+            return self._route_loan(
+                sms, amt, category, org, card_suffix, merchant, loan_org,
+                source=source, allow_create=allow_create)
 
         # 信用卡还款：每侧短信只记自己这一腿，跨行/跨账户不强行配对
         cc_flow = self._route_cc_repayment(
-            sms, amt, org, card_suffix, source_text, detail)
+            sms, amt, org, card_suffix, source_text, detail,
+            source=source, allow_create=allow_create)
         if cc_flow is not None:
             return cc_flow
 
         prefer_type = "credit_card" if "信用卡" in source_text else "bank"
-        account = self.acct_mgr.match_by_bank_sms(org, card_suffix, self.book, prefer_type)
+        account = self.acct_mgr.match_by_bank_sms(
+            org, card_suffix, self.book, prefer_type, allow_create=allow_create)
         if account is None and "支付宝" in source_text:
             account = self.acct_mgr.get_alipay(self.book)
         if account is None and ("微信" in source_text or "零钱" in source_text):
@@ -386,10 +455,10 @@ class FlowRouter:
             category_id=self._get_category_id("内部-转账" if tx_type == "transfer" else category),
             merchant=merchant,
             counterparty=sms.get("counterparty") or merchant,
-            source="sms",
+            source=source,
             source_event_id=sid,
             source_group_id=self._group_id(sid, amt),
-            raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
+            raw_data=json.dumps({source: source_text}, ensure_ascii=False),
         )]
         return flows
 
@@ -426,18 +495,20 @@ class FlowRouter:
 
     def _route_loan(self, sms: dict, amt: float, category: str,
                     org: str, card_suffix: str, merchant: str,
-                    loan_org: str = None) -> Optional[list]:
+                    loan_org: str = None, source: str = "sms",
+                    allow_create: bool = True) -> Optional[list]:
         loan_acct = self.acct_mgr.get_or_create_loan(loan_org or org, self.book)
         source_text = sms.get("source_text", "")
-        sid = self._event_sid(sms, "sms")
+        sid = self._event_sid(sms, source)
         group = self._group_id(sid, amt)
         pair = "loan|" + hashlib.sha1(
             f"{self.book}|{sid}|{amt:.2f}".encode()).hexdigest()[:16]
-        raw = json.dumps({"sms": source_text}, ensure_ascii=False)
+        raw = json.dumps({source: source_text}, ensure_ascii=False)
         tx_date = (sms.get("time") or "")[:10]
         bank_acct = self.acct_mgr.match_by_bank_sms(
             org, card_suffix, self.book,
-            "credit_card" if "信用卡" in source_text else "bank")
+            "credit_card" if "信用卡" in source_text else "bank",
+            allow_create=allow_create)
 
         if category == "借贷-放款":
             tx_type = "loan_disbursement"
@@ -452,7 +523,7 @@ class FlowRouter:
                 book=self.book, tx_date=tx_date, tx_time=sms.get("time", ""),
                 amount=amt, account_id=bank_acct.id, direction=bank_dir,
                 tx_type=tx_type, category_id=self._get_category_id(category),
-                merchant=merchant, counterparty=org, source="sms",
+                merchant=merchant, counterparty=org, source=source,
                 source_event_id=sid, source_group_id=group, pair_key=pair,
                 raw_data=raw,
             ))
@@ -461,7 +532,7 @@ class FlowRouter:
             amount=amt, account_id=loan_acct.id, direction=loan_dir,
             tx_type=tx_type, category_id=self._get_category_id(category),
             merchant=merchant, counterparty=bank_acct.name if bank_acct else org,
-            source="sms", source_event_id=sid, source_group_id=group,
+            source=source, source_event_id=sid, source_group_id=group,
             pair_key=pair, raw_data=raw,
         ))
         return legs
@@ -474,7 +545,8 @@ class FlowRouter:
 
     def _route_cc_repayment(self, sms: dict, amt: float, org: str,
                             card_suffix: str, source_text: str,
-                            detail: str) -> Optional[AccountFlow]:
+                            detail: str, source: str = "sms",
+                            allow_create: bool = True) -> Optional[AccountFlow]:
         """还款短信只记发卡行这一腿；另一腿由对侧短信独立入账。"""
         is_inflow = (detail == "repayment_in"
                      or any(k in source_text for k in self._CC_INFLOW_KW))
@@ -484,17 +556,18 @@ class FlowRouter:
 
         if is_outflow:
             account = self.acct_mgr.match_by_bank_sms(
-                org, card_suffix, self.book, "bank")
+                org, card_suffix, self.book, "bank", allow_create=allow_create)
             f_dir = "outflow"
         else:
             account = (self.acct_mgr.match_by_bank_sms(
-                org, card_suffix, self.book, "credit_card")
+                org, card_suffix, self.book, "credit_card",
+                allow_create=allow_create)
                 or self._find_credit_card(source_text, org, card_suffix))
             f_dir = "inflow"
         if account is None:
             return None
 
-        sid = self._event_sid(sms, "sms")
+        sid = self._event_sid(sms, source)
         return AccountFlow(
             book=self.book,
             tx_date=(sms.get("time") or "")[:10],
@@ -506,10 +579,10 @@ class FlowRouter:
             category_id=self._get_category_id("内部-转账"),
             merchant="信用卡还款入账" if is_inflow else "信用卡还款",
             counterparty=account.name,
-            source="sms",
+            source=source,
             source_event_id=sid,
             source_group_id=self._group_id(sid, amt),
-            raw_data=json.dumps({"sms": source_text}, ensure_ascii=False),
+            raw_data=json.dumps({source: source_text}, ensure_ascii=False),
         )
 
     # ── 短信内部去重 ──
