@@ -328,7 +328,7 @@ class FinanceSync:
                     "error": str(e)}
 
         for source in sources:
-            _, count, digest = payloads[source]
+            _, count, digest, _ = payloads[source]
             self._mark(book, source, month_key, digest, "ok", count)
 
         year, month = int(month_key[:4]), int(month_key[5:7])
