@@ -142,6 +142,8 @@ def parse_manual(body: str, note_id: str) -> tuple[list[dict], list[str]]:
         beer = 0
         if lines and MANUAL_COUNT_RE.fullmatch(lines[0].strip()):
             beer = int(lines[0].strip())
+            if beer > 99:
+                warnings.append(f"{day} 啤酒瓶数 {beer} 偏大，请核对")
             lines = lines[1:]
         while lines and not lines[-1].strip():
             lines.pop()
