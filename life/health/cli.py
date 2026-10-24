@@ -32,12 +32,18 @@ def _common(parser):
     parser.add_argument("--force", action="store_true")
 
 
-def _refresh_memo_sources(pub, dry_run: bool = False, adopt: bool = False) -> dict:
+def _refresh_memo_sources(pub, dry_run: bool = False, adopt: bool = False,
+                          verify_legacy: bool = False,
+                          reimport_legacy: bool = False) -> dict:
     manual_id, state = pub.ensure_manual_note(adopt=adopt, dry_run=dry_run)
     print(f"manual note: {state}" + (f" {manual_id}" if manual_id else ""))
-    stats = memos.refresh_memos(manual_note_id=manual_id)
+    stats = memos.refresh_memos(
+        manual_note_id=manual_id,
+        verify_legacy=verify_legacy,
+        reimport_legacy=reimport_legacy,
+    )
     print(f"memos refreshed: legacy={stats['legacy']} manual={stats['manual']} "
-          f"warnings={len(stats['warnings'])}")
+          f"sources={stats['sources']} warnings={len(stats['warnings'])}")
     for warning in stats["warnings"]:
         print(f"warning: {warning}")
     return stats
@@ -50,6 +56,9 @@ def main(argv=None) -> int:
     p_memos = sub.add_parser("memos", help="重扫随记来源并发布汇编")
     p_memos.add_argument("--refresh", action="store_true")
     p_memos.add_argument("--adopt-manual", action="store_true")
+    memo_check = p_memos.add_mutually_exclusive_group()
+    memo_check.add_argument("--verify-legacy", action="store_true")
+    memo_check.add_argument("--reimport-legacy", action="store_true")
     _common(p_memos)
 
     p_daily = sub.add_parser("daily", help="滚动日报")
@@ -73,9 +82,16 @@ def main(argv=None) -> int:
 
     p_all = sub.add_parser("all", help="日报 + 周报 + 月报 + 总览 + 状态")
     p_all.add_argument("--refresh", action="store_true")
+    all_check = p_all.add_mutually_exclusive_group()
+    all_check.add_argument("--verify-legacy", action="store_true")
+    all_check.add_argument("--reimport-legacy", action="store_true")
     _common(p_all)
 
     args = parser.parse_args(argv)
+    if not getattr(args, "refresh", False):
+        for flag in ("verify_legacy", "reimport_legacy"):
+            if getattr(args, flag, False):
+                parser.error(f"--{flag.replace('_', '-')} 需要 --refresh")
     out_dir = _out_dir(args.command)
     pub = publish.HealthPublisher()
     conn = db.connect()
@@ -83,15 +99,20 @@ def main(argv=None) -> int:
     try:
         if args.command == "memos":
             if args.refresh:
-                _refresh_memo_sources(pub, dry_run=args.dry_run,
-                                      adopt=args.adopt_manual)
+                _refresh_memo_sources(
+                    pub, dry_run=args.dry_run, adopt=args.adopt_manual,
+                    verify_legacy=args.verify_legacy,
+                    reimport_legacy=args.reimport_legacy)
             body = memos.build_compilation()
             _publish(pub, publish.MEMOS_TITLE, body, {}, out_dir,
                      args.dry_run, args.force)
             return 0
 
         if args.command == "all" and args.refresh:
-            _refresh_memo_sources(pub, dry_run=args.dry_run)
+            _refresh_memo_sources(
+                pub, dry_run=args.dry_run,
+                verify_legacy=args.verify_legacy,
+                reimport_legacy=args.reimport_legacy)
             body = memos.build_compilation()
             _publish(pub, publish.MEMOS_TITLE, body, {}, out_dir,
                      args.dry_run, args.force)

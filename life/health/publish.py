@@ -757,6 +757,8 @@ def _state_rows() -> list[tuple[str, str, str]]:
         cfg.read(path, encoding="utf-8")
     rows = []
     for section in cfg.sections():
+        if section == "meta":
+            continue
         rows.append((section, cfg.get(section, "updated", fallback="—"),
                      cfg.get(section, "md5", fallback="—")[:8]))
     return rows
@@ -772,6 +774,8 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
     memo_ranges = memos.source_ranges()
     manual_status = memos.get_meta("manual_status", "absent") or "absent"
     memo_warnings = memos.get_meta_list("manual_warnings")
+    legacy_verified_at = memos.get_meta("legacy_verified_at") or "—"
+    legacy_verify_status = memos.get_meta("legacy_verify_status") or ""
     overlaps = memos.overlap_beer_days()
     lag = None
     if last_dates.get("sleep"):
@@ -797,8 +801,14 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
         issues.append("随记库尚未生成")
     if manual_status == "missing":
         issues.append("随记登记笔记缺失，库中数据已冻结")
+    elif manual_status == "unavailable":
+        issues.append("随记登记笔记暂时不可达，已保留库中数据")
     elif manual_status == "empty" and memo_counts["manual"]["total"]:
         issues.append("随记登记笔记为空，已保护库中数据")
+    if legacy_verify_status == "drift":
+        issues.append("旧笔记与导入基线不同，库未重导入")
+    elif legacy_verify_status == "failed":
+        issues.append("旧笔记校验读取失败")
     if memo_warnings:
         issues.append(f"随记解析告警 {len(memo_warnings)} 条")
     if overlaps:
@@ -822,7 +832,10 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
     lines.append(f"- 步数最新：{last_dates.get('steps') or '—'}"
                  f"（滞后 {step_lag if step_lag is not None else '—'} 天，通知来源）")
     manual_text = {"ok": "正常", "missing": "缺失", "empty": "空",
+                   "unavailable": "不可达",
                    "absent": "未创建"}.get(manual_status, manual_status)
+    legacy_text = {"ok": "与基线一致", "drift": "与基线不同（未重导入）",
+                   "failed": "读取失败"}.get(legacy_verify_status, "未校验")
     lines += ["", "## 采集与登录", "",
               f"- Token：{token_text} ｜ {token_note}",
               f"- 随记库：{'已生成' if db.MEMOS_PATH.exists() else '尚未生成'} ｜ "
@@ -835,6 +848,7 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
               f"- 登记笔记：{manual_text} ｜ 最后随记 {memos.last_memo_date() or '—'} ｜ "
               f"覆盖 {memo_ranges['manual']['start'] or '—'} .. "
               f"{memo_ranges['manual']['end'] or '—'}",
+              f"- 旧笔记校验：{legacy_text} ｜ 最近 {legacy_verified_at}",
               ""]
     if memo_warnings:
         lines += ["随记解析告警：", ""]
@@ -889,20 +903,44 @@ class HealthPublisher:
         with open(self.state_path, "w", encoding="utf-8") as fh:
             self.cfg.write(fh)
 
+    def _save_meta(self, key: str, value: str) -> None:
+        if not self.cfg.has_section("meta"):
+            self.cfg.add_section("meta")
+        self.cfg.set("meta", key, value)
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.state_path, "w", encoding="utf-8") as fh:
+            self.cfg.write(fh)
+
     def _notebook_id(self) -> str:
         if self._notebook_id_value:
             return self._notebook_id_value
-        from func.jpfuncs import getnote, jpapi
+        from func.jpfuncs import jpapi
 
-        old_note = getnote(OLD_NOTE_ID)
-        parent_id = old_note.parent_id
+        cached = self.cfg.get("meta", "notebook_id", fallback=None)
+        if cached:
+            try:
+                notebook = jpapi.get_notebook(
+                    cached, fields="id,title,parent_id,deleted_time")
+            except Exception as exc:
+                if memos.note_error_kind(exc) != "missing":
+                    self._notebook_id_value = cached
+                    return cached
+            else:
+                if notebook.deleted_time is None:
+                    self._notebook_id_value = cached
+                    return cached
+
+        parent_id = memos.read_note_meta(OLD_NOTE_ID)["parent_id"]
         for notebook in jpapi.get_all_notebooks(fields="id,title,parent_id"):
             if notebook.title == HEALTH_NOTEBOOK_TITLE and (notebook.parent_id or "") == parent_id:
                 self._notebook_id_value = notebook.id
+                self._save_meta("notebook_id", notebook.id)
                 return notebook.id
-        self._notebook_id_value = jpapi.add_notebook(
+        note_id = jpapi.add_notebook(
             title=HEALTH_NOTEBOOK_TITLE, parent_id=parent_id)
-        return self._notebook_id_value
+        self._notebook_id_value = note_id
+        self._save_meta("notebook_id", note_id)
+        return note_id
 
     @staticmethod
     def _find_note(title: str, parent_id: str):
@@ -925,28 +963,39 @@ class HealthPublisher:
         if manual_id and note_id == manual_id:
             raise RuntimeError("拒绝对《健康随记登记》写入：登记笔记为用户所有，系统只读")
 
+    @staticmethod
+    def _reset_manual_cache() -> None:
+        for key in ("manual_updated_time", "manual_body_sha256",
+                    "manual_parsed_empty", "manual_parser_version"):
+            memos.set_meta(key, "")
+
     def ensure_manual_note(self, adopt: bool = False,
                            dry_run: bool = False) -> tuple[str | None, str]:
-        from func.jpfuncs import createnote, getnote
+        from func.jpfuncs import createnote
 
         stored = memos.get_meta("manual_note_id")
-        if stored and stored != OLD_NOTE_ID:
-            note = None
-            try:
-                note = getnote(stored)
-            except Exception:
-                note = None
-            if note is not None and not getattr(note, "deleted_time", None):
-                memos.set_meta("manual_status", "ok")
-                return stored, "ok"
-            if not adopt:
-                memos.set_meta("manual_status", "missing")
-                return None, "missing"
+        if stored == OLD_NOTE_ID:
             memos.set_meta("manual_note_id", "")
+            stored = None
+        if stored:
+            if not adopt:
+                return stored, "ok"
+            try:
+                note = memos.read_note_meta(stored)
+            except Exception as exc:
+                if memos.note_error_kind(exc) != "missing":
+                    return stored, "unavailable"
+            else:
+                if not note.get("deleted"):
+                    memos.set_meta("manual_status", "ok")
+                    return stored, "ok"
+            memos.set_meta("manual_note_id", "")
+            self._reset_manual_cache()
 
         parent_id = self._notebook_id()
         found = self._find_note(memos.MANUAL_TITLE, parent_id)
         if found is not None and found.id != OLD_NOTE_ID:
+            self._reset_manual_cache()
             memos.set_meta("manual_note_id", found.id)
             memos.set_meta("manual_status", "ok")
             return found.id, "adopted"
@@ -954,6 +1003,7 @@ class HealthPublisher:
             return None, "dry-run"
         note_id = createnote(memos.MANUAL_TITLE, memos.MANUAL_TEMPLATE,
                              parent_id=parent_id)
+        self._reset_manual_cache()
         memos.set_meta("manual_note_id", note_id)
         memos.set_meta("manual_status", "ok")
         return note_id, "created"

@@ -44,6 +44,10 @@ MANUAL_HEADING_RE = re.compile(
 )
 MANUAL_COUNT_RE = re.compile(r"^\d+$")
 
+# 解析逻辑变化时递增，缓存命中会因版本不同而自动重解析
+LEGACY_PARSER_VERSION = 1
+MANUAL_PARSER_VERSION = 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memos (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +77,30 @@ def read_note_body(note_id: str) -> str:
 
         note = getnote(note_id)
     return note.body or ""
+
+
+def read_note_meta(note_id: str) -> dict:
+    import pathmagic
+
+    with pathmagic.context():
+        from func.jpfuncs import jpapi
+
+        note = jpapi.get_note(
+            note_id,
+            fields="id,title,parent_id,updated_time,deleted_time",
+        )
+    return {
+        "id": note.id,
+        "title": note.title,
+        "parent_id": note.parent_id,
+        "updated_time": note.updated_time.isoformat() if note.updated_time else None,
+        "deleted": note.deleted_time is not None,
+    }
+
+
+def note_error_kind(exc: Exception) -> str:
+    response = getattr(exc, "response", None)
+    return "missing" if getattr(response, "status_code", None) == 404 else "unavailable"
 
 
 def read_source_note() -> tuple[str, str]:
@@ -203,10 +231,11 @@ def _source_rows(conn: sqlite3.Connection, note_id: str) -> int:
 
 
 def _rebuild_source(conn: sqlite3.Connection, note_id: str, entries: list[dict],
-                    body: str, hash_key: str, warnings: list[str]) -> str:
+                    body: str, hash_key: str, warnings: list[str],
+                    force: bool = False) -> str:
     digest = _body_digest(body)
     existing = _source_rows(conn, note_id)
-    if _meta_conn(conn, hash_key) == digest and existing:
+    if not force and _meta_conn(conn, hash_key) == digest and existing:
         return "skipped"
     if not entries and existing:
         warnings.append(
@@ -225,55 +254,183 @@ def _rebuild_source(conn: sqlite3.Connection, note_id: str, entries: list[dict],
     return "rebuilt"
 
 
-def refresh_memos(manual_note_id: str | None = None) -> dict:
+def _legacy_cache_valid(conn: sqlite3.Connection) -> bool:
+    if not _meta_conn(conn, "legacy_body_sha256"):
+        return False
+    if _meta_conn(conn, "legacy_parser_version") != str(LEGACY_PARSER_VERSION):
+        return False
+    stored_rows = _meta_conn(conn, "legacy_rows")
+    try:
+        expected = int(stored_rows)
+    except (TypeError, ValueError):
+        return False
+    current = _source_rows(conn, OLD_NOTE_ID)
+    if current != expected:
+        return False
+    return current > 0 or _meta_conn(conn, "legacy_parsed_empty") == "1"
+
+
+def refresh_memos(manual_note_id: str | None = None, *,
+                  verify_legacy: bool = False,
+                  reimport_legacy: bool = False) -> dict:
     warnings: list[str] = []
     skipped: list[str] = []
+    now = datetime.now().isoformat(timespec="seconds")
     status = "absent"
+    manual_action = "absent"
+    manual_entries: list[dict] | None = None
+    manual_body: str | None = None
+    manual_parse_warnings: list[str] = []
+    manual_key: str | None = None
+    legacy_action = "cached"
+    legacy_verify_status: str | None = None
+    legacy_verify_warning = ""
+    legacy_body: str | None = None
+    legacy_entries: list[dict] | None = None
     conn = _connect_write()
     try:
-        legacy_body = read_note_body(OLD_NOTE_ID)
-        legacy_entries = parse_memos(legacy_body, OLD_NOTE_ID)
-        with conn:
-            result = _rebuild_source(conn, OLD_NOTE_ID, legacy_entries, legacy_body,
-                                     "legacy_body_sha256", warnings)
-            if result == "skipped":
-                skipped.append("legacy")
-            if manual_note_id:
-                if manual_note_id == OLD_NOTE_ID:
-                    raise RuntimeError("登记笔记 ID 与旧笔记相同，拒绝继续")
-                try:
-                    manual_body = read_note_body(manual_note_id)
-                except Exception as exc:
-                    status = "missing"
-                    warnings.append(f"登记笔记读取失败：{exc}")
-                else:
-                    manual_entries, parse_warnings = parse_manual(
-                        manual_body, manual_note_id)
-                    warnings.extend(parse_warnings)
-                    result = _rebuild_source(
-                        conn, manual_note_id, manual_entries, manual_body,
-                        "manual_body_sha256", warnings)
-                    if result == "skipped":
-                        skipped.append("manual")
-                    if result in ("rebuilt", "skipped"):
-                        conn.execute(
-                            "DELETE FROM memos WHERE source_note_id NOT IN (?,?)",
-                            (OLD_NOTE_ID, manual_note_id),
-                        )
-                    status = "ok" if manual_entries else "empty"
-                    _set_meta_conn(conn, "manual_note_id", manual_note_id)
+        need_legacy = not _legacy_cache_valid(conn)
+        if need_legacy or verify_legacy or reimport_legacy:
+            try:
+                legacy_body = read_note_body(OLD_NOTE_ID)
+            except Exception as exc:
+                legacy_action = "unavailable"
+                legacy_verify_status = "failed"
+                legacy_verify_warning = (
+                    f"旧笔记读取失败（{note_error_kind(exc)}）：{exc}")
+                warnings.append(legacy_verify_warning)
             else:
-                status = "missing" if _meta_conn(conn, "manual_note_id") else "absent"
+                legacy_entries = parse_memos(legacy_body, OLD_NOTE_ID)
+                if need_legacy or reimport_legacy:
+                    legacy_action = "reimported" if reimport_legacy else "imported"
+                    legacy_verify_status = "ok"
+                else:
+                    stored = _meta_conn(conn, "legacy_body_sha256") or ""
+                    if stored == _body_digest(legacy_body):
+                        legacy_action = "verified"
+                        legacy_verify_status = "ok"
+                    else:
+                        legacy_action = "drift"
+                        legacy_verify_status = "drift"
+                        legacy_verify_warning = (
+                            f"旧笔记内容与导入基线不同（{stored[:8] or '无基线'} → "
+                            f"{_body_digest(legacy_body)[:8]}），"
+                            "库保持冻结未重导入")
+                        warnings.append(legacy_verify_warning)
+                        legacy_entries = None
+
+        if manual_note_id:
+            if manual_note_id == OLD_NOTE_ID:
+                raise RuntimeError("登记笔记 ID 与旧笔记相同，拒绝继续")
+            manual_meta = None
+            try:
+                manual_meta = read_note_meta(manual_note_id)
+            except Exception as exc:
+                status = manual_action = note_error_kind(exc)
+                warnings.append(f"登记笔记读取失败（{status}）：{exc}")
+            else:
+                if manual_meta.get("deleted"):
+                    status = manual_action = "missing"
+                    warnings.append("登记笔记在回收站中")
+                    manual_meta = None
+            if manual_meta is not None:
+                manual_key = (f"{manual_note_id}|"
+                              f"{manual_meta['updated_time'] or ''}")
+                cached = (
+                    _meta_conn(conn, "manual_updated_time") == manual_key
+                    and _meta_conn(conn, "manual_body_sha256")
+                    and _meta_conn(conn, "manual_parser_version")
+                    == str(MANUAL_PARSER_VERSION)
+                )
+                if cached:
+                    manual_action = "cached"
+                    status = ("empty" if _meta_conn(conn, "manual_parsed_empty") == "1"
+                              else "ok")
+                else:
+                    try:
+                        manual_body = read_note_body(manual_note_id)
+                    except Exception as exc:
+                        status = manual_action = note_error_kind(exc)
+                        warnings.append(
+                            f"登记笔记正文读取失败（{status}）：{exc}")
+                    else:
+                        manual_entries, manual_parse_warnings = parse_manual(
+                            manual_body, manual_note_id)
+                        warnings.extend(manual_parse_warnings)
+                        status = "ok" if manual_entries else "empty"
+                        manual_action = "parsed"
+        else:
+            status = manual_action = (
+                "missing" if _meta_conn(conn, "manual_note_id") else "absent")
+
+        with conn:
+            write_legacy = (legacy_entries is not None
+                            and (need_legacy or reimport_legacy))
+            if write_legacy:
+                result = _rebuild_source(
+                    conn, OLD_NOTE_ID, legacy_entries, legacy_body,
+                    "legacy_body_sha256", warnings,
+                    force=(need_legacy or reimport_legacy))
+                legacy_action = result
+                if result == "protected":
+                    _set_meta_conn(conn, "legacy_body_sha256",
+                                   _body_digest(legacy_body))
+                _set_meta_conn(conn, "legacy_rows",
+                               str(_source_rows(conn, OLD_NOTE_ID)))
+                _set_meta_conn(conn, "legacy_parsed_empty",
+                               "1" if not legacy_entries else "0")
+                _set_meta_conn(conn, "legacy_parser_version",
+                               str(LEGACY_PARSER_VERSION))
+                _set_meta_conn(conn, "legacy_verified_at", now)
+                _set_meta_conn(conn, "legacy_verify_status", "ok")
+                _set_meta_conn(conn, "legacy_verify_warning", "")
+            elif legacy_verify_status is not None:
+                _set_meta_conn(conn, "legacy_verify_status",
+                               legacy_verify_status)
+                _set_meta_conn(conn, "legacy_verify_warning",
+                               legacy_verify_warning)
+                if legacy_verify_status in ("ok", "drift"):
+                    _set_meta_conn(conn, "legacy_verified_at", now)
+
+            if manual_action == "cached":
+                conn.execute(
+                    "DELETE FROM memos WHERE source_note_id NOT IN (?,?)",
+                    (OLD_NOTE_ID, manual_note_id),
+                )
+            elif manual_entries is not None and manual_body is not None:
+                result = _rebuild_source(
+                    conn, manual_note_id, manual_entries, manual_body,
+                    "manual_body_sha256", warnings)
+                manual_action = result
+                if result == "protected":
+                    _set_meta_conn(conn, "manual_body_sha256",
+                                   _body_digest(manual_body))
+                conn.execute(
+                    "DELETE FROM memos WHERE source_note_id NOT IN (?,?)",
+                    (OLD_NOTE_ID, manual_note_id),
+                )
+                _set_meta_conn(conn, "manual_updated_time", manual_key)
+                _set_meta_conn(conn, "manual_parser_version",
+                               str(MANUAL_PARSER_VERSION))
+                _set_meta_conn(conn, "manual_parsed_empty",
+                               "1" if not manual_entries else "0")
+                _set_meta_conn(conn, "manual_note_id", manual_note_id)
+                _set_meta_conn(conn, "manual_warnings",
+                               json.dumps(manual_parse_warnings[:10],
+                                          ensure_ascii=False))
             _set_meta_conn(conn, "manual_status", status)
-            _set_meta_conn(conn, "manual_warnings",
-                           json.dumps(warnings[:10], ensure_ascii=False))
     finally:
         conn.close()
     os.chmod(Path(db.MEMOS_PATH), 0o600)
+    if legacy_action in ("cached", "verified", "skipped"):
+        skipped.append("legacy")
+    if manual_action in ("cached", "skipped"):
+        skipped.append("manual")
     stats = count_memos()
     stats["warnings"] = warnings
     stats["skipped"] = skipped
     stats["manual_status"] = status
+    stats["sources"] = {"legacy": legacy_action, "manual": manual_action}
     return stats
 
 
