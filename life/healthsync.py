@@ -107,7 +107,8 @@ def open_health_db() -> sqlite3.Connection:
 
 def load_health_rows(conn: sqlite3.Connection, start: date | None, end: date | None):
     sql = """
-        SELECT s.date, s.total_min, st.steps
+        SELECT s.date, s.total_min, s.night_min, s.nap_min,
+               s.night_records, s.nap_records, st.steps
         FROM daily_sleep s
         LEFT JOIN daily_steps st ON st.date = s.date
     """
@@ -257,6 +258,7 @@ def apply_updates(body: str, rows, start: date, end: date, mode: str,
             report_lines.append(f"SKIP {iso_day} sleep={sleep_min}")
             continue
         valid_steps = db_steps if db_steps and 0 < db_steps <= 100000 else None
+        has_night = (row["night_records"] or 0) > 0
         block = by_date.get(day)
         if block is not None and block.get("data") is None:
             stats["skipped"] += 1
@@ -269,11 +271,19 @@ def apply_updates(body: str, rows, start: date, end: date, mode: str,
                 stats["skipped"] += 1
                 report_lines.append(f"SKIP {iso_day} missing steps (cannot insert)")
                 continue
+            if not has_night:
+                stats["skipped"] += 1
+                report_lines.append(f"SKIP {iso_day} nap-only cloud data (no insert)")
+                continue
             additions.append((day, render_new_block(day, valid_steps, sleep_min), "new"))
             stats["added"] += 1
             continue
         if not refresh_existing:
             stats["unchanged"] += 1
+            continue
+        if not has_night:
+            stats["skipped"] += 1
+            report_lines.append(f"SKIP {iso_day} nap-only cloud data; keep existing sleep")
             continue
         new_steps = valid_steps if valid_steps is not None else block["steps"]
         new_sleep = sleep_min
