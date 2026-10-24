@@ -311,10 +311,10 @@ def build_daily(conn, out_dir: Path, target: date | None = None) -> tuple[str | 
         lines.append("- 情绪：无读数")
     if day_steps is not None:
         source = day_row["steps_source"] if day_row else "notification"
-        suffix = "（通知来源，可能不完整）" if source == "notification" else ""
+        suffix = "（通知来源，当日快照）" if source == "notification" else ""
         lines.append(f"- 步数：{_num(day_steps)}{suffix}")
     else:
-        lines.append("- 步数：无数据（历史步数接口不可用）")
+        lines.append("- 步数：无数据")
     lines.append("")
 
     lines += ["## 近 14 天", ""]
@@ -359,7 +359,7 @@ def build_daily(conn, out_dir: Path, target: date | None = None) -> tuple[str | 
     step_days = sum(1 for row in rows14 if row["steps"] is not None)
     lines += ["## 数据缺口", ""]
     lines.append(f"- 近 14 天睡眠缺失：{('、'.join(gaps)) if gaps else '无'}")
-    lines.append(f"- 近 14 天步数覆盖：{step_days}/14 天（仅通知来源，可能不完整）")
+    lines.append(f"- 近 14 天步数覆盖：{step_days}/14 天")
     lines += ["", "---", DISCLAIMER, ""]
     return sanitize("\n".join(lines)), chart_paths
 
@@ -492,7 +492,7 @@ def build_weekly(conn, out_dir: Path, iso_year: int | None = None,
     lines += ["## 数据缺口", "",
               f"- 睡眠缺失：{('、'.join(missing)) if missing else '无'}",
               f"- 情绪读数覆盖：{summary['emotion']['days']}/7 天",
-              f"- 步数覆盖：{summary['steps']['days']}/7 天（通知来源，可能不完整）",
+              f"- 步数覆盖：{summary['steps']['days']}/7 天",
               f"- 随记覆盖：{memo_coverage}",
               "", "---", DISCLAIMER, ""]
     return sanitize("\n".join(lines)), chart_paths
@@ -621,8 +621,7 @@ def build_monthly(conn, out_dir: Path, year: int | None = None,
                      else "未建立登记覆盖")
     lines += ["## 数据覆盖", "",
               f"- 睡眠 {summary['sleep']['days']} 天 ｜ " + " ｜ ".join(coverage),
-              f"- 情绪 {summary['emotion']['days']} 天 ｜ 步数 {summary['steps']['days']} 天"
-              f"（仅通知来源，可能不完整）",
+              f"- 情绪 {summary['emotion']['days']} 天 ｜ 步数 {summary['steps']['days']} 天",
               f"- 随记覆盖：{memo_coverage}",
               f"- 上月有数据：{'是' if prev_rows else '否'}；去年同月有数据：{'是' if same_rows else '否'}",
               "", "---", DISCLAIMER, ""]
@@ -642,6 +641,8 @@ def build_overview(conn, out_dir: Path) -> tuple[str | None, dict]:
     type_counts = summary["workouts"]["by_type"]
     memo_counts = memos.count_memos()
     memo_ranges = memos.source_ranges()
+    step_first, step_last, step_total = conn.execute(
+        "SELECT MIN(date), MAX(date), COUNT(*) FROM daily_steps").fetchone()
 
     title = OVERVIEW_TITLE
     lines = [
@@ -660,7 +661,8 @@ def build_overview(conn, out_dir: Path) -> tuple[str | None, dict]:
         f"{summary['workouts']['minutes'] / 60:.1f} 小时，"
         f"{summary['workouts']['distance_km']:.1f} km",
         f"- 情绪：{_emotion_line(summary['emotion'])}",
-        f"- 步数：{summary['steps']['days']} 天有通知步数（2026-10-21 起，可能不完整）",
+        (f"- 步数：{step_total} 天（{step_first} .. {step_last}，华为云日聚合）"
+         if step_total else "- 步数：无数据"),
         "",
     ]
 
@@ -722,8 +724,8 @@ def build_overview(conn, out_dir: Path) -> tuple[str | None, dict]:
               "- 睡眠数据来自华为健康云端，归日规则：夜间睡眠记醒来日，小睡记入睡日。",
               "- 静息心率、HRV、血氧、压力为日聚合统计；HRV 可用历史较短，"
               "情绪读数从 2026-03 起才有较完整覆盖。",
-              "- 步数仅自 2026-10-21 起从 HCX 通知库取得，历史缺失，"
-              "不导入旧笔记里的手工步数。",
+              "- 步数来自华为云日聚合（自 2023-06-15 起），当日以通知快照兜底"
+              "（取较高值），不导入旧笔记里的手工步数。",
               "- 旧《健康运动笔记》中的睡眠、步数数字未被使用，仅生活随记只读提取。",
               "- 啤酒数记录在饮酒当天，睡眠/晨间指标按次日（D+1）对齐；"
               "非饮酒次夜只在《健康随记登记》覆盖区间内认定，区间外不推断。",
@@ -797,6 +799,10 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
         step_lag = (today - date.fromisoformat(last_dates["steps"])).days
         if step_lag > 1:
             issues.append(f"步数数据落后 {step_lag} 天")
+    step_source = conn.execute(
+        "SELECT source FROM daily_steps ORDER BY date DESC LIMIT 1").fetchone()
+    step_source_text = {"api": "华为云", "notification": "通知"}.get(
+        step_source[0] if step_source else None, "—")
     if not db.MEMOS_PATH.exists():
         issues.append("随记库尚未生成")
     if manual_status == "missing":
@@ -830,7 +836,7 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
     lines.append(f"- 运动最新：{last_dates.get('workouts') or '—'}")
     lines.append(f"- 情绪最新：{last_dates.get('emotion') or '—'}")
     lines.append(f"- 步数最新：{last_dates.get('steps') or '—'}"
-                 f"（滞后 {step_lag if step_lag is not None else '—'} 天，通知来源）")
+                 f"（滞后 {step_lag if step_lag is not None else '—'} 天，{step_source_text}）")
     manual_text = {"ok": "正常", "missing": "缺失", "empty": "空",
                    "unavailable": "不可达",
                    "absent": "未创建"}.get(manual_status, manual_status)
