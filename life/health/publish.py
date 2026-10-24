@@ -138,6 +138,83 @@ def _window_stats(conn, start: str, end: str) -> dict:
     }
 
 
+def _memo_lines(rows, show_date: bool = False) -> list[str]:
+    lines = []
+    for entry in rows:
+        text = re.sub(r"\s+", " ", entry["content"]).strip()
+        beer = entry["beer_count"] or 0
+        if beer and text:
+            line = f"{text}（啤酒 {beer} 瓶）"
+        elif beer:
+            line = f"啤酒 {beer} 瓶"
+        else:
+            line = text
+        if not line:
+            continue
+        if show_date:
+            line = f"{entry['date'][5:]}：{line}"
+        lines.append(f"- {line}")
+    return lines
+
+
+def _beer_stats_line(start: str, end: str) -> str:
+    stats = memos.range_stats(start, end)
+    return (f"- 饮酒登记：{stats['beer_days']} 天，共 {stats['beer_total']} 瓶 ｜ "
+            f"随记 {stats['memos']} 条")
+
+
+def _recovery_text(day_row, night, day_metrics: dict) -> str:
+    if day_row:
+        text = (f"睡眠 {analytics.fmt_min(day_row['total_min'])}"
+                f"（夜间 {analytics.fmt_min(day_row['night_min'])}）")
+    else:
+        text = "睡眠无记录"
+    if night is not None and night["sleep_score"] is not None:
+        text += f"、分数 {_num(night['sleep_score'])}"
+    rhr = _metric(day_metrics, "resting_hr")
+    if rhr is not None:
+        text += f"、静息心率 {_num(rhr)} bpm"
+    hrv = _metric(day_metrics, "hrv")
+    if hrv is not None:
+        text += f"、HRV {_num(hrv)} ms"
+    return text
+
+
+def _beer_recovery_line(prev_beer: int, covered: bool, day_row, night,
+                        day_metrics: dict) -> str:
+    if not covered:
+        return "- 前一晚饮酒：未登记（随记覆盖不足）"
+    status = f"{prev_beer} 瓶" if prev_beer else "未饮酒"
+    return f"- 前一晚饮酒：{status} → 今晨 {_recovery_text(day_row, night, day_metrics)}"
+
+
+def _beer_comparison_block(conn, start: str, end: str, *,
+                           title: str = "饮酒与次夜恢复（描述性）",
+                           min_drink: int = 3, min_sober: int = 7) -> list[str]:
+    result = memos.beer_comparison(conn, start, end, min_drink=min_drink,
+                                   min_sober=min_sober)
+    lines = [f"## {title}", ""]
+    if result["coverage_pct"]:
+        lines.append(f"> 覆盖：{result['covered_days']}/{result['range_days']} 天"
+                     f"（{result['coverage_pct']:.0f}%）；"
+                     "啤酒日按次日睡眠/晨间指标对齐。")
+        lines.append("")
+    if not result["ok"]:
+        lines += [result["reason"] or "覆盖不足，暂不做对比。", ""]
+        return lines
+    rows = []
+    for key, label in (("drink", "饮酒次夜"), ("sober", "非饮酒次夜")):
+        item = result[key]
+        rows.append([label, item["n"], analytics.fmt_min(item["sleep"]),
+                     analytics.fmt_num(item["score"], 0),
+                     analytics.fmt_num(item["rhr"], 0),
+                     analytics.fmt_num(item["hrv"], 0)])
+    lines += _table(["类别", "夜数", "睡眠均值", "分数", "静息心率", "HRV"], rows)
+    lines += ["", "> 仅描述性统计，样本量小，不推断因果；"
+                  "非饮酒次夜只在登记覆盖区间内认定。", ""]
+    return lines
+
+
 def _comparison_block(conn, start: str, end: str, prev_start: str, prev_end: str,
                       baseline_start: str | None = None) -> list[str]:
     current = _window_stats(conn, start, end)
@@ -265,15 +342,17 @@ def build_daily(conn, out_dir: Path, target: date | None = None) -> tuple[str | 
 
     lines += _comparison_block(conn, current_start, latest, previous_start, previous_end)
 
-    lines += ["## 同日旧随记", ""]
-    old = memos.memos_for_day(latest)
-    if old:
-        for entry in old:
-            text = re.sub(r"\s+", " ", entry["content"]).strip()
-            beer = f"（啤酒 {entry['beer_count']} 瓶）" if entry["beer_count"] else ""
-            lines.append(f"- {text}{beer}")
+    lines += ["## 随记与饮酒", ""]
+    previous_day = (latest_day - timedelta(days=1)).isoformat()
+    coverage_start, coverage_end = memos.coverage_range()
+    covered = bool(coverage_start and coverage_start <= previous_day <= coverage_end)
+    previous_beer = memos.beer_by_day(previous_day, previous_day).get(previous_day, 0)
+    lines.append(_beer_recovery_line(previous_beer, covered, day_row, night, day_metrics))
+    today_memos = memos.memos_for_day(latest)
+    if today_memos:
+        lines += ["", "当天随记：", ""] + _memo_lines(today_memos)
     else:
-        lines.append("无随记。")
+        lines.append("- 当天随记：未登记")
     lines.append("")
 
     gaps = analytics.missing_days(conn, start14, latest)
@@ -349,6 +428,7 @@ def build_weekly(conn, out_dir: Path, iso_year: int | None = None,
         f"{summary['workouts']['distance_km']:.1f} km，"
         f"{summary['workouts']['calories']:.0f} kcal",
         f"- 情绪：{_emotion_line(summary['emotion'])}",
+        _beer_stats_line(start, end),
         "",
     ]
 
@@ -367,6 +447,13 @@ def build_weekly(conn, out_dir: Path, iso_year: int | None = None,
     lines += _table(["日期", "睡眠", "分数", "静息心率", "HRV", "血氧", "压力",
                      "步数", "运动"], table_rows)
     lines.append("")
+
+    lines += ["## 本周随记", ""]
+    week_memos = memos.memos_by_range(start, end)
+    if week_memos:
+        lines += _memo_lines(week_memos, show_date=True) + [""]
+    else:
+        lines += ["本周无随记。", ""]
 
     chart_paths = {}
     chart_paths.update(_chart(out_dir, "week-sleep-structure", charts.sleep_structure,
@@ -397,10 +484,16 @@ def build_weekly(conn, out_dir: Path, iso_year: int | None = None,
         lines += ["本周无运动记录。", ""]
 
     missing = analytics.missing_days(conn, start, end)
+    cov_start, cov_end = memos.coverage_range()
+    covered_days = sum(1 for day_text in analytics.date_range(start, end)
+                       if cov_start and cov_start <= day_text <= cov_end)
+    memo_coverage = (f"{covered_days}/7 天（《{memos.MANUAL_TITLE}》）"
+                     if cov_start else "未建立登记覆盖")
     lines += ["## 数据缺口", "",
               f"- 睡眠缺失：{('、'.join(missing)) if missing else '无'}",
               f"- 情绪读数覆盖：{summary['emotion']['days']}/7 天",
               f"- 步数覆盖：{summary['steps']['days']}/7 天（通知来源，可能不完整）",
+              f"- 随记覆盖：{memo_coverage}",
               "", "---", DISCLAIMER, ""]
     return sanitize("\n".join(lines)), chart_paths
 
@@ -450,6 +543,7 @@ def build_monthly(conn, out_dir: Path, year: int | None = None,
         f"{summary['workouts']['distance_km']:.1f} km，"
         f"{summary['workouts']['calories']:.0f} kcal",
         f"- 情绪：{_emotion_line(summary['emotion'])}",
+        _beer_stats_line(start, end),
         "",
     ]
     for metric in analytics.METRICS:
@@ -481,6 +575,15 @@ def build_monthly(conn, out_dir: Path, year: int | None = None,
                     week_rows)
     lines.append("")
 
+    lines += ["## 本月随记", ""]
+    month_memos = memos.memos_by_range(start, end)
+    if month_memos:
+        lines += _memo_lines(month_memos, show_date=True) + [""]
+    else:
+        lines += ["本月无随记。", ""]
+
+    lines += _beer_comparison_block(conn, start, end)
+
     chart_paths = {}
     chart_paths.update(_chart(out_dir, "month-sleep", charts.sleep_trend, rows,
                               title=f"{year}年{month:02d}月睡眠"))
@@ -510,10 +613,17 @@ def build_monthly(conn, out_dir: Path, year: int | None = None,
     coverage = []
     for metric in analytics.METRICS:
         coverage.append(f"{analytics.METRIC_NAMES[metric]} {summary['metrics'][metric]['n']} 天")
+    cov_start, cov_end = memos.coverage_range()
+    covered_days = sum(1 for day_text in analytics.date_range(start, end)
+                       if cov_start and cov_start <= day_text <= cov_end)
+    memo_coverage = (f"{covered_days}/{len(analytics.date_range(start, end))} 天"
+                     f"（《{memos.MANUAL_TITLE}》）" if cov_start
+                     else "未建立登记覆盖")
     lines += ["## 数据覆盖", "",
               f"- 睡眠 {summary['sleep']['days']} 天 ｜ " + " ｜ ".join(coverage),
               f"- 情绪 {summary['emotion']['days']} 天 ｜ 步数 {summary['steps']['days']} 天"
               f"（仅通知来源，可能不完整）",
+              f"- 随记覆盖：{memo_coverage}",
               f"- 上月有数据：{'是' if prev_rows else '否'}；去年同月有数据：{'是' if same_rows else '否'}",
               "", "---", DISCLAIMER, ""]
     return sanitize("\n".join(lines)), chart_paths
@@ -530,6 +640,8 @@ def build_overview(conn, out_dir: Path) -> tuple[str | None, dict]:
     years = analytics.yearly_stats(conn)
     workouts = summary["workouts"]["rows"]
     type_counts = summary["workouts"]["by_type"]
+    memo_counts = memos.count_memos()
+    memo_ranges = memos.source_ranges()
 
     title = OVERVIEW_TITLE
     lines = [
@@ -554,6 +666,7 @@ def build_overview(conn, out_dir: Path) -> tuple[str | None, dict]:
 
     year_rows = []
     for row in years:
+        year_stats = memos.range_stats(f"{row['year']}-01-01", f"{row['year']}-12-31")
         year_rows.append([
             row["year"], row["days"], analytics.fmt_min(row["avg_total"]),
             analytics.fmt_min(row["avg_night"]),
@@ -561,10 +674,13 @@ def build_overview(conn, out_dir: Path) -> tuple[str | None, dict]:
             analytics.fmt_num(row["avg_rhr"], 0), analytics.fmt_num(row["avg_hrv"], 0),
             analytics.fmt_num(row["avg_spo2"], 0), analytics.fmt_num(row["avg_stress"], 0),
             row["workouts"], f"{row['workout_minutes'] / 60:.0f}",
+            f"{year_stats['beer_days']}/{year_stats['beer_total']}",
+            year_stats["memos"],
         ])
     lines += ["## 年度汇总", ""]
     lines += _table(["年份", "睡眠天数", "睡眠均值", "夜间均值", "分数", "静息心率",
-                     "HRV", "血氧", "压力", "运动次数", "运动小时"], year_rows)
+                     "HRV", "血氧", "压力", "运动次数", "运动小时",
+                     "啤酒(天/瓶)", "随记(条)"], year_rows)
     lines.append("")
 
     chart_paths = _chart(out_dir, "overview-trends", charts.overview_figure, years,
@@ -579,13 +695,39 @@ def build_overview(conn, out_dir: Path) -> tuple[str | None, dict]:
     else:
         lines += ["无运动记录。", ""]
 
+    legacy_memos = memo_counts["legacy"]
+    manual_memos = memo_counts["manual"]
+    lines += ["## 生活方式与饮酒", "",
+              f"- 全历史饮酒登记：{memo_counts['beer_days']} 天，共 "
+              f"{memo_counts['beer_total']} 瓶 ｜ 随记 {memo_counts['memos']} 条",
+              f"- 旧笔记：随记 {legacy_memos['memos']} 条，啤酒 "
+              f"{legacy_memos['beer_days']} 天 {legacy_memos['beer_total']} 瓶"
+              f"（{memo_ranges['legacy']['start'] or '—'} .. "
+              f"{memo_ranges['legacy']['end'] or '—'}）",
+              f"- 登记笔记：随记 {manual_memos['memos']} 条，啤酒 "
+              f"{manual_memos['beer_days']} 天 {manual_memos['beer_total']} 瓶"
+              f"（{memo_ranges['manual']['start'] or '—'} .. "
+              f"{memo_ranges['manual']['end'] or '—'}）",
+              ""]
+
+    cov_start, cov_end = memos.coverage_range()
+    if cov_start:
+        lines += _beer_comparison_block(
+            conn, cov_start, cov_end, title="饮酒与次夜恢复（登记期描述性）")
+    else:
+        lines += ["## 饮酒与次夜恢复（登记期描述性）", "",
+                  "尚无《健康随记登记》覆盖，暂不做对比。", ""]
+
     lines += ["## 数据说明", "",
               "- 睡眠数据来自华为健康云端，归日规则：夜间睡眠记醒来日，小睡记入睡日。",
               "- 静息心率、HRV、血氧、压力为日聚合统计；HRV 可用历史较短，"
               "情绪读数从 2026-03 起才有较完整覆盖。",
               "- 步数仅自 2026-10-21 起从 HCX 通知库取得，历史缺失，"
               "不导入旧笔记里的手工步数。",
-              "- 旧《健康运动笔记》中的睡眠、步数数字未被使用，仅生活随记另行汇编。",
+              "- 旧《健康运动笔记》中的睡眠、步数数字未被使用，仅生活随记只读提取。",
+              "- 啤酒数记录在饮酒当天，睡眠/晨间指标按次日（D+1）对齐；"
+              "非饮酒次夜只在《健康随记登记》覆盖区间内认定，区间外不推断。",
+              "- 随记正文中的瓶数文字不自动计数，只读取标题下第一行的纯数字。",
               "", "---", DISCLAIMER, ""]
     return sanitize("\n".join(lines)), chart_paths
 
@@ -626,6 +768,11 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
     metric_dates = db.metric_last_dates(conn)
     runs = db.sync_runs(conn, 12)
     token_text, token_note = _token_status()
+    memo_counts = memos.count_memos()
+    memo_ranges = memos.source_ranges()
+    manual_status = memos.get_meta("manual_status", "absent") or "absent"
+    memo_warnings = memos.get_meta_list("manual_warnings")
+    overlaps = memos.overlap_beer_days()
     lag = None
     if last_dates.get("sleep"):
         lag = (today - date.fromisoformat(last_dates["sleep"])).days
@@ -648,6 +795,14 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
             issues.append(f"步数数据落后 {step_lag} 天")
     if not db.MEMOS_PATH.exists():
         issues.append("随记库尚未生成")
+    if manual_status == "missing":
+        issues.append("随记登记笔记缺失，库中数据已冻结")
+    elif manual_status == "empty":
+        issues.append("随记登记笔记为空，已保护库中数据")
+    if memo_warnings:
+        issues.append(f"随记解析告警 {len(memo_warnings)} 条")
+    if overlaps:
+        issues.append(f"随记来源重叠 {len(overlaps)} 天（统计以登记笔记为准）")
 
     lines = [
         f"# {STATUS_TITLE}",
@@ -666,11 +821,28 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
     lines.append(f"- 情绪最新：{last_dates.get('emotion') or '—'}")
     lines.append(f"- 步数最新：{last_dates.get('steps') or '—'}"
                  f"（滞后 {step_lag if step_lag is not None else '—'} 天，通知来源）")
+    manual_text = {"ok": "正常", "missing": "缺失", "empty": "空",
+                   "absent": "未创建"}.get(manual_status, manual_status)
     lines += ["", "## 采集与登录", "",
               f"- Token：{token_text} ｜ {token_note}",
-              f"- 随记库：{'已生成' if db.MEMOS_PATH.exists() else '尚未生成'}"
-              f" ｜ {memos.count_memos()['memos']} 条随记",
+              f"- 随记库：{'已生成' if db.MEMOS_PATH.exists() else '尚未生成'} ｜ "
+              f"旧笔记 {memo_counts['legacy']['memos']} 条随记 / "
+              f"{memo_counts['legacy']['beer_days']} 天啤酒 "
+              f"{memo_counts['legacy']['beer_total']} 瓶 ｜ "
+              f"登记笔记 {memo_counts['manual']['memos']} 条随记 / "
+              f"{memo_counts['manual']['beer_days']} 天啤酒 "
+              f"{memo_counts['manual']['beer_total']} 瓶",
+              f"- 登记笔记：{manual_text} ｜ 最后随记 {memos.last_memo_date() or '—'} ｜ "
+              f"覆盖 {memo_ranges['manual']['start'] or '—'} .. "
+              f"{memo_ranges['manual']['end'] or '—'}",
               ""]
+    if memo_warnings:
+        lines += ["随记解析告警：", ""]
+        lines += [f"- {warning}" for warning in memo_warnings[:5]]
+        lines.append("")
+    if overlaps:
+        lines += [f"来源重叠（两边都记了啤酒，统计以登记笔记为准）："
+                  f"{'、'.join(overlaps[:10])}", ""]
     if runs:
         lines += ["| 开始时间 | 模式 | 状态 | 睡眠记录 | 指标行 | 运动 | 情绪天 | 错误 |",
                   "|------|------|------|------|------|------|------|------|"]
@@ -746,10 +918,45 @@ class HealthPublisher:
                     return note
         return None
 
-    @staticmethod
-    def _guard(note_id: str) -> None:
+    def _guard(self, note_id: str) -> None:
         if note_id == OLD_NOTE_ID:
             raise RuntimeError("拒绝对旧健康笔记写入：旧笔记为只读")
+        manual_id = memos.get_meta("manual_note_id")
+        if manual_id and note_id == manual_id:
+            raise RuntimeError("拒绝对《健康随记登记》写入：登记笔记为用户所有，系统只读")
+
+    def ensure_manual_note(self, adopt: bool = False,
+                           dry_run: bool = False) -> tuple[str | None, str]:
+        from func.jpfuncs import createnote, getnote
+
+        stored = memos.get_meta("manual_note_id")
+        if stored and stored != OLD_NOTE_ID:
+            note = None
+            try:
+                note = getnote(stored)
+            except Exception:
+                note = None
+            if note is not None and not getattr(note, "deleted_time", None):
+                memos.set_meta("manual_status", "ok")
+                return stored, "ok"
+            if not adopt:
+                memos.set_meta("manual_status", "missing")
+                return None, "missing"
+            memos.set_meta("manual_note_id", "")
+
+        parent_id = self._notebook_id()
+        found = self._find_note(memos.MANUAL_TITLE, parent_id)
+        if found is not None and found.id != OLD_NOTE_ID:
+            memos.set_meta("manual_note_id", found.id)
+            memos.set_meta("manual_status", "ok")
+            return found.id, "adopted"
+        if dry_run:
+            return None, "dry-run"
+        note_id = createnote(memos.MANUAL_TITLE, memos.MANUAL_TEMPLATE,
+                             parent_id=parent_id)
+        memos.set_meta("manual_note_id", note_id)
+        memos.set_meta("manual_status", "ok")
+        return note_id, "created"
 
     def publish(self, title: str, body: str, chart_paths: dict | None = None,
                 dry_run: bool = False, force: bool = False,
