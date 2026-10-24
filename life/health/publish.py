@@ -797,7 +797,7 @@ def build_status(conn, alert: bool = False) -> tuple[str, dict]:
         issues.append("随记库尚未生成")
     if manual_status == "missing":
         issues.append("随记登记笔记缺失，库中数据已冻结")
-    elif manual_status == "empty":
+    elif manual_status == "empty" and memo_counts["manual"]["total"]:
         issues.append("随记登记笔记为空，已保护库中数据")
     if memo_warnings:
         issues.append(f"随记解析告警 {len(memo_warnings)} 条")
