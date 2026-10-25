@@ -92,6 +92,10 @@ GEO_CACHE_KEY = "ip_geos"
 GEO_CACHE_LIMIT = 200
 PLACES_URL = "https://loc.xilong9.com/places"
 OSM_LINK_TEMPLATE = "https://www.openstreetmap.org/?mlat={lat}&mlon={lng}&zoom=15"
+GPSLOGGER_PACKAGE = "com.mendhak.gpslogger"
+GPSLOGGER_MAX_AGE_SEC = 1800  # GPSLogger 通知定位的最大可接受陈旧度
+LOCATION_RETRY_WARN_AT = 10  # 连续定位失败告警阈值
+LOCATION_RETRY_BACKOFF_MAX_SEC = 3600
 # VPN接口/IP 等字段在日志契约中以这些字符串表示无值
 BLANK_VALUES = {"", "n/a", "na", "none", "unknown"}
 # WiFi 名「未知」语义集合：None/NaN 判空后，剩余归一为未命名的文本（Unknown_WiFi 已在解析层转 None）
@@ -194,7 +198,14 @@ CARRIER_MAP = {
     "46011": "中国电信",
     "46015": "中国广电",
 }
-PROVIDER_TEXT_MAP = {"network": "网络", "gps": "GPS", "fused": "融合", "passive": "被动", "cached": "缓存"}
+PROVIDER_TEXT_MAP = {
+    "network": "网络",
+    "gps": "GPS",
+    "fused": "融合",
+    "passive": "被动",
+    "cached": "缓存",
+    "gpslogger": "GPSLogger 通知",
+}
 CJK_FONT_CANDIDATES = (
     "/system/fonts/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -610,13 +621,116 @@ def collect_live_network_details() -> Dict[str, str]:
     return {"signal_label": "基站信号", "signal_text": " · ".join(text_parts)}
 
 
-def collect_live_location() -> Optional[Dict[str, Any]]:
-    """获取即时网络定位（新鲜优先、缓存回退）；termux-api 不可用返回 None."""
-    fix = _run_termux_json(["termux-location", "-p", "network", "-r", "once"], 60)
-    provider = str((fix if isinstance(fix, dict) else {}).get("provider") or "network")
-    if not isinstance(fix, dict):
-        fix = _run_termux_json(["termux-location", "-p", "network", "-r", "last"], 15)
-        provider = "cached"
+_GPSLOGGER_DMS_RE = re.compile(
+    r"(\d{1,3})\s*°\s*(\d{1,2}(?:\.\d+)?)\s*['′]\s*(?:(\d{1,2}(?:\.\d+)?)\s*[\"″]\s*)?([NSEW])",
+    re.IGNORECASE,
+)
+_GPSLOGGER_DECIMAL_HEMI_RE = re.compile(
+    r"(-?\d{1,3}(?:\.\d+)?)\s*°?\s*([NS])\s*[,，]\s*(-?\d{1,3}(?:\.\d+)?)\s*°?\s*([EW])",
+    re.IGNORECASE,
+)
+_GPSLOGGER_DECIMAL_PAIR_RE = re.compile(r"(-?\d{1,3}(?:\.\d+)?)\s*[,，]\s*(-?\d{1,3}(?:\.\d+)?)")
+
+
+def _validated_latlng(lat: float, lng: float) -> Optional[Tuple[float, float]]:
+    """校验经纬度范围；拒绝 NaN/Inf 与 (0,0)."""
+    if not (math.isfinite(lat) and math.isfinite(lng)):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+    if abs(lat) < 1e-9 and abs(lng) < 1e-9:
+        return None
+    return float(lat), float(lng)
+
+
+def _dms_to_decimal(degrees: float, minutes: float, seconds: float, hemi: str) -> float:
+    """度分秒转十进制度；南纬/西经取负."""
+    value = float(degrees) + float(minutes) / 60.0 + float(seconds or 0) / 3600.0
+    return -value if hemi.upper() in ("S", "W") else value
+
+
+def _parse_gpslogger_coords(title: str) -> Optional[Tuple[float, float]]:
+    """从 GPSLogger 通知标题解析坐标（DMS 优先，兼容十进制）."""
+    text = str(title or "")
+    matches = _GPSLOGGER_DMS_RE.findall(text)
+    if len(matches) >= 2:
+        first, second = matches[0], matches[1]
+        try:
+            if (
+                float(first[1]) >= 60
+                or float(second[1]) >= 60
+                or float(first[2] or 0) >= 60
+                or float(second[2] or 0) >= 60
+            ):
+                raise ValueError
+            lat = _dms_to_decimal(float(first[0]), float(first[1]), float(first[2] or 0), first[3])
+            lng = _dms_to_decimal(float(second[0]), float(second[1]), float(second[2] or 0), second[3])
+        except ValueError:
+            return None  # 畸形的 DMS 文本不退回十进制，避免跨字段误拆
+        if first[3].upper() in ("N", "S") and second[3].upper() in ("E", "W"):
+            return _validated_latlng(lat, lng)
+        return None
+    match = _GPSLOGGER_DECIMAL_HEMI_RE.search(text)
+    if match:
+        lat, lng = float(match.group(1)), float(match.group(3))
+        if match.group(2).upper() == "S":
+            lat = -abs(lat)
+        if match.group(4).upper() == "W":
+            lng = -abs(lng)
+        return _validated_latlng(lat, lng)
+    match = _GPSLOGGER_DECIMAL_PAIR_RE.search(text)
+    if match:
+        return _validated_latlng(float(match.group(1)), float(match.group(2)))
+    return None
+
+
+def _parse_gpslogger_time(text: object) -> Optional[datetime]:
+    """解析 GPSLogger 通知的 when 字段（本地时间）."""
+    try:
+        return datetime.strptime(str(text or "").strip(), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def collect_gpslogger_location(now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """读取 GPSLogger 常驻通知中的定位（termux-location 失败时的第一兜底）."""
+    items = _run_termux_json(["termux-notification-list"], 20)
+    if not isinstance(items, list):
+        return None
+    current = now or datetime.now()
+    best: Optional[Tuple[datetime, Tuple[float, float], Dict[str, Any]]] = None
+    for item in items:
+        if not isinstance(item, dict) or item.get("packageName") != GPSLOGGER_PACKAGE:
+            continue
+        coords = _parse_gpslogger_coords(str(item.get("title") or ""))
+        fix_time = _parse_gpslogger_time(item.get("when"))
+        if coords is None or fix_time is None:
+            continue
+        age = (current - fix_time).total_seconds()
+        if age < -300 or age > GPSLOGGER_MAX_AGE_SEC:
+            continue
+        if best is None or fix_time > best[0]:
+            best = (fix_time, coords, item)
+    if best is None:
+        return None
+    fix_time, (lat, lng), item = best
+    location: Dict[str, Any] = {
+        "latitude": lat,
+        "longitude": lng,
+        "provider": "gpslogger",
+        "fix_time": fix_time,
+    }
+    match = re.search(r"Accuracy:\s*(\d+(?:\.\d+)?)\s*meters", str(item.get("content") or ""), re.IGNORECASE)
+    if match:
+        accuracy = float(match.group(1))
+        if accuracy > 0:
+            location["accuracy"] = accuracy
+    log.info(f"采用 GPSLogger 通知定位：{lat:.5f}, {lng:.5f}（{_relative_time(fix_time)}）")
+    return location
+
+
+def _location_from_fix(fix: object, provider: str) -> Optional[Dict[str, Any]]:
+    """termux-location JSON 转定位字典；坐标缺失返回 None."""
     if not isinstance(fix, dict):
         return None
     lat, lng = fix.get("latitude"), fix.get("longitude")
@@ -637,6 +751,25 @@ def collect_live_location() -> Optional[Dict[str, Any]]:
         if fix_dt is not None and datetime(2020, 1, 1) <= fix_dt <= datetime.now() + timedelta(days=1):
             location["fix_time"] = fix_dt
     return location
+
+
+def collect_live_location(retry: bool = False, now: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+    """获取即时定位：网络定位优先，GPSLogger 通知兜底，last 缓存收尾；全失败返回 None.
+
+    retry=True 用于「上次报告缺定位」的下一轮重试：跳过 60s 的 once 尝试，控制每 tick 成本。
+    """
+    if not retry:
+        fix = _run_termux_json(["termux-location", "-p", "network", "-r", "once"], 60)
+        if isinstance(fix, dict):
+            provider = str(fix.get("provider") or "network")
+            location = _location_from_fix(fix, provider)
+            if location is not None:
+                return location
+    fallback = collect_gpslogger_location(now=now)
+    if fallback is not None:
+        return fallback
+    fix = _run_termux_json(["termux-location", "-p", "network", "-r", "last"], 15)
+    return _location_from_fix(fix, "cached")
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -1091,6 +1224,59 @@ def sync_note_resources(note_id: str, note_title: str, report_content: str, char
 
 
 # %% [markdown]
+# ### 定位兜底状态（缺定位重试与退避）
+
+# %%
+def _location_capable() -> bool:
+    """本机是否具备定位采集能力；Linux 主机不做缺定位重试."""
+    return shutil.which("termux-location") is not None or shutil.which("termux-notification-list") is not None
+
+
+def _ini_truthy(value: object) -> bool:
+    """兼容 getcfpoptionvalue 的 int/str 返回值."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_int_option(name: str, default: int = 0) -> int:
+    value = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, name)
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_time_option(name: str) -> Optional[datetime]:
+    value = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, name)
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def _location_retry_delay(failures: int) -> int:
+    """连续失败达阈值后指数退避，避免定位长期不可用时每 tick 空跑."""
+    if failures < LOCATION_RETRY_WARN_AT:
+        return 0
+    return min(LOCATION_RETRY_BACKOFF_MAX_SEC, 360 * 2 ** min(failures - LOCATION_RETRY_WARN_AT, 4))
+
+
+def _warn_location_failures(failures: int) -> None:
+    if failures == LOCATION_RETRY_WARN_AT:
+        log.warning(
+            f"连续 {failures} 次未取到定位；请检查省电模式、Termux/Termux:API 后台活动与位置权限（P50Pro 同类问题）。"
+        )
+
+
+def _write_location_state(missing: bool, failures: int) -> None:
+    setcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "location_missing", "1" if missing else "0")
+    setcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "location_retry_failures", str(failures))
+
+
+# %% [markdown]
 # ### update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]
 
 # %%
@@ -1128,15 +1314,44 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
         # 3. 检测IP变化
         has_changes, changes = detect_ip_changes(current_record)
 
-        # 4. 如果没有变化，检查是否需要强制更新（基于时间）
+        # 4. 无变化时：24h 内通常跳过；上次发布缺定位则在后续 tick 重试补定位
+        location = None
+        location_retry_used = False
         if not has_changes:
             last_update_time_str = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_full_update")
+            within_24h = False
             if last_update_time_str:
                 last_update_time = datetime.strptime(last_update_time_str, "%Y-%m-%d %H:%M:%S")
-                if datetime.now() - last_update_time < timedelta(hours=24):
+                within_24h = datetime.now() - last_update_time < timedelta(hours=24)
+            if within_24h:
+                missing_raw = getcfpoptionvalue(CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "location_missing")
+                retry_due = _location_capable() and (missing_raw is None or _ini_truthy(missing_raw))
+                if not retry_due:
                     log.info("IP记录无变化，且上次完整更新在24小时内，跳过报告更新。")
                     return True, "IP无变化，跳过更新"
-            log.info("IP记录无变化，但超过24小时未更新报告，执行强制更新。")
+                failures = _get_int_option("location_retry_failures")
+                last_retry = _get_time_option("location_retry_last")
+                delay = _location_retry_delay(failures)
+                if last_retry is not None and delay > 0 and (datetime.now() - last_retry).total_seconds() < delay:
+                    log.info(f"缺定位重试处于退避期（连续失败 {failures} 次），本轮跳过。")
+                    return True, "定位重试退避中"
+                location = collect_live_location(retry=True)
+                setcfpoptionvalue(
+                    CONFIG_NAME,
+                    IP_UPDATE_CONFIG_SECTION,
+                    "location_retry_last",
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                if location is None:
+                    failures += 1
+                    _write_location_state(True, failures)
+                    _warn_location_failures(failures)
+                    log.info("上次报告缺少定位，本轮重试仍未取到，下轮继续。")
+                    return True, "报告缺定位，等待下轮重试"
+                location_retry_used = True
+                log.info("上次报告缺少定位，本轮已取到，执行补充更新。")
+            else:
+                log.info("IP记录无变化，但超过24小时未更新报告，执行强制更新。")
 
         # 5. 分析数据
         analysis = analyze_ip_data(df, days=cfg.report_days)
@@ -1153,7 +1368,8 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
 
         # 5.6 实时网络与定位（termux-api；失败优雅省略）
         live = collect_live_network_details()
-        location = collect_live_location()
+        if location is None:
+            location = collect_live_location()
         if location:
             places = fetch_registered_places()
             place = match_registered_place(location["latitude"], location["longitude"], places)
@@ -1169,15 +1385,25 @@ def update_ip_report_note(cfg: Optional[IpConfig] = None) -> Tuple[bool, str]:
         note_title = f"IP分析报告_{host_user}（更新于 {datetime.now().strftime('%m-%d %H:%M')}）"
         sync_note_resources(note_id, note_title, report_content, chart_image)
 
-        # 8. 记录完整更新时间
+        # 8. 记录完整更新与定位兜底状态（发布成功后才落盘，避免发布失败误清重试标记）
         setcfpoptionvalue(
             CONFIG_NAME, IP_UPDATE_CONFIG_SECTION, "last_full_update", datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         )
+        if location is not None:
+            _write_location_state(False, 0)
+        elif _location_capable():
+            failures = _get_int_option("location_retry_failures") + 1
+            _write_location_state(True, failures)
+            _warn_location_failures(failures)
+        else:
+            _write_location_state(False, 0)
 
         # 9. 记录更新摘要
         if has_changes:
             change_summary = generate_change_summary(changes)
             log.info(f"IP分析报告已更新至笔记: {note_title}, 变化: {change_summary}")
+        elif location_retry_used:
+            log.info(f"IP分析报告已更新至笔记: {note_title} (补充定位，无IP变化)")
         else:
             log.info(f"IP分析报告已更新至笔记: {note_title} (强制更新，无IP变化)")
 
