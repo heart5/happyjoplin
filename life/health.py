@@ -21,11 +21,17 @@
 # ### 核心库
 
 # %%
+import argparse
 import base64
 import calendar
+import hashlib
 import io
+import os
 import re
-from datetime import datetime, timedelta
+import sqlite3
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import arrow
 import matplotlib.dates as mdates
@@ -49,10 +55,18 @@ with pathmagic.context():
         searchnotes,
         updatenote_body,
         updatenote_imgdata,
+        updatenote_title,
     )
     from func.logme import log
     from func.sysfunc import execcmd, not_IPython
     from func.wrapfuncs import timethis
+    from life.health import db as healthdb
+
+# 健康动态日日升（改为 HCX 健康库数据源）
+TARGET_NOTE_ID = "ce6e2c7bb0954cdea32d1c1d04ee338e"
+TARGET_NOTEBOOK_ID = "c2c59fd3dcae43b6b76a9a0a52598467"  # 康健
+TARGET_TITLE = "健康动态日日升"
+DASHBOARD_DIGEST = Path.home() / "tmp" / "health_dashboard.md5"
 
 
 # %% [markdown]
@@ -173,56 +187,148 @@ def gethealthdatafromnote(noteid):
         log.warning("未从笔记中提取到任何有效数据")
         return pd.DataFrame()
 
-    # 创建DataFrame并按日期排序
+    return _items_to_hdf(items)
+
+
+def _add_continuity(df):
+    """标注连续数据段，并写入 df.attrs['recent_continuous']。"""
+    if not df.empty and "步数" in df.columns:
+        df["连续标记"] = df["步数"].notna().astype(int)
+        df["连续段"] = (df["连续标记"].diff() != 0).cumsum()
+
+        recent_continuous = None
+        for segment in sorted(df["连续段"].unique(), reverse=True):
+            segment_data = df[df["连续段"] == segment]
+            if segment_data["连续标记"].all():
+                recent_continuous = segment_data
+                break
+
+        df.attrs["recent_continuous"] = recent_continuous
+    return df
+
+
+def _items_to_hdf(items):
+    """把逐日记录整理成旧报告使用的 DataFrame。"""
+    if not items:
+        log.warning("提取的数据为空")
+        return pd.DataFrame()
+
     df = pd.DataFrame(items)
 
-    # 检查是否有重复日期
     duplicate_dates = df[df.duplicated(subset=["日期"], keep=False)]
     if not duplicate_dates.empty:
         log.warning(f"发现重复日期记录: {duplicate_dates['日期'].unique().tolist()}")
         log.warning("将保留每个日期的最新记录")
-
-        # 按日期分组，保留每个日期的最后一条记录（假设后面的记录是更新的）
         df = df.sort_values("日期").groupby("日期").last().reset_index()
 
-    # 设置日期为索引
     df = df.set_index("日期").sort_index()
 
-    # 处理缺失日期：填充完整日期范围
     if len(df) > 0:
         full_date_range = pd.date_range(start=df.index.min(), end=df.index.max(), freq="D")
-
-        # 使用reindex填充缺失日期，但先确保索引是唯一的
-        df = df[~df.index.duplicated(keep="last")]  # 再次确保没有重复
-
-        # 重新索引，填充缺失日期
-        df = df.reindex(full_date_range, fill_value=None)  # 缺失日期填充为NaN
-
+        df = df[~df.index.duplicated(keep="last")]
+        df = df.reindex(full_date_range, fill_value=None)
         log.info(
-            f"数据日期范围: {df.index.min()} 至 {df.index.max()}, 共{len(df)}天, 其中有效记录{df['步数'].count()}天"
+            f"数据日期范围: {df.index.min()} 至 {df.index.max()}, 共{len(df)}天, "
+            f"其中有效步数{df['步数'].count()}天"
         )
-    else:
-        log.warning("提取的数据为空")
 
-    # 在返回前添加连续日期识别
-    if not df.empty and "步数" in df.columns:
-        # 找出最近的连续日期区间
-        df["连续标记"] = df["步数"].notna().astype(int)
+    return _add_continuity(df)
 
-        # 识别连续段
-        df["连续段"] = (df["连续标记"].diff() != 0).cumsum()
 
-        # 找出最近的连续段
-        recent_continuous = None
-        for segment in sorted(df["连续段"].unique(), reverse=True):
-            segment_data = df[df["连续段"] == segment]
-            if segment_data["连续标记"].all():  # 全连续
-                recent_continuous = segment_data
-                break
+OLD_HEALTH_NOTE_ID = "87b31ffd2e764bd9b376100022e6fb25"
 
-        # 将连续段信息存储为DataFrame属性
-        df.attrs["recent_continuous"] = recent_continuous
 
+def gethealthdatafromdb(start=None, end=None, allow_empty_memos=False):
+    """从 HCX 健康库生成旧报告使用的 DataFrame。"""
+    health_path = Path(os.environ.get("HEALTH_DB", healthdb.DB_PATH))
+    memos_path = Path(os.environ.get("HEALTH_MEMOS_DB", healthdb.MEMOS_PATH))
+    if not health_path.exists():
+        raise FileNotFoundError(f"健康数据库不存在：{health_path}")
+    if not memos_path.exists():
+        raise FileNotFoundError(f"随记数据库不存在：{memos_path}")
+
+    conn = healthdb.connect(health_path)
+    try:
+        if end is None:
+            end = healthdb.latest_complete_day(conn, date.today())
+        if not end:
+            return pd.DataFrame()
+        if start is None:
+            bound = conn.execute(
+                "SELECT MIN(date) FROM ("
+                "SELECT date FROM daily_sleep UNION SELECT date FROM daily_steps)"
+            ).fetchone()
+            start = bound[0] if bound else None
+        if not start:
+            return pd.DataFrame()
+
+        rows = conn.execute(
+            "SELECT d.date, st.steps, s.total_min FROM ("
+            "  SELECT date FROM daily_sleep WHERE date BETWEEN ? AND ?"
+            "  UNION SELECT date FROM daily_steps WHERE date BETWEEN ? AND ?"
+            ") d LEFT JOIN daily_sleep s ON s.date = d.date"
+            " LEFT JOIN daily_steps st ON st.date = d.date ORDER BY d.date",
+            (start, end, start, end),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return pd.DataFrame()
+
+    memos = sqlite3.connect(f"file:{memos_path}?mode=ro", uri=True, timeout=30)
+    try:
+        memo_rows = memos.execute(
+            "SELECT date,"
+            " SUM(CASE WHEN source_note_id = ? AND beer_count > 0"
+            "          THEN beer_count ELSE 0 END) AS legacy_beer,"
+            " SUM(CASE WHEN source_note_id <> ? AND beer_count > 0"
+            "          THEN beer_count ELSE 0 END) AS manual_beer,"
+            " GROUP_CONCAT(CASE WHEN TRIM(content) <> '' THEN content END,"
+            "              char(10)) AS contents"
+            " FROM memos WHERE date BETWEEN ? AND ? GROUP BY date",
+            (OLD_HEALTH_NOTE_ID, OLD_HEALTH_NOTE_ID, start, end),
+        ).fetchall()
+    finally:
+        memos.close()
+
+    if not memo_rows and not allow_empty_memos:
+        raise ValueError("随记数据库为空；如确认无随记请加 --allow-empty-memos")
+
+    beer_by = {}
+    memo_by = {}
+    for day, legacy_beer, manual_beer, contents in memo_rows:
+        beer_by[day] = (manual_beer or 0) or (legacy_beer or 0)
+        memo_by[day] = contents or None
+
+    steps_by = {row["date"]: row["steps"] for row in rows}
+    sleep_by = {row["date"]: row["total_min"] for row in rows}
+    dates = pd.date_range(start=start, end=end, freq="D")
+    items = []
+    for stamp in dates:
+        day = stamp.strftime("%Y-%m-%d")
+        items.append({
+            "日期": stamp.date(),
+            "步数": steps_by.get(day),
+            "睡眠时长": sleep_by.get(day),
+            "啤酒瓶数": beer_by.get(day) if day in beer_by else None,
+            "随记": memo_by.get(day),
+        })
+
+    df = _items_to_hdf(items)
+    if df.empty:
+        return df
+    memo_days = len(beer_by)
+    df.attrs.update({
+        "source": "db",
+        "memo_days": memo_days,
+        "beer_days": sum(1 for value in beer_by.values() if value > 0),
+        "beer_total": sum(beer_by.values()),
+        "memo_start": min(beer_by) if beer_by else None,
+        "memo_end": max(beer_by) if beer_by else None,
+        "sleep_gaps": sum(1 for value in sleep_by.values() if value is None),
+        "end_date": end,
+    })
     return df
 
 
@@ -332,8 +438,11 @@ def analyze_recent_continuous_data(hdf):
 
 
 # %%
-def hdf2imgbase64(hdf):
+def hdf2imgbase64(hdf, source=None):
     """根据传入包含运动数据的DataFrame作图，处理缺失值，输出图形的bytes"""
+    source = source or hdf.attrs.get("source", "note")
+    is_db = source == "db"
+
     if hdf.empty or hdf["步数"].count() == 0:
         log.error("无有效数据可绘制图表")
         return create_error_image("无有效健康数据")
@@ -385,7 +494,9 @@ def hdf2imgbase64(hdf):
         monthly_sleep_actual, monthly_sleep_estimated = calds2ds(valid_sleep)
 
     if valid_beer is not None and not valid_beer.empty:
-        monthly_beer_actual, monthly_beer_estimated = calds2ds(valid_beer)
+        monthly_beer_actual = valid_beer.resample("ME").sum()
+        if not is_db:
+            _, monthly_beer_estimated = calds2ds(valid_beer)
 
     # 创建图表 - 6行布局（增加啤酒统计）
     fig = plt.figure(figsize=(15, 42), dpi=100)
@@ -395,6 +506,9 @@ def hdf2imgbase64(hdf):
 
     if "recent_continuous" in hdf.attrs and hdf.attrs["recent_continuous"] is not None:
         cont_df = hdf.attrs["recent_continuous"]
+        if is_db:
+            # 设备数据动辄上千天，图 1 只展示最近 90 天，完整历史见图 2/图 4
+            cont_df = cont_df.tail(90)
 
         # 提取步数和睡眠数据
         cont_steps = cont_df["步数"].dropna()
@@ -649,7 +763,10 @@ def hdf2imgbase64(hdf):
             # 无连续步数数据的情况
             ax1.text(0.5, 0.5, "无连续步数数据", ha="center", va="center", transform=ax1.transAxes, fontsize=12)
 
-    ax1.set_title("最近连续记录趋势", fontsize=14, fontweight="bold")
+    ax1.set_title(
+        "最近 90 天趋势（设备自动采集）" if is_db else "最近连续记录趋势",
+        fontsize=14, fontweight="bold",
+    )
     ax1.tick_params(axis="x", rotation=45)
 
     # ========== 2. 步数动态图 ==========
@@ -973,18 +1090,22 @@ def hdf2imgbase64(hdf):
                 label="消费趋势",
             )
 
-        # 添加月度目标线
-        days_in_month = 30  # 近似值
-        monthly_target = beer_target * days_in_month
-        ax6.axhline(
-            y=monthly_target,
-            color="red",
-            linestyle=":",
-            alpha=0.5,
-            label=f"月度目标({monthly_target}瓶)",
-        )
+        # 添加月度目标线（DB 源只统计记录日，月度目标线无意义）
+        if not is_db:
+            days_in_month = 30  # 近似值
+            monthly_target = beer_target * days_in_month
+            ax6.axhline(
+                y=monthly_target,
+                color="red",
+                linestyle=":",
+                alpha=0.5,
+                label=f"月度目标({monthly_target}瓶)",
+            )
 
-        ax6.set_title("月度啤酒消费统计", fontsize=14, fontweight="bold")
+        ax6.set_title(
+            "月度啤酒消费统计（记录日合计）" if is_db else "月度啤酒消费统计",
+            fontsize=14, fontweight="bold",
+        )
         ax6.set_xlabel("月份")
         ax6.set_ylabel("啤酒瓶数")
         ax6.legend(loc="upper left")
@@ -1016,8 +1137,11 @@ def hdf2imgbase64(hdf):
         stats_text += f"• 达标率: {(valid_sleep >= 420).sum() / len(valid_sleep) * 100:.1f}%\n"
 
     if valid_beer is not None and not valid_beer.empty:
-        stats_text += f"\n啤酒统计（目标: {beer_target}瓶）:\n"
-        stats_text += f"• 平均: {valid_beer.mean():.1f}瓶/天\n"
+        stats_text += f"\n啤酒统计（目标: {beer_target}瓶）:\n" if not is_db else "\n啤酒统计（记录日）:\n"
+        if is_db:
+            stats_text += f"• 平均(记录日): {valid_beer.mean():.1f}瓶/天\n"
+        else:
+            stats_text += f"• 平均: {valid_beer.mean():.1f}瓶/天\n"
         stats_text += f"• 总计: {valid_beer.sum():.0f}瓶\n"
         stats_text += f"• 超标率: {(valid_beer > beer_target).sum() / len(valid_beer) * 100:.1f}%\n"
         stats_text += f"• 饮酒天数: {(valid_beer > 0).sum()}天\n"
@@ -1035,6 +1159,13 @@ def hdf2imgbase64(hdf):
         stats_text += f"• 实心柱体：实际月度合计\n"
         stats_text += f"• 红色虚线：估算整月值（数据不完整月份）\n"
         stats_text += f"• 估算值用于数据不完整月份的趋势参考"
+
+    if is_db:
+        stats_text += (
+            "\n\n数据来源:\n"
+            "• 步数/睡眠：华为健康云设备自动采集（睡眠含小睡）\n"
+            "• 啤酒/随记：健康随记登记，仅记录日计入，未记录日不等于未饮酒"
+        )
 
     plt.figtext(
         0.02, 0.02, stats_text, fontsize=9, bbox=dict(boxstyle="round,pad=0.5", facecolor="lightyellow", alpha=0.8)
@@ -1058,8 +1189,11 @@ def hdf2imgbase64(hdf):
 # ### generate_health_report(hdf)
 
 # %%
-def generate_health_report(hdf):
+def generate_health_report(hdf, source=None):
     """生成健康数据的综合分析Markdown报告"""
+    source = source or hdf.attrs.get("source", "note")
+    is_db = source == "db"
+
     if hdf.empty:
         return "## 健康数据分析报告\n\n暂无有效数据。"
 
@@ -1094,12 +1228,38 @@ def generate_health_report(hdf):
 
     report = "## 健康数据分析报告\n\n"
 
-    # 在报告头部添加连续数据分析
-    report += "\n### 0. 近期连续记录分析\n"
+    if is_db:
+        report += (
+            "> 数据源：华为健康云（手环自动采集步数与睡眠，睡眠为夜间＋小睡总时长）"
+            "＋《健康随记登记》（人工记录随记与啤酒）。设备数据逐日自动入库，"
+            "随记只覆盖实际记录日。\n\n"
+        )
+        report += "### 0. 数据覆盖与连续性\n"
+        report += f"- **完整数据区间**: {hdf.index.min().strftime('%Y-%m-%d')} 至 "
+        report += f"{hdf.index.max().strftime('%Y-%m-%d')}（{len(hdf)} 天）\n"
+        report += f"- **步数覆盖**: {valid_steps.count()} 天；"
+        report += f"**睡眠覆盖**: {valid_sleep.count()} 天；"
+        report += f"**睡眠缺口**: {hdf.attrs.get('sleep_gaps', 0)} 天\n"
 
-    recent_analysis = analyze_recent_continuous_data(hdf)
+        window = hdf.tail(90)
+        win_steps = window["步数"].dropna()
+        win_sleep = window["睡眠时长"].dropna()
+        report += f"- **最近 90 天窗口**: {window.index.min().strftime('%Y-%m-%d')} 至 "
+        report += f"{window.index.max().strftime('%Y-%m-%d')}"
+        if not win_steps.empty:
+            report += f"；平均步数 {win_steps.mean():.0f} 步/天"
+        if not win_sleep.empty:
+            report += f"；平均睡眠 {win_sleep.mean() / 60:.1f} 小时/天"
+        report += "\n\n"
+    else:
+        # 在报告头部添加连续数据分析
+        report += "\n### 0. 近期连续记录分析\n"
 
-    if recent_analysis:
+    recent_analysis = None if is_db else analyze_recent_continuous_data(hdf)
+
+    if is_db:
+        pass
+    elif recent_analysis:
         report += f"- **连续记录区间**: {recent_analysis['日期范围']} ({recent_analysis['连续天数']}天)\n"
 
         if recent_analysis["步数统计"]["平均"]:
@@ -1158,7 +1318,15 @@ def generate_health_report(hdf):
     else:
         report += "- 数据不足，无法计算睡眠趋势\n"
 
-    if has_beer_data and not valid_beer.empty and len(valid_beer) >= 7:
+    if is_db:
+        if hdf.attrs.get("memo_start"):
+            report += (
+                f"- **随记/啤酒记录覆盖**: {hdf.attrs['memo_start']} 至 {hdf.attrs['memo_end']}"
+                f"（记录日 {hdf.attrs.get('memo_days', 0)} 天）\n"
+            )
+        else:
+            report += "- **随记/啤酒记录覆盖**: 暂无记录\n"
+    elif has_beer_data and not valid_beer.empty and len(valid_beer) >= 7:
         last_week_beer = valid_beer.tail(7)
         report += f"- **最近7天平均啤酒**: {last_week_beer.mean():.1f} 瓶\n"
 
@@ -1194,7 +1362,28 @@ def generate_health_report(hdf):
         else:
             report += "- **睡眠充足**: 继续保持良好的睡眠习惯\n"
 
-    if has_beer_data and not valid_beer.empty:
+    if is_db:
+        memo_days = hdf.attrs.get("memo_days", 0)
+        beer_days = hdf.attrs.get("beer_days", 0)
+        beer_total = hdf.attrs.get("beer_total", 0)
+        if memo_days and beer_days:
+            freq = beer_days / memo_days * 100
+            avg_per_drink = beer_total / beer_days
+            report += (
+                f"- **饮酒情况**: {beer_days}/{memo_days} 个记录日（{freq:.1f}%）有饮酒记录，"
+                f"饮酒日均 {avg_per_drink:.1f} 瓶\n"
+            )
+            if avg_per_drink > beer_target:
+                report += f"- **适量控制**: 饮酒日均超过目标 {beer_target} 瓶/天，可考虑控制单次饮酒量\n"
+            elif freq >= 30:
+                report += f"- **减少频率**: {freq:.0f}% 的记录日有饮酒，可考虑增加不饮酒日\n"
+            else:
+                report += "- **饮酒适度**: 饮酒频率与单次量处于个人既有区间\n"
+        elif memo_days:
+            report += f"- **无饮酒记录**: 现有 {memo_days} 个记录日均未记录饮酒\n"
+        else:
+            report += "- **暂无随记/啤酒记录**\n"
+    elif has_beer_data and not valid_beer.empty:
         avg_beer = valid_beer.mean()
         if avg_beer > 3:
             report += "- **饮酒过量**: 平均每日超过3瓶，建议减少饮酒频率\n"
@@ -1210,22 +1399,38 @@ def generate_health_report(hdf):
     report += f"- **数据日期范围**: {hdf.index.min().strftime('%Y-%m-%d')} 至 {hdf.index.max().strftime('%Y-%m-%d')}\n"
     report += f"- **总天数**: {len(hdf)} 天\n"
 
-    if not valid_steps.empty:
-        report += f"- **有效步数记录**: {valid_steps.count()} 天 ({valid_steps.count() / len(hdf) * 100:.1f}%)\n"
+    if is_db:
+        memo_days = hdf.attrs.get("memo_days", 0)
+        report += (
+            f"- **步数覆盖**: {valid_steps.count()} 天 "
+            f"({valid_steps.count() / len(hdf) * 100:.1f}%)\n"
+        )
+        report += (
+            f"- **睡眠覆盖**: {valid_sleep.count()} 天 "
+            f"({valid_sleep.count() / len(hdf) * 100:.1f}%)\n"
+        )
+        report += (
+            f"- **随记记录**: {memo_days} 天 "
+            f"({memo_days / len(hdf) * 100:.1f}%)，"
+            f"{hdf.attrs.get('beer_days', 0)} 天有啤酒记录\n"
+        )
     else:
-        report += f"- **有效步数记录**: 0 天 (0.0%)\n"
+        if not valid_steps.empty:
+            report += f"- **有效步数记录**: {valid_steps.count()} 天 ({valid_steps.count() / len(hdf) * 100:.1f}%)\n"
+        else:
+            report += f"- **有效步数记录**: 0 天 (0.0%)\n"
 
-    if not valid_sleep.empty:
-        report += f"- **有效睡眠记录**: {valid_sleep.count()} 天 ({valid_sleep.count() / len(hdf) * 100:.1f}%)\n"
-    else:
-        report += f"- **有效睡眠记录**: 0 天 (0.0%)\n"
+        if not valid_sleep.empty:
+            report += f"- **有效睡眠记录**: {valid_sleep.count()} 天 ({valid_sleep.count() / len(hdf) * 100:.1f}%)\n"
+        else:
+            report += f"- **有效睡眠记录**: 0 天 (0.0%)\n"
 
-    if has_beer_data and not valid_beer.empty:
-        report += f"- **有效啤酒记录**: {valid_beer.count()} 天 ({valid_beer.count() / len(hdf) * 100:.1f}%)\n"
-    elif has_beer_data:
-        report += f"- **有效啤酒记录**: 0 天 (0.0%)\n"
-    else:
-        report += f"- **啤酒记录**: 未启用\n"
+        if has_beer_data and not valid_beer.empty:
+            report += f"- **有效啤酒记录**: {valid_beer.count()} 天 ({valid_beer.count() / len(hdf) * 100:.1f}%)\n"
+        elif has_beer_data:
+            report += f"- **有效啤酒记录**: 0 天 (0.0%)\n"
+        else:
+            report += f"- **啤酒记录**: 未启用\n"
 
     report += "\n"
 
@@ -1275,7 +1480,34 @@ def generate_health_report(hdf):
 
     # 6. 啤酒消费分析（新增）
     report += "### 6. 啤酒消费分析\n"
-    if has_beer_data and not valid_beer.empty:
+    if is_db and valid_beer.empty:
+        report += "- 暂无啤酒消费记录\n"
+        if hdf.attrs.get("memo_days"):
+            report += (
+                f"\n> 随记记录 {hdf.attrs['memo_days']} 天，未记录不等于未饮酒，"
+                "相关比例只以记录日为分母\n"
+            )
+    elif is_db:
+        memo_days = hdf.attrs.get("memo_days", 0) or valid_beer.count()
+        beer_days = hdf.attrs.get("beer_days", 0) or int((valid_beer > 0).sum())
+        beer_total = hdf.attrs.get("beer_total", 0) or valid_beer.sum()
+        report += f"- **饮酒记录**: {beer_days}/{memo_days} 个记录日（{beer_days / memo_days * 100:.1f}%）\n"
+        report += f"- **总消费瓶数**: {beer_total:.0f} 瓶（仅记录日）\n"
+        report += f"- **平均（记录日）**: {beer_total / memo_days:.1f} 瓶/天\n"
+        if beer_days:
+            report += f"- **饮酒日均**: {beer_total / beer_days:.1f} 瓶/次\n"
+        report += f"- **最高单日**: {valid_beer.max():.0f} 瓶 ({valid_beer.idxmax().strftime('%Y-%m-%d')})\n"
+
+        超标天数 = (valid_beer > beer_target).sum()
+        if beer_days:
+            report += f"- **超标饮酒日** (>{beer_target}瓶): {超标天数} 天（饮酒日的 {超标天数 / beer_days * 100:.1f}%）\n"
+
+        if len(valid_beer) >= 30:
+            monthly_beer = valid_beer.groupby(valid_beer.index.to_period("M")).sum()
+            report += f"- **最高月度（记录日合计）**: {monthly_beer.max():.0f} 瓶 ({monthly_beer.idxmax()})\n"
+            report += f"- **最低月度（记录日合计）**: {monthly_beer.min():.0f} 瓶 ({monthly_beer.idxmin()})\n"
+        report += "\n> 未记录日不等于未饮酒；以上比例以记录日为分母，不能与旧全量口径直接比较。\n"
+    elif has_beer_data and not valid_beer.empty:
         report += f"- **平均每日啤酒**: {valid_beer.mean():.1f} 瓶\n"
         report += f"- **最高单日**: {valid_beer.max():.0f} 瓶 ({valid_beer.idxmax().strftime('%Y-%m-%d')})\n"
         report += f"- **总消费瓶数**: {valid_beer.sum():.0f} 瓶\n"
@@ -1301,17 +1533,23 @@ def generate_health_report(hdf):
     report += "\n"
 
     # 数据完整性建议
-    completeness = (
-        (valid_steps.count() + valid_sleep.count() + (valid_beer.count() if has_beer_data else 0))
-        / (3 * len(hdf))
-        * 100
-    )
-    if completeness < 50:
-        report += f"- **提高记录频率**: 当前数据完整度仅{completeness:.1f}%，建议每日记录\n"
-    elif completeness < 80:
-        report += f"- **保持记录习惯**: 当前数据完整度{completeness:.1f}%，继续努力\n"
+    if is_db:
+        report += (
+            f"- **数据覆盖说明**: 步数/睡眠为设备自动采集，缺口主要来自未佩戴设备或同步延迟；"
+            f"随记仅 {hdf.attrs.get('memo_days', 0)} 个记录日，未记录日不代表未饮酒\n"
+        )
     else:
-        report += f"- **记录习惯良好**: 当前数据完整度{completeness:.1f}%，继续保持\n"
+        completeness = (
+            (valid_steps.count() + valid_sleep.count() + (valid_beer.count() if has_beer_data else 0))
+            / (3 * len(hdf))
+            * 100
+        )
+        if completeness < 50:
+            report += f"- **提高记录频率**: 当前数据完整度仅{completeness:.1f}%，建议每日记录\n"
+        elif completeness < 80:
+            report += f"- **保持记录习惯**: 当前数据完整度{completeness:.1f}%，继续努力\n"
+        else:
+            report += f"- **记录习惯良好**: 当前数据完整度{completeness:.1f}%，继续保持\n"
 
     # 添加备注信息
     if "随记" in hdf.columns:
@@ -1319,9 +1557,15 @@ def generate_health_report(hdf):
         if not valid_notes.empty:
             interesting_notes = valid_notes[valid_notes.str.len() > 0]
             if len(interesting_notes) > 0:
-                report += "\n### 7. 重要备注\n"
-                for date, note in interesting_notes.head(5).items():  # 只显示前5条
-                    report += f"- **{date.strftime('%Y-%m-%d')}**: {note}\n"
+                if is_db:
+                    report += "\n### 7. 最近随记\n"
+                    for date, note in interesting_notes.tail(5).items():
+                        text = "；".join(part.strip() for part in note.splitlines() if part.strip())
+                        report += f"- **{date.strftime('%Y-%m-%d')}**: {text}\n"
+                else:
+                    report += "\n### 7. 重要备注\n"
+                    for date, note in interesting_notes.head(5).items():  # 只显示前5条
+                        report += f"- **{date.strftime('%Y-%m-%d')}**: {note}\n"
 
     return report
 
@@ -1357,9 +1601,8 @@ def create_error_image(error_msg="生成图表时出错"):
 
 
 # %%
-@timethis
-def health2note():
-    """综合输出健康动态图并更新至笔记"""
+def _health2note_from_note():
+    """旧路径：解析《健康运动笔记》并更新按主机命名的报告笔记。"""
     login_user = execcmd("whoami")
     namestr = "happyjp_life"
     section = f"health_{login_user}"
@@ -1370,7 +1613,7 @@ def health2note():
         findhealthnotes = searchnotes("健康运动笔记")
         if len(findhealthnotes) == 0:
             log.critical("未找到标题为《健康运动笔记》的笔记")
-            return
+            return 1
         healthnote = findhealthnotes
         health_id = healthnote.id
         setcfpoptionvalue(namestr, section, "health_cloud_id", f"{health_id}")
@@ -1382,7 +1625,7 @@ def health2note():
 
     if float(health_cloud_update_ts) == noteupdatetimewithzone.timestamp() and not_IPython():
         log.info(f"健康运动笔记无更新（{noteupdatetimewithzone}），跳过")
-        return
+        return 0
 
     # 3. 提取和处理数据
     try:
@@ -1391,10 +1634,8 @@ def health2note():
             log.warning("提取的数据为空，使用错误图片")
             image_base64 = create_error_image("健康数据为空")
         else:
-            # 使用修改后的hdf2imgbase64函数（包含月度估算）
             image_base64 = hdf2imgbase64(hdf)
 
-        # 4. 生成分析报告（使用修改后的generate_health_report函数）
         report_content = generate_health_report(hdf)
 
     except Exception as e:
@@ -1402,34 +1643,150 @@ def health2note():
         image_base64 = create_error_image(f"数据处理错误: {str(e)[:50]}")
         report_content = f"## 错误报告\n\n数据处理过程中出现错误：\n\n```\n{str(e)}\n```"
 
-    # 5. 更新或创建笔记
+    # 4. 更新或创建笔记
     nbid = searchnotebook("康健") or searchnotebook("健康")
     if not nbid:
         nbid = createnote(title="健康记录", notebook=True)
 
-    # 查找现有报告笔记
     existing_notes = searchnotes(notestat_title)
     if existing_notes:
         healthstat_cloud_id = existing_notes[0].id
-        # 更新笔记内容和图片
         healthstat_cloud_id, res_lst = updatenote_imgdata(
             noteid=healthstat_cloud_id, parent_id=nbid, imgdata64=image_base64
         )
-        # 更新笔记正文（分析报告）
         origin_content = getnote(healthstat_cloud_id).body
         new_content = "\n".join([report_content, origin_content])
         updatenote_body(healthstat_cloud_id, new_content)
     else:
-        # 创建新笔记
         healthstat_cloud_id = createnote(
             title=notestat_title, parent_id=nbid, imgdata64=image_base64, body=report_content
         )
 
-    # 6. 更新配置
+    # 5. 更新配置
     setcfpoptionvalue(namestr, section, "healthstat_cloud_id", f"{healthstat_cloud_id}")
     setcfpoptionvalue(namestr, section, "health_cloud_updatetimestamp", str(noteupdatetimewithzone.timestamp()))
 
     log.info(f"健康笔记更新完成，报告笔记ID: {healthstat_cloud_id}")
+    return 0
+
+
+def _health2note_from_db(note_id=None, start=None, end=None, dry_run=False,
+                         force=False, allow_stale=False,
+                         allow_empty_memos=False, out_dir=None):
+    """从 HCX 健康库生成并更新单一《健康动态日日升》笔记。"""
+    note_id = note_id or TARGET_NOTE_ID
+    try:
+        hdf = gethealthdatafromdb(
+            start=start, end=end, allow_empty_memos=allow_empty_memos
+        )
+    except Exception as exc:
+        log.error(f"读取健康库失败：{exc}", exc_info=True)
+        return 1
+
+    if hdf.empty or hdf["步数"].dropna().empty or hdf["睡眠时长"].dropna().empty:
+        log.error("健康库数据为空或缺失步数/睡眠，拒绝覆盖笔记")
+        return 1
+
+    end_day = hdf.attrs.get("end_date") or hdf.index.max().strftime("%Y-%m-%d")
+    if not allow_stale:
+        stale_days = (date.today() - datetime.strptime(end_day, "%Y-%m-%d").date()).days
+        if stale_days > 3:
+            log.error(f"最新完整数据停在 {end_day}（落后 {stale_days} 天），拒绝覆盖笔记")
+            return 1
+
+    report_content = generate_health_report(hdf, source="db")
+    digest = hashlib.sha256(report_content.encode("utf-8")).hexdigest()
+
+    if (not dry_run and not force and DASHBOARD_DIGEST.exists()
+            and DASHBOARD_DIGEST.read_text(encoding="utf-8").strip() == digest):
+        log.info(f"报告无变化（{end_day}），跳过更新")
+        return 0
+
+    try:
+        image_base64 = hdf2imgbase64(hdf, source="db")
+    except Exception as exc:
+        log.error(f"生成图表失败：{exc}", exc_info=True)
+        return 1
+
+    summary = (
+        f"DB dashboard range={hdf.index.min():%Y-%m-%d}..{end_day} "
+        f"days={len(hdf)} steps={hdf['步数'].count()} sleep={hdf['睡眠时长'].count()} "
+        f"memo_days={hdf.attrs.get('memo_days', 0)} beer_days={hdf.attrs.get('beer_days', 0)} "
+        f"beer_total={hdf.attrs.get('beer_total', 0)}"
+    )
+
+    if dry_run:
+        target = Path(out_dir) if out_dir else (
+            Path.home() / "tmp" / "health_dashboard"
+            / datetime.now().strftime("run_%Y%m%d_%H%M%S")
+        )
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "report.md").write_text(report_content, encoding="utf-8")
+        (target / "image.png").write_bytes(base64.b64decode(image_base64))
+        print(summary)
+        print(f"dry-run output: {target}")
+        return 0
+
+    try:
+        note = getnote(note_id)
+    except Exception as exc:
+        log.error(f"读取目标笔记失败：{exc}", exc_info=True)
+        return 1
+    if note.parent_id != TARGET_NOTEBOOK_ID:
+        log.error(f"目标笔记所在笔记本异常：{note.parent_id}")
+        return 1
+
+    try:
+        updatenote_imgdata(
+            noteid=note_id,
+            parent_id=TARGET_NOTEBOOK_ID,
+            imgdata64=image_base64,
+            imgtitle=f"health_dashboard_{end_day}.png",
+        )
+        image_body = getnote(note_id).body or ""
+        body = (report_content + "\n\n" + image_body).replace("\x00", "")
+        updatenote_body(note_id, body)
+    except Exception as exc:
+        log.error(f"更新笔记失败：{exc}", exc_info=True)
+        return 1
+
+    DASHBOARD_DIGEST.parent.mkdir(parents=True, exist_ok=True)
+    DASHBOARD_DIGEST.write_text(digest + "\n", encoding="utf-8")
+    log.info(f"健康动态更新完成：{note_id}，{summary}")
+    return 0
+
+
+@timethis
+def health2note(source="db", note_id=None, start=None, end=None, dry_run=False,
+                force=False, allow_stale=False, allow_empty_memos=False,
+                out_dir=None):
+    """综合输出健康动态图并更新至笔记。"""
+    if source == "note":
+        return _health2note_from_note()
+    return _health2note_from_db(
+        note_id=note_id, start=start, end=end, dry_run=dry_run, force=force,
+        allow_stale=allow_stale, allow_empty_memos=allow_empty_memos,
+        out_dir=out_dir,
+    )
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="健康动态日日升（HCX 健康库）")
+    parser.add_argument("--source", choices=("db", "note"), default="db")
+    parser.add_argument("--note-id", default=TARGET_NOTE_ID)
+    parser.add_argument("--start")
+    parser.add_argument("--end")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--allow-stale", action="store_true")
+    parser.add_argument("--allow-empty-memos", action="store_true")
+    parser.add_argument("--out-dir")
+    args = parser.parse_args(argv)
+    return health2note(
+        source=args.source, note_id=args.note_id, start=args.start, end=args.end,
+        dry_run=args.dry_run, force=args.force, allow_stale=args.allow_stale,
+        allow_empty_memos=args.allow_empty_memos, out_dir=args.out_dir,
+    )
 
 
 # %% [markdown]
@@ -1440,7 +1797,7 @@ if __name__ == "__main__":
     if not_IPython():
         log.info(f"开始运行文件\t{__file__}")
 
-    health2note()
-
+    rc = main()
     if not_IPython():
-        log.info(f"Done.结束执行文件\t{__file__}")
+        log.info(f"Done.结束执行文件\t{__file__}\trc={rc}")
+    sys.exit(rc)
