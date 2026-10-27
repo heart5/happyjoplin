@@ -494,9 +494,11 @@ def hdf2imgbase64(hdf, source=None):
         monthly_sleep_actual, monthly_sleep_estimated = calds2ds(valid_sleep)
 
     if valid_beer is not None and not valid_beer.empty:
-        monthly_beer_actual = valid_beer.resample("ME").sum()
-        if not is_db:
-            _, monthly_beer_estimated = calds2ds(valid_beer)
+        if is_db:
+            # 只画有随记记录的月份，避免把未记录月份画成 0
+            monthly_beer_actual = valid_beer.groupby(valid_beer.index.to_period("M")).sum()
+        else:
+            monthly_beer_actual, monthly_beer_estimated = calds2ds(valid_beer)
 
     # 创建图表 - 6行布局（增加啤酒统计）
     fig = plt.figure(figsize=(15, 42), dpi=100)
