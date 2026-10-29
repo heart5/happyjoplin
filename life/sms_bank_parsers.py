@@ -697,10 +697,12 @@ def _parse_ccb(body: str, number: str) -> Optional[ParsedSMS]:
     # --- 格式6：信用卡消费 ---
     m_cc_consume = re.search(r"您尾号(\d{4})(?:的)?(?:龙卡信用卡|信用卡).*?消费(\d+\.?\d*)元", body)
     if m_cc_consume:
+        # “在财付通-小拉出行消费22.40元”能给出真实商户，优于统一标签
         return ParsedSMS(
             amount=float(m_cc_consume.group(2)), direction="支出",
             card_suffix=m_cc_consume.group(1),
-            merchant="信用卡消费", counterparty="", bank_name="建设银行",
+            merchant=_extract_merchant_from_ccb(body) or "信用卡消费",
+            counterparty="", bank_name="建设银行",
             category="未分类-其他", tx_type_detail="consumption",
         )
 

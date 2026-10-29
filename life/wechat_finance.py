@@ -310,9 +310,16 @@ def _refund_method(content: str) -> tuple:
     return _detect_payment_method(raw), ""
 
 
+RE_BANK_MERCHANT_INLINE = re.compile(
+    r"在([^\n，,。；;]{2,30}?)(?:消费|支出|扣款|付款|支付)[\d￥¥]?")
+
+
 def _extract_bank_merchant(content: str) -> str:
     """从银行交易提醒中提取商户名。"""
     m = RE_BANK_MERCHANT.search(content)
+    if m:
+        return m.group(1).strip()
+    m = RE_BANK_MERCHANT_INLINE.search(content)
     if m:
         return m.group(1).strip()
     return ""
@@ -558,8 +565,10 @@ def _collect_finance_events(messages: list) -> list:
             # 交易对象里的“消费金融”不能把收入通知误判成消费。
             m_type = RE_BANK_TX_TYPE.search(content)
             explicit = m_type.group(1).strip() if m_type else ""
+            is_refund = any(k in explicit for k in ("退货", "退款", "冲正"))
             if explicit:
-                is_income = any(k in explicit for k in ("收入", "转入", "存入", "入账"))
+                is_income = is_refund or any(
+                    k in explicit for k in ("收入", "转入", "存入", "入账"))
                 is_transfer = any(k in explicit for k in ("转入", "转出", "转账", "汇款"))
                 is_expense = not is_income
             else:
@@ -597,7 +606,9 @@ def _collect_finance_events(messages: list) -> list:
                 "放款", "消费金融", "借款到账", "贷款发放"))
 
             if is_income:
-                if loan_hint:
+                if is_refund:
+                    evt["category"] = "收入-退款"
+                elif loan_hint:
                     evt["category"] = "借贷-放款"
                     evt["merchant"] = party or evt["merchant"]
                 elif transfer_hint:

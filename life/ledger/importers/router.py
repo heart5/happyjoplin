@@ -213,6 +213,7 @@ class FlowRouter:
             self._extend(flows, self._route_single_sms(
                 evt, source="notification", allow_create=False))
 
+        flows = self._merge_duplicate_flows(flows)
         # 只去除同一来源事件的精确重复，保留同日同额的不同交易
         flows = self._dedup(flows)
         self._reclassify_internal_transfers(flows)
@@ -986,6 +987,109 @@ class FlowRouter:
             flows.extend(result)
         else:
             flows.append(result)
+
+    # ── 跨来源去重（同卡同额同向）──
+
+    _DUP_SKIP_TYPES = ("transfer", "loan_disbursement", "loan_repayment",
+                       "credit_card_repayment", "fee", "adjustment")
+
+    def _merge_duplicate_flows(self, flows: list) -> list:
+        """同一笔刷卡交易被两个微信号/银行短信各自播报时只保留一条。
+
+        同一张卡绑在两个微信号上，付款后主号收到银行「信用卡交易提醒」，
+        工作号收到微信支付回执，两者相差几秒；银行短信可能晚到数十分钟。
+        因此同卡同额同向即视为同笔：微信侧按 5 分钟配对，短信按 6 小时
+        配对且要求正文含「财付通/微信」（证明该笔经微信支付）。
+        """
+        groups = defaultdict(list)
+        for f in flows:
+            if (f.account_id is None or f.tx_type in self._DUP_SKIP_TYPES
+                    or f.pair_key or f.linked_flow_id):
+                continue
+            groups[(f.tx_date, f.direction, round(f.amount, 2),
+                    f.account_id)].append(f)
+
+        dead = set()
+        for group in groups.values():
+            if len(group) < 2:
+                continue
+            group.sort(key=lambda f: (f.tx_time or "", f.source))
+            for i, a in enumerate(group):
+                if id(a) in dead:
+                    continue
+                if not self._is_wechat_source(a.source):
+                    continue
+                for b in group:
+                    if (b is a or id(b) in dead
+                            or not self._is_wechat_source(b.source)
+                            or b.source == a.source):
+                        continue
+                    if self._time_diff_seconds(a.tx_time, b.tx_time) <= 300:
+                        self._absorb(a, b)
+                        dead.add(id(b))
+            for a in group:
+                if id(a) in dead or a.source != "sms":
+                    continue
+                if not any(k in (a.raw_data or "") for k in ("财付通", "微信")):
+                    continue
+                best = None
+                for b in group:
+                    if (id(b) in dead or b is a
+                            or not self._is_wechat_source(b.source)):
+                        continue
+                    diff = self._time_diff_seconds(a.tx_time, b.tx_time)
+                    if diff <= NOTIF_SMS_WINDOW and (best is None or diff < best[0]):
+                        best = (diff, b)
+                if best:
+                    self._absorb(best[1], a)
+                    dead.add(id(a))
+        return [f for f in flows if id(f) not in dead]
+
+    def _absorb(self, base, other):
+        """把 other 的信息并入 base（保留 base 行）。"""
+        if (self._is_generic_merchant(base.merchant)
+                and not self._is_generic_merchant(other.merchant)):
+            base.merchant = other.merchant
+            base.counterparty = other.merchant
+        if (self._category_name(base.category_id) in ("金融-其他", "未分类-其他")
+                and self._category_name(other.category_id)
+                not in ("金融-其他", "未分类-其他", None)):
+            base.category_id = other.category_id
+        sids = sorted({s for s in (base.source_event_id,
+                                   other.source_event_id) if s})
+        if sids:
+            base.source_event_id = "|".join(sids)
+            base.source_group_id = self._group_id(base.source_event_id, base.amount)
+        base.raw_data = self._merge_raw(base.raw_data, other.raw_data,
+                                        other.source)
+
+    @staticmethod
+    def _is_generic_merchant(name: str) -> bool:
+        if not name:
+            return True
+        if name.startswith(("退货", "退款", "信用卡消费", "消费")):
+            return True
+        return any(b in name for b in get_bank_names())
+
+    @staticmethod
+    def _merge_raw(base_raw: str, other_raw: str, other_source: str) -> str:
+        def load(raw):
+            try:
+                v = json.loads(raw or "{}")
+                return v if isinstance(v, dict) else {}
+            except Exception:
+                return {}
+        base = load(base_raw)
+        for k, v in load(other_raw).items():
+            base.setdefault(k if k not in base else other_source, v)
+        return json.dumps(base, ensure_ascii=False)
+
+    def _category_name(self, category_id) -> Optional[str]:
+        if not category_id:
+            return None
+        row = self.db.fetchone("SELECT name FROM categories WHERE id=?",
+                               (category_id,))
+        return row["name"] if row else None
 
     @staticmethod
     def _dedup(flows: list) -> list:
