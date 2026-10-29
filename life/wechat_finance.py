@@ -408,6 +408,24 @@ def _collect_finance_events(messages: list) -> list:
 
         # ── 京东白条消息（格式不同：消费金额/服务商户而非交易金额/交易商户）──
         if sender == "京东白条":
+            # 支付宝渠道还款被白条拒付：记还款线索，供账本把随后同额的
+            # 银行卡扣款识别为花呗账单还款（白条失败后改走储蓄卡通道）。
+            if "交易失败通知" in content and "账户已锁定" in content:
+                m_amt = re.search(r"金额[：:]\s*([\d,]+\.?\d*)元", content)
+                m_mer = re.search(r"商户[：:]\s*([^）)\n]*)", content)
+                m_src = re.search(r"来源[：:]\s*([^，,\n]*)", content)
+                merchant = m_mer.group(1).strip() if m_mer else ""
+                source_ch = m_src.group(1).strip() if m_src else ""
+                if (m_amt and merchant.startswith("还款")
+                        and source_ch.startswith("支付宝")):
+                    evt["amount"] = float(m_amt.group(1).replace(",", ""))
+                    evt["source"] = "repayment_hint"
+                    evt["merchant"] = "花呗"
+                    evt["category"] = "借贷-还款"
+                    evt["direction"] = "支出"
+                    evt["payment_method"] = "京东白条"
+                    events.append(evt)
+                    continue
             # 失败通知/额度通知/非交易提醒 → 跳过
             if any(kw in content for kw in ("失败通知", "交易到账通知", "账单", "还款", "分期", "红包")):
                 continue
@@ -625,6 +643,19 @@ def parse_finance_messages(messages: list) -> list:
 
         # bank_expense 不独立产生记录（由对应的 paid/voucher 承载）
         if evt["source"] == "bank_expense":
+            continue
+
+        # 还款线索不是交易本身，原样传给账本做银行卡扣款匹配
+        if evt["source"] == "repayment_hint":
+            records.append({
+                "time": evt["time"], "amount": evt["amount"],
+                "merchant": evt["merchant"], "direction": "支出",
+                "category": evt["category"], "source": "repayment_hint",
+                "payment_method": evt.get("payment_method", ""),
+                "source_text": evt.get("source_text", ""), "raw": evt["raw"],
+                "source_ids": [evt["raw"].get("id")],
+            })
+            used[i] = True
             continue
 
         # 零钱还信用卡：独立记一条内部转账（付款侧）

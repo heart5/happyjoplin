@@ -214,7 +214,15 @@ def _parse_event(rec: dict):
                 category = "收入-其他"
 
     if not amount or amount <= 0 or not direction:
-        return None
+        # 还款成功但未给出本次金额（如“已最低还款成功 剩余应还631.16元”）：
+        # 记零额线索，由账本按平台+时间匹配同笔银行卡扣款
+        if not (_is_loan_text(text) and "还款成功" in text):
+            return None
+        amount = 0.0
+        direction = "支出"
+        category = "借贷-还款"
+        is_loan = True
+        detail = "repayment_hint"
     if not bank and not institution:
         return None
 
@@ -254,6 +262,7 @@ def _parse_event(rec: dict):
         "is_loan": is_loan,
         "tx_type_detail": detail,
         "counterparty": payment_method,
+        "source": "repayment_hint" if detail == "repayment_hint" else "",
     }
 
 
@@ -266,6 +275,9 @@ def _dedup_events(events: list) -> list:
     )
     kept = []
     for evt in events:
+        if evt.get("source") == "repayment_hint":
+            kept.append(evt)
+            continue
         duplicate = False
         for other in kept:
             if abs(evt["amount"] - other["amount"]) > 0.01:

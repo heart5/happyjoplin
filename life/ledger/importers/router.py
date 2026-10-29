@@ -67,6 +67,11 @@ class FlowRouter:
         return "outflow" if evt.get("direction", "支出") == "支出" else "inflow"
 
     @staticmethod
+    def _is_repayment_hint(evt: dict) -> bool:
+        return (evt.get("source") == "repayment_hint"
+                or evt.get("tx_type_detail") == "repayment_hint")
+
+    @staticmethod
     def _is_zero_wallet_evt(evt: dict) -> bool:
         return (evt.get("category") == "内部-转账"
                 and evt.get("merchant") in ("零钱提现", "零钱充值"))
@@ -92,12 +97,17 @@ class FlowRouter:
     def route_events(self, wechat_events: list, sms_records: list,
                      notification_events: list = None) -> list:
         flows = []
+        notification_events = notification_events or []
+        hints = [e for e in list(wechat_events) + notification_events
+                 if self._is_repayment_hint(e)]
         sms_records = self._dedup_sms(sms_records)
         used_sms = set()
         used_wx = set()
 
         wx_index = defaultdict(list)
         for i, evt in enumerate(wechat_events):
+            if self._is_repayment_hint(evt):
+                continue
             date = (evt.get("time") or "")[:10]
             amt = round(evt.get("amount", 0), 2)
             if amt > 0:
@@ -156,7 +166,7 @@ class FlowRouter:
 
         # Phase 2: 未归并的微信事件
         for i, evt in enumerate(wechat_events):
-            if i in used_wx:
+            if i in used_wx or self._is_repayment_hint(evt):
                 continue
             if round(evt.get("amount", 0), 2) <= 0:
                 continue
@@ -180,6 +190,8 @@ class FlowRouter:
         flows = self._dedup(flows)
         self._reclassify_internal_transfers(flows)
         self._reclassify_loan_bank_legs(flows)
+        self._reclassify_bank_repayments(flows, hints)
+        self._reclassify_wallet_topups(flows)
         flows.sort(key=lambda f: (f.tx_date or "", f.tx_time or ""))
         return flows
 
@@ -288,6 +300,70 @@ class FlowRouter:
                     # 与贷款腿共用 pair_key，报告按配对去重、不重复计总额
                     f.pair_key = leg.pair_key
                     break
+
+    def _reclassify_bank_repayments(self, flows: list, hints: list):
+        """无商户银行卡扣款 + 同笔还款线索（白条拒付改道、平台还款成功）= 贷款还款。
+
+        线索来自两类消息：京东白条“交易失败通知（来源支付宝、商户还款）”
+        和平台“已最低还款成功”通知。金额明确时要求同额，无金额时只按
+        平台与 5 分钟内时间窗匹配。
+        """
+        if not hints:
+            return
+        for f in flows:
+            if (f.direction != "outflow" or f.tx_type != "consumption"
+                    or not f.account_id):
+                continue
+            mer = f.merchant or ""
+            if not any(b in mer for b in get_bank_names()):
+                continue
+            for h in hints:
+                platform = h.get("merchant") or ""
+                if not platform:
+                    continue
+                amt = round(h.get("amount") or 0, 2)
+                if amt > 0 and abs(amt - f.amount) > 0.01:
+                    continue
+                window = 600 if amt > 0 else 300
+                if (self._time_diff_seconds(f.tx_time, h.get("time") or "")
+                        > window):
+                    continue
+                f.tx_type = "loan_repayment"
+                f.category_id = self._get_category_id("借贷-还款")
+                f.merchant = platform
+                f.counterparty = platform
+                break
+
+    def _reclassify_wallet_topups(self, flows: list):
+        """本账套银行卡扣款 + 另一账套同额“零钱”入账 = 充值微信零钱。
+
+        工作号只采微信聊天，零钱充值通知可能缺失；有入账记录时即可配对，
+        无入账证据时保留原分类，避免臆测。
+        """
+        for f in flows:
+            if (f.direction != "outflow" or f.tx_type != "consumption"
+                    or not f.account_id):
+                continue
+            row = self.db.fetchone(
+                "SELECT type FROM accounts WHERE id=?", (f.account_id,))
+            if not row or row["type"] not in ("bank", "credit_card"):
+                continue
+            if not any(b in (f.merchant or "") for b in get_bank_names()):
+                continue
+            hit = self.db.fetchone(
+                "SELECT merchant FROM account_flows"
+                " WHERE book!=? AND tx_date=? AND direction='inflow'"
+                "   AND abs(amount-?)<=0.01 AND merchant LIKE '%零钱%'"
+                "   AND abs(strftime('%s', tx_time)-strftime('%s', ?))<=1800"
+                " LIMIT 1",
+                (self.book, f.tx_date, f.amount, f.tx_time),
+            )
+            if hit:
+                f.tx_type = "transfer"
+                f.category_id = self._get_category_id("内部-转账")
+                f.merchant = "工作号微信零钱" if self.book == "personal" \
+                    else "微信零钱"
+                f.counterparty = hit["merchant"]
 
     # ── 归并 ──
 
