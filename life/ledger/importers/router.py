@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -993,13 +994,20 @@ class FlowRouter:
     _DUP_SKIP_TYPES = ("transfer", "loan_disbursement", "loan_repayment",
                        "credit_card_repayment", "fee", "adjustment")
 
+    _RE_TXT_TIME_FULL = re.compile(
+        r"(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[时:：](\d{1,2})"
+        r"(?:[分:：](\d{1,2}))?")
+    _RE_TXT_TIME_MD = re.compile(
+        r"(?<!\d)(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[时:：](\d{1,2})"
+        r"(?:[分:：](\d{1,2}))?")
+
     def _merge_duplicate_flows(self, flows: list) -> list:
         """同一笔刷卡交易被两个微信号/银行短信各自播报时只保留一条。
 
-        同一张卡绑在两个微信号上，付款后主号收到银行「信用卡交易提醒」，
-        工作号收到微信支付回执，两者相差几秒；银行短信可能晚到数十分钟。
-        因此同卡同额同向即视为同笔：微信侧按 5 分钟配对，短信按 6 小时
-        配对且要求正文含「财付通/微信」（证明该笔经微信支付）。
+        同一张卡绑在两个微信号上：付款后主号收到银行「信用卡交易提醒」，
+        工作号收到微信支付回执，两者相差几秒；银行短信/App 通知可能
+        晚到数小时（短信 10 小时后才送达也见过）。因此按同卡同额同向
+        分组，用消息正文里的“交易时间”配对，而不是送达时间。
         """
         groups = defaultdict(list)
         for f in flows:
@@ -1014,36 +1022,51 @@ class FlowRouter:
             if len(group) < 2:
                 continue
             group.sort(key=lambda f: (f.tx_time or "", f.source))
-            for i, a in enumerate(group):
-                if id(a) in dead:
-                    continue
-                if not self._is_wechat_source(a.source):
+            mt = {id(f): self._match_time(f) for f in group}
+            for a in group:
+                if id(a) in dead or not self._is_wechat_source(a.source):
                     continue
                 for b in group:
                     if (b is a or id(b) in dead
                             or not self._is_wechat_source(b.source)
                             or b.source == a.source):
                         continue
-                    if self._time_diff_seconds(a.tx_time, b.tx_time) <= 300:
+                    if self._time_diff_seconds(mt[id(a)], mt[id(b)]) <= 300:
                         self._absorb(a, b)
                         dead.add(id(b))
             for a in group:
-                if id(a) in dead or a.source != "sms":
-                    continue
-                if not any(k in (a.raw_data or "") for k in ("财付通", "微信")):
+                if id(a) in dead or a.source not in ("sms", "notification"):
                     continue
                 best = None
                 for b in group:
                     if (id(b) in dead or b is a
                             or not self._is_wechat_source(b.source)):
                         continue
-                    diff = self._time_diff_seconds(a.tx_time, b.tx_time)
+                    diff = self._time_diff_seconds(mt[id(a)], mt[id(b)])
                     if diff <= NOTIF_SMS_WINDOW and (best is None or diff < best[0]):
                         best = (diff, b)
                 if best:
                     self._absorb(best[1], a)
                     dead.add(id(a))
         return [f for f in flows if id(f) not in dead]
+
+    def _match_time(self, f) -> str:
+        """流水对应的交易时间：优先取正文里的“X月X日 X时X分”，退回记录时间。"""
+        text = f.raw_data or ""
+        year = (f.tx_date or "")[:4]
+        m = self._RE_TXT_TIME_FULL.search(text)
+        if m:
+            y, mo, d, h, mi, s = m.groups()
+        else:
+            m = self._RE_TXT_TIME_MD.search(text)
+            if not m:
+                return f.tx_time or ""
+            (mo, d, h, mi, s), y = m.groups(), year
+        try:
+            return "%04d-%02d-%02d %02d:%02d:%02d" % (
+                int(y), int(mo), int(d), int(h), int(mi), int(s or 0))
+        except (TypeError, ValueError):
+            return f.tx_time or ""
 
     def _absorb(self, base, other):
         """把 other 的信息并入 base（保留 base 行）。"""
