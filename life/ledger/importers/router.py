@@ -285,7 +285,7 @@ class FlowRouter:
             and f.tx_type == "transfer" and f.account_id
         ]
         for f in flows:
-            if (f.source != self._wechat_source() or f.direction != "outflow"
+            if (not self._is_wechat_source(f.source) or f.direction != "outflow"
                     or f.tx_type != "consumption" or not f.account_id):
                 continue
             for inc in transfers_in:
@@ -307,7 +307,7 @@ class FlowRouter:
             and f.tx_type == "loan_repayment" and f.direction == "inflow"
         ]
         for f in flows:
-            if (f.source != self._wechat_source() or f.direction != "outflow"
+            if (not self._is_wechat_source(f.source) or f.direction != "outflow"
                     or f.tx_type != "consumption" or not f.account_id):
                 continue
             row = self.db.fetchone(
@@ -442,7 +442,7 @@ class FlowRouter:
                 "credit_card" if "信用卡" in (sms.get("source_text") or "") else "bank")
         if account is None:
             account = self._resolve_wechat_account(payment_method, card_suffix, org)
-        wx_sid = self._event_sid(wx_evt, self._wechat_prefix())
+        wx_sid = self._event_sid(wx_evt, self._source_prefix(wx_evt))
         sms_sid = self._event_sid(sms, "sms")
         sid = "|".join(sorted([wx_sid, sms_sid]))
 
@@ -478,7 +478,7 @@ class FlowRouter:
             category_id=self._get_category_id(category_name),
             merchant=merchant,
             counterparty=merchant,
-            source=self._wechat_source(),
+            source=self._event_source(wx_evt),
             source_event_id=sid,
             source_group_id=self._group_id(sid, amt),
             raw_data=json.dumps({
@@ -504,13 +504,17 @@ class FlowRouter:
             if account is None:
                 account = self._resolve_wechat_account(
                     payment_method, evt.get("card_suffix", ""), evt.get("org", ""))
+        elif evt.get("source") == "refund":
+            # 退款退回原卡/零钱
+            account = self._resolve_wechat_account(
+                payment_method, evt.get("card_suffix", ""), "")
         elif direction == "inflow":
             account = self.acct_mgr.get_wechat_wallet(self.book)
         else:
             account = self._resolve_wechat_account(
                 payment_method, evt.get("card_suffix", ""), "")
 
-        sid = self._event_sid(evt, self._wechat_prefix())
+        sid = self._event_sid(evt, self._source_prefix(evt))
         return AccountFlow(
             book=self.book,
             tx_date=(evt.get("time") or "")[:10],
@@ -522,7 +526,7 @@ class FlowRouter:
             category_id=self._get_category_id(cat_name),
             merchant=merchant,
             counterparty=merchant,
-            source=self._wechat_source(),
+            source=self._event_source(evt),
             source_event_id=sid,
             source_group_id=self._group_id(sid, evt.get("amount", 0)),
             raw_data=json.dumps({"wechat": evt.get("source_text", "")}, ensure_ascii=False),
@@ -900,8 +904,19 @@ class FlowRouter:
     def _wechat_source(self) -> str:
         return "wechat_work" if self.book == "work" else "wechat_main"
 
+    def _event_source(self, evt: dict) -> str:
+        """事件实际来源：个人账套也会收到工作号的卡付事件（_source 标记）。"""
+        return evt.get("_source") or self._wechat_source()
+
+    @staticmethod
+    def _is_wechat_source(src: str) -> bool:
+        return src in ("wechat_main", "wechat_work")
+
     def _wechat_prefix(self) -> str:
         return "wx2" if self.book == "work" else "wxmain"
+
+    def _source_prefix(self, evt: dict) -> str:
+        return "wx2" if self._event_source(evt) == "wechat_work" else "wxmain"
 
     def _wechat_tx_type(self, category: str, direction: str) -> str:
         if category == "借贷-放款":

@@ -235,7 +235,7 @@ SEED_ACCOUNTS = [
     ("personal", "广发信用卡-3708", "credit_card", "广发银行", "3708", None, None, 1),
     ("personal", "光大银行信用卡-3624", "credit_card", "光大银行", "3624", None, None, 1),
     ("personal", "光大银行信用卡-2621", "credit_card", "光大银行", "2621", None, None, 1),
-    ("personal", "浦发银行信用卡-3669", "credit_card", "浦发银行", "3669", None, None, 0),
+    ("personal", "浦发银行信用卡-3669", "credit_card", "浦发银行", "3669", None, None, 1),
     ("personal", "洋钱罐", "loan", None, None, "洋钱罐", None, 1),
     ("personal", "借呗", "loan", None, None, "借呗", None, 1),
     ("personal", "微粒贷", "loan", None, None, "微粒贷", None, 1),

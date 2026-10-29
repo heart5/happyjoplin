@@ -61,9 +61,26 @@ __all__ = [
 # 微信支付 ¥XX.XX paid 消息 — 最干净的消费记录
 RE_PAID = re.compile(r"[￥¥](\d+\.?\d*)\s*paid", re.IGNORECASE)
 
+# 英文回执（工作号常见）：Weixin Pay Receipt[Paid by X￥20.00]
+RE_EN_RECEIPT = re.compile(
+    r"Weixin Pay Receipt.*?[￥¥](\d+\.?\d*)", re.IGNORECASE | re.DOTALL)
+
+# 免密/自动扣费：Deducted: ¥88.00[Auto-renewed by CMB Debit Card(9929)￥88.00]
+RE_DEDUCTED = re.compile(r"Deducted\s*[:：]\s*[￥¥](\d+\.?\d*)", re.IGNORECASE)
+
+# 中文自动扣费：扣费通知[扣费金额￥12.00 ... 支付方式建设银行信用卡(9170)]
+RE_DEDUCT = re.compile(r"扣费金额[：:]?\s*[￥¥](\d+\.?\d*)")
+
+# 旧版支付成功：已支付¥90.00[使用零钱支付￥90.00]
+RE_ALREADY_PAID = re.compile(r"已支付[：:]?\s*[￥¥](\d+\.?\d*)")
+
+# 退款回执：Refund Amount¥7.00 / 退款金额￥X
+RE_REFUND = re.compile(r"(?:Refund Amount|退款金额)\s*[：:]?\s*[￥¥]?\s*(\d+\.?\d*)",
+                       re.IGNORECASE)
+
 # 微信支付凭证 — 含商户名的消费记录（付款金额和商品名称之间换行分隔）
 RE_WXPAY_RECEIPT = re.compile(
-    r"付款金额[￥¥](\d+\.?\d*).*?商品名称(.+?)(?:\n|$)", re.DOTALL
+    r"付款金额[￥¥](\d+\.?\d*).*?商品名称(.+?)(?:\s*\||\n|$)", re.DOTALL
 )
 
 # 银行交易提醒中的金额和商户
@@ -194,43 +211,75 @@ def _parse_amount(text: str) -> float:
 
 
 def _extract_merchant(content: str) -> str:
-    """从微信支付凭证中提取商户名。"""
+    """从微信支付凭证/回执中提取商户名。"""
     m = RE_WXPAY_RECEIPT.search(content)
     if m:
         return m.group(2).strip()
+    for key in ("Merchant Name", "Shop Name", "服务商家", "Service商家", "Service",
+                "商品名称", "扣费项目", "扣费服务", "扣费内容",
+                "Product Details", "Item"):
+        m = re.search(rf"{key}\s*([^|\]|\n]+)", content)
+        if m and m.group(1).strip():
+            return m.group(1).strip()
     return ""
 
 
+# 卡组织缩写（大小写不敏感，长缩写优先匹配，避免 CMB 抢 CMBC）
+_BANK_ABBR = {
+    "CMBC": "民生银行", "CITIC": "中信银行", "PSBC": "邮储银行", "COMM": "交通银行",
+    "SPDB": "浦发银行", "ICBC": "工商银行", "GDB": "广发银行", "CEB": "光大银行",
+    "CMB": "招商银行", "CCB": "建设银行", "ABC": "农业银行", "BOC": "中国银行",
+    "CIB": "兴业银行", "PAB": "平安银行",
+}
+_BANK_CN = (
+    ("广发", "广发银行"), ("招商", "招商银行"), ("建设", "建设银行"),
+    ("工商", "工商银行"), ("农业", "农业银行"), ("中国银行", "中国银行"),
+    ("交通", "交通银行"), ("光大", "光大银行"), ("浦发", "浦发银行"),
+    ("中信", "中信银行"), ("平安", "平安银行"), ("邮储", "邮储银行"),
+    ("民生", "民生银行"), ("兴业", "兴业银行"),
+)
+
+
 def _detect_payment_method(content: str) -> str:
-    """从 paid/凭证消息中检测支付方式。"""
-    for kw, name in (
-        ("广发", "广发信用卡"), ("GDB", "广发信用卡"),
-        ("招商", "招商银行信用卡"), ("CMB", "招商银行信用卡"),
-        ("建设", "建设银行信用卡"), ("CCB", "建设银行信用卡"),
-        ("工商", "工商银行信用卡"), ("农业", "农业银行信用卡"),
-        ("中国银行", "中国银行信用卡"), ("交通", "交通银行信用卡"),
-        ("COMM", "交通银行信用卡"),
-        ("光大", "光大银行信用卡"), ("浦发", "浦发银行信用卡"),
-        ("中信", "中信银行信用卡"), ("平安", "平安银行信用卡"),
-        ("邮储", "邮储银行信用卡"),
-    ):
-        if kw in content:
-            return name
-    if "Balance" in content:
+    """从 paid/凭证消息中检测支付方式（银行名 + 卡种）。"""
+    upper = content.upper()
+    bank = ""
+    for abbr in sorted(_BANK_ABBR, key=len, reverse=True):
+        if abbr in upper:
+            bank = _BANK_ABBR[abbr]
+            break
+    if not bank:
+        for kw, name in _BANK_CN:
+            if kw in content:
+                bank = name
+                break
+    if bank:
+        credit = "CREDIT" in upper or "信用卡" in content
+        debit = "DEBIT" in upper or "储蓄卡" in content or "借记卡" in content
+        return bank + ("信用卡" if credit else ("" if debit else "信用卡"))
+    if "Balance" in content or "零钱" in content:
         return "零钱"
     return "微信支付"
 
 
 _RE_PAYMENT_METHOD = re.compile(
-    r"付款方式\s*([^\n\]()（）]+?)\s*(?:[(（]\s*(\d{4})\s*[)）])?(?:[\]\n]|$)")
-_RE_PAID_BY = re.compile(r"Paid by\s+([^\n(]+?)\s*(?:\((\d{4})\))?")
+    r"(?:付款方式|支付方式)\s*([^\n\]|()（）]+?)\s*(?:[(（]\s*(\d{4})\s*[)）])?"
+    r"\s*(?=[\]|，,;；\n]|$)")
+_RE_PAID_BY = re.compile(
+    r"(?:Paid by|Auto-renewed by|Deducted by)\s+([^\n(￥¥]+?)\s*"
+    r"(?:\((\d{4})\))?\s*(?=[￥¥\]\n]|$)", re.IGNORECASE)
+_RE_USE_PAY = re.compile(r"使用([^\s￥¥\[|\n]+?)支付")
 
 
 def _payment_info(content: str) -> tuple:
     """返回（支付方式, 卡号后四位）。"""
     m = _RE_PAYMENT_METHOD.search(content)
     if m and m.group(1).strip():
-        return m.group(1).strip(), (m.group(2) or "")
+        raw = m.group(1).strip()
+        method = _detect_payment_method(raw)
+        if method == "微信支付" and raw:
+            method = raw
+        return method, (m.group(2) or "")
     m = _RE_PAID_BY.search(content)
     if m:
         raw = m.group(1).strip()
@@ -238,7 +287,27 @@ def _payment_info(content: str) -> tuple:
         if raw.lower() == "balance":
             return "零钱", suffix
         return _detect_payment_method(raw), suffix
+    m = _RE_USE_PAY.search(content)
+    if m:
+        raw = m.group(1).strip()
+        if "零钱" in raw:
+            return "零钱", ""
+        return _detect_payment_method(raw), ""
     return _detect_payment_method(content), ""
+
+
+def _refund_method(content: str) -> tuple:
+    """退款去向：Refund to payment card(CEB 2621) / Refund to balance / Return to COMM (5631)。"""
+    m = re.search(r"(?:Refund to|Return to)\s+([^\n\]|]+)", content, re.IGNORECASE)
+    if not m:
+        return "", ""
+    raw = m.group(1).strip()
+    if "balance" in raw.lower():
+        return "零钱", ""
+    suffix = re.search(r"[(（]\s*(?:\D{2,8}\s*)?(\d{4})\s*[)）]", raw)
+    if suffix:
+        return _detect_payment_method(raw), suffix.group(1)
+    return _detect_payment_method(raw), ""
 
 
 def _extract_bank_merchant(content: str) -> str:
@@ -335,15 +404,45 @@ def _collect_finance_events(messages: list) -> list:
                     events.append(evt)
                     continue
 
+        # ── 退款回执（退回银行卡/零钱）──
+        if sender == "微信支付" and ("Refund Processed Notification" in content
+                                     or "Expired Transfer Refund Alert" in content
+                                     or "退款到账" in content):
+            if "Refund Initiation" in content:
+                continue
+            m = RE_REFUND.search(content)
+            if m:
+                amt = float(m.group(1))
+                if amt > 0:
+                    pm, suffix = _refund_method(content)
+                    if not pm and "Expired Transfer Refund" in content:
+                        pm, suffix = _refund_method(
+                            content.replace("Refund method", "Return to"))
+                    evt["amount"] = amt
+                    evt["source"] = "refund"
+                    evt["direction"] = "收入"
+                    evt["category"] = "收入-退款"
+                    evt["merchant"] = _extract_merchant(content) or "退款"
+                    evt["payment_method"] = pm
+                    if suffix:
+                        evt["card_suffix"] = suffix
+                    events.append(evt)
+                    continue
+
         # ── 微信支付消息 ──
         if sender == "微信支付":
             if any(kw in content for kw in _RE_WXPAY_SKIP):
                 continue
 
-            # paid 消息
-            m = RE_PAID.search(content)
-            if m:
-                amt = float(m.group(1))
+            # 各版本扣款回执：paid / 英文回执 / Deducted / 扣费通知 / 旧版已支付
+            amt = 0.0
+            for pat in (RE_PAID, RE_EN_RECEIPT, RE_DEDUCTED, RE_DEDUCT,
+                        RE_ALREADY_PAID):
+                m = pat.search(content)
+                if m:
+                    amt = float(m.group(1))
+                    break
+            if amt > 0:
                 evt["amount"] = amt
                 if _is_repayment_paid(messages, idx, amt):
                     # 零钱还信用卡：paid 金额=还款金额+手续费，记为内部转账
@@ -357,6 +456,7 @@ def _collect_finance_events(messages: list) -> list:
                     evt["payment_method"] = pm
                     if suffix:
                         evt["card_suffix"] = suffix
+                    evt["merchant"] = _extract_merchant(content)
                 events.append(evt)
                 continue
 
@@ -556,9 +656,12 @@ def _find_companions(events: list, start_idx: int, used: list) -> list:
         if abs(other["amount"] - evt["amount"]) >= 0.01:
             continue
 
-        # paid/voucher 找 bank_expense 补充商户名
+        # 回执/凭证/银行短信之间互相补充（双向，避免顺序不同导致重复计账）
         if evt["source"] in ("paid", "voucher"):
-            if other["source"] in ("bank_expense", "voucher"):
+            if other["source"] in ("bank_expense", "voucher", "paid"):
+                pms = (evt.get("payment_method", ""), other.get("payment_method", ""))
+                if pms[0] and pms[1] and pms[0] != pms[1]:
+                    continue
                 companions.append(j)
 
     return companions
@@ -577,6 +680,7 @@ def _build_record(primary: dict, companions: list) -> dict:
         "merchant": primary["merchant"] or "",
         "direction": primary["direction"],
         "category": primary["category"],
+        "source": primary.get("source", ""),
         "payment_method": primary.get("payment_method", ""),
         "card_suffix": primary.get("card_suffix", ""),
         "source_text": primary.get("source_text", ""),
@@ -591,11 +695,14 @@ def _build_record(primary: dict, companions: list) -> dict:
         # 优先用银行通知的商户名（通常比微信凭证更规范）
         if c["source"] == "bank_expense" and c["merchant"]:
             record["merchant"] = c["merchant"]
-        # 其次用凭证的商户名
-        elif c["source"] == "voucher" and c["merchant"] and not record["merchant"]:
+        # 其次用凭证/回执的商户名
+        elif (c["source"] in ("voucher", "paid") and c["merchant"]
+              and not record["merchant"]):
             record["merchant"] = c["merchant"]
-        # 补充支付方式/卡尾号
-        if c.get("payment_method"):
+        # 补充支付方式/卡尾号（比“微信支付”更具体的优先）
+        if c.get("payment_method") and (
+                not record["payment_method"]
+                or record["payment_method"] in ("微信支付",)):
             record["payment_method"] = c["payment_method"]
         if c.get("card_suffix") and not record["card_suffix"]:
             record["card_suffix"] = c["card_suffix"]

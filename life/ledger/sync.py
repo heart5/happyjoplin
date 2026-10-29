@@ -51,9 +51,12 @@ __all__ = ["FinanceSync", "sync_range", "main"]
 TZ = timezone(timedelta(hours=8))
 
 BOOK_SOURCES = {
-    "personal": ("sms", "wechat_main", "notification"),
+    "personal": ("sms", "wechat_main", "wechat_work", "notification"),
     "work": ("wechat_work",),
 }
+
+# 工作号用银行卡付的款项归个人账套（与个人银行卡短信合并），零钱付款留工作账套
+_CARD_PM_KW = ("信用卡", "储蓄卡", "借记卡", "银行")
 
 EARLIEST_MONTH = {
     "personal": "2022-08",
@@ -108,6 +111,26 @@ def _attach_source_ids(records: list, prefix: str, id_map: dict):
         ids = [str(i) for i in ids if i]
         if ids:
             rec["source_event_id"] = f"{prefix}:" + ",".join(sorted(ids))
+
+
+def _is_card_paid(rec: dict) -> bool:
+    if rec.get("card_suffix"):
+        return True
+    pm = rec.get("payment_method") or ""
+    return any(kw in pm for kw in _CARD_PM_KW)
+
+
+def _split_work_events(records: list, book: str) -> list:
+    """工作号事件按付款方式分账套：卡付→个人，零钱/转账→工作。"""
+    want_card = book == "personal"
+    out = []
+    for rec in records:
+        if _is_card_paid(rec) != want_card:
+            continue
+        rec = dict(rec)
+        rec["_source"] = "wechat_work"
+        out.append(rec)
+    return out
 
 
 def _enrich_categories(records: list, cat_map: dict):
@@ -307,8 +330,14 @@ class FinanceSync:
                 "sources": {s: len(p[0]) for s, p in payloads.items()},
             }
 
-        wechat_events = [r for s in ("wechat_main", "wechat_work")
-                         if s in payloads for r in payloads[s][0]]
+        wechat_events = []
+        for s in ("wechat_main", "wechat_work"):
+            if s not in payloads:
+                continue
+            recs = payloads[s][0]
+            if s == "wechat_work":
+                recs = _split_work_events(recs, book)
+            wechat_events.extend(recs)
         sms_records = payloads["sms"][0] if "sms" in payloads else []
         notification_events = (payloads["notification"][0]
                                if "notification" in payloads else [])
