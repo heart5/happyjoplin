@@ -4,6 +4,7 @@ import hashlib
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from ..db import Database
@@ -22,6 +23,32 @@ _GENERIC_TRANSFER_KW = (
     "跨行", "他行", "转账", "汇款", "转入", "转出",
     "财付通", "支付宝", "微信", "零钱",
 )
+
+_OVERRIDE_CACHE = {"mtime": None, "rules": []}
+
+
+def load_flow_overrides() -> list:
+    """人工确认过的归类规则（data/finance_flow_rules.json）。
+
+    证据不足、无法自动推断的少数流水（如充值工作号零钱、个人往来款）
+    在这里按 账套+日期+方向+金额 固定下来，整月重建后仍然生效。
+    """
+    try:
+        from func.first import getdirmain
+        path = Path(str(getdirmain())) / "data" / "finance_flow_rules.json"
+        mtime = path.stat().st_mtime
+    except Exception:
+        return []
+    if _OVERRIDE_CACHE["mtime"] == mtime:
+        return _OVERRIDE_CACHE["rules"]
+    try:
+        rules = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(rules, list):
+            rules = []
+    except Exception:
+        rules = []
+    _OVERRIDE_CACHE.update(mtime=mtime, rules=rules)
+    return rules
 
 
 class FlowRouter:
@@ -192,6 +219,7 @@ class FlowRouter:
         self._reclassify_loan_bank_legs(flows)
         self._reclassify_bank_repayments(flows, hints)
         self._reclassify_wallet_topups(flows)
+        self._apply_flow_overrides(flows)
         flows.sort(key=lambda f: (f.tx_date or "", f.tx_time or ""))
         return flows
 
@@ -364,6 +392,35 @@ class FlowRouter:
                 f.merchant = "工作号微信零钱" if self.book == "personal" \
                     else "微信零钱"
                 f.counterparty = hit["merchant"]
+
+    def _apply_flow_overrides(self, flows: list):
+        """人工确认的归类规则优先于所有自动推断。"""
+        rules = load_flow_overrides()
+        if not rules:
+            return
+        for rule in rules:
+            if rule.get("book") and rule["book"] != self.book:
+                continue
+            amount = rule.get("amount")
+            for f in flows:
+                if rule.get("date") and rule["date"] != f.tx_date:
+                    continue
+                if (rule.get("direction")
+                        and rule["direction"] != f.direction):
+                    continue
+                if amount is not None and abs(float(amount) - f.amount) > 0.01:
+                    continue
+                if rule.get("tx_type"):
+                    f.tx_type = rule["tx_type"]
+                if rule.get("category"):
+                    f.category_id = self._get_category_id(rule["category"])
+                if rule.get("merchant"):
+                    f.merchant = rule["merchant"]
+                if rule.get("counterparty"):
+                    f.counterparty = rule["counterparty"]
+                if rule.get("notes"):
+                    f.notes = rule["notes"]
+                break
 
     # ── 归并 ──
 

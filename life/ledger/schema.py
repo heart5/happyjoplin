@@ -1,6 +1,6 @@
 # 个人财务系统 — 数据库 Schema（finance.db，复式账本）
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 ACCOUNT_FLOWS_SQL = """
 CREATE TABLE IF NOT EXISTS account_flows (
@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS merchant_category_map (
 -- 调整日志
 CREATE TABLE IF NOT EXISTS adjustment_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    flow_id         INTEGER REFERENCES account_flows(id),
+    flow_id         INTEGER REFERENCES account_flows(id) ON DELETE SET NULL,
     field           TEXT    NOT NULL,
     old_value       TEXT,
     new_value       TEXT,
@@ -314,10 +314,51 @@ def _migrate_flows_source(conn):
         conn.execute("PRAGMA foreign_keys=ON")
 
 
+_ADJUSTMENT_LOG_SQL = """
+CREATE TABLE adjustment_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    flow_id         INTEGER REFERENCES account_flows(id) ON DELETE SET NULL,
+    field           TEXT    NOT NULL,
+    old_value       TEXT,
+    new_value       TEXT,
+    reason          TEXT,
+    adjusted_at     TEXT    DEFAULT (datetime('now','localtime'))
+)
+"""
+
+
+def _migrate_adjustment_log(conn):
+    """调整日志不阻断流水重建：流水平台每月整月重建，删除时把 flow_id 置空。"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='adjustment_log'"
+    ).fetchone()
+    if row is None or "ON DELETE SET NULL" in (row[0] or ""):
+        return
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("ALTER TABLE adjustment_log RENAME TO adjustment_log_old")
+        conn.execute(_ADJUSTMENT_LOG_SQL)
+        conn.execute(
+            "INSERT INTO adjustment_log"
+            " (id, flow_id, field, old_value, new_value, reason, adjusted_at)"
+            " SELECT id, flow_id, field, old_value, new_value, reason, adjusted_at"
+            " FROM adjustment_log_old"
+        )
+        conn.execute("DROP TABLE adjustment_log_old")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
 def init_db(conn):
     """初始化数据库：建表 + 迁移 + 种子数据。"""
     conn.executescript(SCHEMA_SQL)
     _migrate_flows_source(conn)
+    _migrate_adjustment_log(conn)
 
     existing = {r["name"] for r in conn.execute("SELECT name FROM categories").fetchall()}
     for name, direction in SEED_CATEGORIES:
