@@ -586,6 +586,46 @@
         "tx_type_detail": "repayment_out",
         "card_suffix": "5631"
       }
+    },
+    {
+      "name": "cmb_haofenqi_loan",
+      "number": "95555",
+      "body": "【招商银行】您账户9929于09月03日10:39在支付宝-好分期快捷支付662.36元",
+      "expect": {
+        "_skip": false,
+        "amount": 662.36,
+        "direction": "支出",
+        "category": "借贷-还款",
+        "tx_type_detail": "loan_repayment",
+        "card_suffix": "9929"
+      }
+    },
+    {
+      "name": "bocom_guarantee_loan",
+      "number": "95559",
+      "body": "【交通银行】您尾号*5631的卡07月24日12:00在支付宝深圳市茂业融资担保有限公司网上支付755.86元，现余额65.12元",
+      "expect": {
+        "_skip": false,
+        "amount": 755.86,
+        "direction": "支出",
+        "category": "借贷-还款",
+        "tx_type_detail": "loan_repayment",
+        "card_suffix": "5631"
+      }
+    },
+    {
+      "name": "cmb_masked_alipay_person",
+      "number": "95555",
+      "body": "【招商银行】您账户9929于03月27日13:12在支付宝-**峰快捷支付20000.00元。3月必领福利 cmbt.cn/phV 。",
+      "expect": {
+        "_skip": false,
+        "amount": 20000.0,
+        "direction": "支出",
+        "category": "社交-转账",
+        "merchant": "支付宝-**峰",
+        "tx_type_detail": "transfer_out",
+        "card_suffix": "9929"
+      }
     }
   ]
 }

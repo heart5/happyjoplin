@@ -53,11 +53,19 @@ logger = log
 
 __all__ = ["ParsedSMS", "dispatch", "register_bank", "register_fallback"]
 
+def _is_masked_person_pay(merchant: str) -> bool:
+    """支付宝/财付通商户名带 * 掩码 → 个人收款，按社交转账处理。"""
+    return "*" in merchant and any(
+        k in merchant for k in ("支付宝", "财付通", "微信"))
+
+
 # 商户名中出现这些关键词 → 贷款还款（用于网上支付/快捷支付兜底）
 _LOAN_MERCHANT_KW = (
     "京东金融", "借呗", "花呗", "微粒贷", "美团月付", "美团借钱",
     "洋钱罐", "小赢", "宜享花", "招联", "中邮", "分期乐",
     "马上消费", "安逸花", "白条", "网商贷", "度小满", "有钱花",
+    # 好分期走中金支付；各平台代扣常以“XX融资担保有限公司”名义扣款
+    "好分期", "融资担保", "微财科技",
 )
 
 # ── 返回数据结构 ──
@@ -382,14 +390,19 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
     if m_quick:
         amount = float(m_quick.group(2))
         merchant = m_quick.group(1)
-        is_transfer = "转账" in merchant
-        is_repay = "还款" in merchant and not is_transfer
+        is_loan = any(k in merchant for k in _LOAN_MERCHANT_KW)
+        is_transfer = ("转账" in merchant or _is_masked_person_pay(merchant)) \
+            and not is_loan
+        is_repay = "还款" in merchant and not is_loan and not is_transfer
         return ParsedSMS(
             amount=amount, direction="支出", card_suffix=card_suffix,
             merchant=merchant, counterparty=merchant, bank_name="招商银行",
-            category=("内部-转账" if is_repay else
+            is_loan=is_loan,
+            category=("借贷-还款" if is_loan else
+                      "内部-转账" if is_repay else
                       "社交-转账" if is_transfer else "未分类-其他"),
-            tx_type_detail=("repayment_out" if is_repay else
+            tx_type_detail=("loan_repayment" if is_loan else
+                            "repayment_out" if is_repay else
                             "transfer_out" if is_transfer else "consumption"),
         )
 
@@ -410,14 +423,19 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
     if m_online_pay:
         amount = float(m_online_pay.group(2))
         merchant = _strip_trailing(m_online_pay.group(1))
-        is_transfer = "转账" in merchant
-        is_repay = "还款" in merchant and not is_transfer
+        is_loan = any(k in merchant for k in _LOAN_MERCHANT_KW)
+        is_transfer = ("转账" in merchant or _is_masked_person_pay(merchant)) \
+            and not is_loan
+        is_repay = "还款" in merchant and not is_loan and not is_transfer
         return ParsedSMS(
             amount=amount, direction="支出", card_suffix=card_suffix,
             merchant=merchant, counterparty=merchant, bank_name="招商银行",
-            category=("内部-转账" if is_repay else
+            is_loan=is_loan,
+            category=("借贷-还款" if is_loan else
+                      "内部-转账" if is_repay else
                       "社交-转账" if is_transfer else "未分类-其他"),
-            tx_type_detail=("repayment_out" if is_repay else
+            tx_type_detail=("loan_repayment" if is_loan else
+                            "repayment_out" if is_repay else
                             "transfer_out" if is_transfer else "consumption"),
         )
 
@@ -559,7 +577,8 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
     if m_online:
         merchant = _strip_trailing(m_online.group(2))
         is_loan = any(k in merchant for k in _LOAN_MERCHANT_KW)
-        is_transfer = "转账" in merchant
+        is_transfer = ("转账" in merchant or _is_masked_person_pay(merchant)) \
+            and not is_loan
         is_repay = "还款" in merchant and not is_loan and not is_transfer
         return ParsedSMS(
             amount=float(m_online.group(3)), direction="支出",
