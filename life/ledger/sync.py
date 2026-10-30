@@ -45,6 +45,7 @@ from life.wechat_finance import (
 )
 from life.sms_finance import parse_sms_records, _get_sms_api_key
 from .notifications import fetch_notifications
+from .reclassify import reclassify_unclassified
 
 __all__ = ["FinanceSync", "sync_range", "main"]
 
@@ -292,8 +293,8 @@ class FinanceSync:
             "finished_at": now if status != "running" else None,
         }, conflict_cols=["book", "source", "period"])
 
-    def sync_month(self, book: str, month_key: str,
-                   force: bool = False, dry_run: bool = False) -> dict:
+    def sync_month(self, book: str, month_key: str, force: bool = False,
+                   dry_run: bool = False, reclassify: bool = True) -> dict:
         sources = BOOK_SOURCES[book]
         payloads = {}
         failed = False
@@ -360,6 +361,14 @@ class FinanceSync:
             _, count, digest, _ = payloads[source]
             self._mark(book, source, month_key, digest, "ok", count)
 
+        if reclassify:
+            try:
+                stats = reclassify_unclassified(self.db)
+                log.info(f"[{book}] {month_key} 重分类："
+                         f"{stats['updated']}/{stats['candidates']} 条")
+            except Exception as e:
+                log.warning(f"[{book}] {month_key} 重分类失败：{e}")
+
         year, month = int(month_key[:4]), int(month_key[5:7])
         self.tx_mgr(book).calculate_all_balances(year, month, book=book)
 
@@ -371,21 +380,24 @@ class FinanceSync:
         }
 
     def sync_range(self, months: list, books: list, force: bool = False,
-                   dry_run: bool = False) -> list:
+                   dry_run: bool = False, reclassify: bool = True) -> list:
         results = []
         for month_key in months:
             for book in books:
                 if month_key < EARLIEST_MONTH[book]:
                     continue
-                res = self.sync_month(book, month_key, force=force, dry_run=dry_run)
+                res = self.sync_month(book, month_key, force=force,
+                                      dry_run=dry_run, reclassify=reclassify)
                 results.append(res)
                 log.info(f"[{book}] {month_key} → {res['status']}")
         return results
 
 
 def sync_range(months: list, books: list, force: bool = False,
-               dry_run: bool = False, db: Database = None) -> list:
-    return FinanceSync(db).sync_range(months, books, force=force, dry_run=dry_run)
+               dry_run: bool = False, db: Database = None,
+               reclassify: bool = True) -> list:
+    return FinanceSync(db).sync_range(months, books, force=force,
+                                      dry_run=dry_run, reclassify=reclassify)
 
 
 # ── CLI ──
@@ -402,6 +414,9 @@ def main(argv=None) -> int:
                         help="从各账套最早数据回填到当前月")
     parser.add_argument("--force", action="store_true", help="忽略 md5 跳过")
     parser.add_argument("--dry-run", action="store_true", help="只拉取统计，不写入")
+    parser.add_argument("--no-reclassify", dest="reclassify",
+                        action="store_false",
+                        help="同步后不按分类表重映射未分类流水")
     args = parser.parse_args(argv)
 
     books = [b.strip() for b in args.books.split(",") if b.strip()]
@@ -422,7 +437,8 @@ def main(argv=None) -> int:
 
     sync = FinanceSync()
     results = sync.sync_range(months, books, force=args.force,
-                              dry_run=args.dry_run)
+                              dry_run=args.dry_run,
+                              reclassify=args.reclassify)
     counts = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1

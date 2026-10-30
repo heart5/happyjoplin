@@ -1,0 +1,240 @@
+{
+  "_note": "脱敏自 2026-10 HCX 实测微信/短信消息；金额与卡尾号保留原样以便对账",
+  "wechat_cases": [
+    {
+      "name": "paid_balance",
+      "messages": [
+        {"id": 1, "time": "2026-09-01 10:00:00", "send": false, "sender": "微信支付", "type": "text", "content": "¥4788.79 paid[Paid by Balance¥4788.79]"}
+      ],
+      "expect": [
+        {"amount": 4788.79, "direction": "支出", "source": "paid", "category": "未分类-其他", "payment_method": "零钱", "merchant": ""}
+      ]
+    },
+    {
+      "name": "paid_transfer_card",
+      "messages": [
+        {"id": 2, "time": "2026-09-02 11:00:00", "send": false, "sender": "微信支付", "type": "text", "content": "¥100.00 paid[Paid by COMM Debit Card¥100.00\nTransaction StatusThe payment was successful and the other party has received the money]"}
+      ],
+      "expect": [
+        {"amount": 100.0, "direction": "支出", "source": "transfer_paid", "category": "社交-转账", "merchant": "微信转账", "payment_method": "交通银行"}
+      ]
+    },
+    {
+      "name": "paid_transfer_balance",
+      "messages": [
+        {"id": 3, "time": "2026-09-02 12:00:00", "send": false, "sender": "微信支付", "type": "text", "content": "¥25.00 paid[Paid by Balance¥25.00\nTransaction StatusThe payment was successful and the other party has received the money]"}
+      ],
+      "expect": [
+        {"amount": 25.0, "direction": "支出", "source": "transfer_paid", "category": "社交-转账", "merchant": "微信转账", "payment_method": "零钱"}
+      ]
+    },
+    {
+      "name": "meituan_pair_merged",
+      "messages": [
+        {"id": 4, "time": "2026-10-29 21:39:36", "send": false, "sender": "浦发银行信用卡", "type": "text", "content": "交易提醒[银行卡号：尾号3669\n交易时间：10月29日 21:39\n交易类型：消费\n交易金额：人民币23.10元\n商户名称：（特约）美团-美团App巧八角]"},
+        {"id": 5, "time": "2026-10-29 21:39:41", "send": false, "sender": "美团钱包", "type": "text", "content": "支付成功提醒[支付单号：26102911100301670008741310476401\n支付时间：2026年10月29日 21:39\n支付金额：23.10元\n支付方式：浦发银行信用卡(3669)]"}
+      ],
+      "expect": [
+        {"amount": 23.1, "direction": "支出", "source": "paid", "merchant": "美团-美团App巧八角", "payment_method": "浦发银行信用卡", "card_suffix": "3669"}
+      ]
+    },
+    {
+      "name": "ccb_agreement_repayment",
+      "messages": [
+        {"id": 6, "time": "2023-03-25 09:00:00", "send": false, "sender": "中国建设银行", "type": "text", "content": "事件提醒[您尾号2133的龙卡信用卡已于03月25日从约定账户成功扣款人民币135.94元。若全额还款还需存入人民币1997.06元。请在03月27日前将款项存入约定账户中。\n事件类型：约定还款提醒\n事件时间：2023年03月25日\n]"}
+      ],
+      "expect": [
+        {"amount": 135.94, "direction": "收入", "source": "bank_income", "category": "内部-转账", "merchant": "信用卡还款", "card_suffix": "2133"}
+      ]
+    },
+    {
+      "name": "ccb_card_repayment_realtime",
+      "messages": [
+        {"id": 7, "time": "2026-10-22 11:59:30", "send": false, "sender": "中国建设银行", "type": "text", "content": "实时交易提醒[交易时间：10月22日 11时59分\n交易类型：尾号2133信用卡还款\n交易金额：15.65（人民币）]"}
+      ],
+      "expect": [
+        {"amount": 15.65, "direction": "收入", "source": "bank_income", "category": "内部-转账", "merchant": "信用卡还款", "card_suffix": "2133"}
+      ]
+    },
+    {
+      "name": "ccb_debit_expense",
+      "messages": [
+        {"id": 8, "time": "2026-10-25 07:07:50", "send": false, "sender": "中国建设银行", "type": "text", "content": "交易提醒[交易时间:2026年10月25日 07:07:43\n交易类型:支出（尾号7939储蓄账户）\n交易币种:人民币\n交易金额:6.60\n交易说明:点击查看余额及明细]"}
+      ],
+      "expect": [
+        {"amount": 6.6, "direction": "支出", "source": "bank_expense", "card_suffix": "7939"}
+      ]
+    },
+    {
+      "name": "spdb_consume_standalone",
+      "messages": [
+        {"id": 9, "time": "2026-10-29 21:39:36", "send": false, "sender": "浦发银行信用卡", "type": "text", "content": "交易提醒[银行卡号：尾号3669\n交易时间：10月29日 21:39\n交易类型：消费\n交易金额：人民币23.10元\n商户名称：（特约）美团-美团App巧八角]"}
+      ],
+      "expect": [
+        {"amount": 23.1, "direction": "支出", "source": "bank_expense", "merchant": "美团-美团App巧八角", "payment_method": "浦发银行信用卡", "card_suffix": "3669"}
+      ]
+    },
+    {
+      "name": "cmb_online_consume",
+      "messages": [
+        {"id": 10, "time": "2026-08-01 06:58:00", "send": false, "sender": "招商银行信用卡", "type": "text", "content": "交易成功提醒[交易时间：尾号8256信用卡08月01日06:57\n交易类型：消费-个人消费卡\n交易金额：99.79人民币\n交易商户：支付宝-中国电信股份有限公司全渠道运\n可用额度：￥960.34]"}
+      ],
+      "expect": [
+        {"amount": 99.79, "direction": "支出", "source": "bank_expense", "merchant": "中国电信股份有限公司全渠道运", "payment_method": "招商银行信用卡", "card_suffix": "8256"}
+      ]
+    },
+    {
+      "name": "abc_travel_income",
+      "messages": [
+        {"id": 11, "time": "2022-03-17 10:07:00", "send": false, "sender": "中国农业银行微银行", "type": "text", "content": "交易提醒[您尾号为8574的农行卡最新交易信息:\n\n账号类型：借记卡\n交易时间：2022-03-17 10:06:55\n交易类型：差旅费\n交易金额：2692.00\n可用余额：2694.44]"}
+      ],
+      "expect": [
+        {"amount": 2692.0, "direction": "收入", "source": "bank_income", "category": "收入-其他", "merchant": "差旅费", "card_suffix": "8574"}
+      ]
+    },
+    {
+      "name": "abc_transfer_out",
+      "messages": [
+        {"id": 12, "time": "2022-03-17 11:54:00", "send": false, "sender": "中国农业银行微银行", "type": "text", "content": "交易提醒[您尾号为8574的农行卡最新交易信息:\n\n账号类型：借记卡\n交易时间：2022-03-17 11:53:16\n交易类型：转支\n交易金额：-2690.00\n可用余额：4.44]"}
+      ],
+      "expect": [
+        {"amount": 2690.0, "direction": "支出", "source": "bank_expense", "category": "社交-转账", "card_suffix": "8574"}
+      ]
+    },
+    {
+      "name": "abc_daifu_in",
+      "messages": [
+        {"id": 13, "time": "2022-10-09 11:02:00", "send": false, "sender": "中国农业银行微银行", "type": "text", "content": "交易提醒[您尾号为8574的农行卡最新交易信息:\n\n账号类型：借记卡\n交易时间：2022-10-09 11:01:32\n交易类型：平安代付\n交易金额：2664.00\n可用余额：2666.87]"}
+      ],
+      "expect": [
+        {"amount": 2664.0, "direction": "收入", "source": "bank_income", "category": "社交-转账", "card_suffix": "8574"}
+      ]
+    },
+    {
+      "name": "wx_refund_receipt",
+      "messages": [
+        {"id": 14, "time": "2026-10-20 12:52:10", "send": false, "sender": "微信支付", "type": "text", "content": "Refund Processed Notification[Refund Amount¥2.00\nProduct Details销售商品\nMerchant Name邻客便利店\nRefund MethodRefund to payment card(CEB 2621)\nProcessed Time2026/10/20 12:52:07]"}
+      ],
+      "expect": [
+        {"amount": 2.0, "direction": "收入", "source": "refund", "category": "收入-退款", "merchant": "邻客便利店", "card_suffix": "2621"}
+      ]
+    },
+    {
+      "name": "refund_receipt_and_bank_notice",
+      "messages": [
+        {"id": 15, "time": "2026-10-28 13:59:10", "send": false, "sender": "光大银行信用卡", "type": "text", "content": "信用卡交易提醒[交易时间:2026年10月28日 13:59\n交易类型:尾号2621信用卡,退货\n交易金额:7.00元\n交易商户:退款 支付宝 中国铁路网络有限公司\n可用额度:￥1000.00]"},
+        {"id": 16, "time": "2026-10-28 13:59:20", "send": false, "sender": "微信支付", "type": "text", "content": "Refund Processed Notification[Refund Amount¥7.00\nProduct Details湘缘便利店(0034)\nMerchant Name白云区湘缘便利店\nRefund MethodRefund to payment card(CEB 2621)\nProcessed Time2026/10/28 13:59:05]"}
+      ],
+      "expect": [
+        {"amount": 7.0, "direction": "收入", "category": "收入-退款", "merchant": "白云区湘缘便利店", "card_suffix": "2621"}
+      ]
+    },
+    {
+      "name": "bank_failure_spdb_ignored",
+      "messages": [
+        {"id": 17, "time": "2026-08-01 06:56:30", "send": false, "sender": "浦发银行信用卡", "type": "text", "content": "交易失败提醒[交易卡号:625958******3669\n交易时间:08月01日 06:56\n交易金额:人民币99.79\n失败原因:余额不足\n处理建议:如有疑问请联系卡片背面客服热线咨询]"}
+      ],
+      "expect": []
+    },
+    {
+      "name": "bank_failure_bocom_ignored",
+      "messages": [
+        {"id": 18, "time": "2026-10-16 17:58:10", "send": false, "sender": "交通银行信用卡买单吧", "type": "text", "content": "交易失败提醒[交易卡号:2349\n交易时间:2026年10月16日 17:58\n交易金额:￥99.79\n失败原因:额度不足\n处理建议:积分可抵扣消费，点击详情了解更多]"}
+      ],
+      "expect": []
+    },
+    {
+      "name": "marketing_ignored",
+      "messages": [
+        {"id": 19, "time": "2026-10-20 09:00:00", "send": false, "sender": "招商银行信用卡", "type": "text", "content": "招行卡好用，手机支付至高抽1111元券包[11.11大促号角已吹响！活动时间：2026年10月15日至11月30日]"}
+      ],
+      "expect": []
+    }
+  ],
+  "sms_cases": [
+    {
+      "name": "abc_salary",
+      "number": "95599",
+      "received": "2026-08-05 12:44:00",
+      "body": "【中国农业银行】您尾号4476账户08月05日12:43完成工资交易人民币10839.07，余额10856.36，详见掌银。",
+      "expect": {"_skip": false, "amount": 10839.07, "direction": "收入", "category": "收入-工资", "merchant": "工资", "tx_type_detail": "salary", "card_suffix": "4476"}
+    },
+    {
+      "name": "abc_daifu_in",
+      "number": "95599",
+      "received": "2026-08-13 12:38:00",
+      "body": "【中国农业银行】您尾号8574账户08月13日12:37完成代付交易人民币4012.10，余额6458.46，详见掌银。",
+      "expect": {"_skip": false, "amount": 4012.1, "direction": "收入", "category": "收入-转账", "merchant": "代付", "tx_type_detail": "transfer_in", "card_suffix": "8574"}
+    },
+    {
+      "name": "bocom_transfer_in",
+      "number": "95559",
+      "received": "2026-10-29 17:46:00",
+      "body": "【交通银行】您尾号*5631的卡于2026年10月29日17:45网络支付转入1488.96元,交易后余额为1488.96元。",
+      "expect": {"_skip": false, "amount": 1488.96, "direction": "收入", "category": "收入-转账", "merchant": "网络支付转入", "tx_type_detail": "transfer_in", "card_suffix": "5631"}
+    },
+    {
+      "name": "bocom_wallet_recharge",
+      "number": "95559",
+      "received": "2026-10-29 17:46:00",
+      "body": "【交通银行】您尾号*5631的卡10月29日17:45在财付通微信零钱充值账户网上支付1400.00元，现余额88.96元",
+      "expect": {"_skip": false, "amount": 1400.0, "direction": "支出", "tx_type_detail": "consumption", "card_suffix": "5631"}
+    },
+    {
+      "name": "ccb_agreement_sms",
+      "number": "106980095533",
+      "received": "2026-10-25 10:00:00",
+      "body": "【建设银行】您尾号9170的龙卡信用卡已于10月25日从约定账户成功扣款人民币6.60元。若全额还款还需存入人民币3512.80元。请在10月27日前将款项存入约定账户中，将视同按时还款，如已归还请忽略。查明细s.ccb.cn/s/a/b8n",
+      "expect": {"_skip": false, "amount": 6.6, "direction": "收入", "category": "内部-转账", "merchant": "信用卡还款", "tx_type_detail": "repayment_in", "card_suffix": "9170"}
+    },
+    {
+      "name": "telecom_payment",
+      "number": "10000",
+      "received": "2026-10-29 07:00:00",
+      "body": "【缴费成功提醒】尊敬的客户，您已于2026-10-29 06:59:35成功缴费100.0元，您可登录中国电信APP查询充值记录。【中国电信】",
+      "expect": {"_skip": false, "amount": 100.0, "direction": "支出", "category": "通讯-话费", "merchant": "中国电信", "tx_type_detail": "consumption"}
+    },
+    {
+      "name": "telecom_balance_warning_ignored",
+      "number": "10000",
+      "received": "2026-10-27 11:47:00",
+      "body": "【余额不足提醒】尊敬的客户，您好！截至27日11时46分，您账户可用余额为18.89元，当可用余额为0元时，影响套餐内所有产品正常使用，建议您尽快缴费。【中国电信】",
+      "expect": {"_skip": true}
+    },
+    {
+      "name": "unicom_order_ignored",
+      "number": "10010",
+      "received": "2026-10-25 10:00:00",
+      "body": "【中国联通】尊敬的联通用户，您于2026年10月25日在中国联通APP订购7元7GB7日包活动版（贵州）-立即生效（编号：24GZ300459）已办理成功，产品资费为7元/次。",
+      "expect": {"_skip": true}
+    },
+    {
+      "name": "ccb_failure_ignored",
+      "number": "95533",
+      "received": "2026-10-29 12:45:00",
+      "body": "【建设银行】您尾号2620的龙卡信用卡因额度不足，于12:44交易失败。当前可用额度50.54元。",
+      "expect": {"_skip": true}
+    },
+    {
+      "name": "ccb_agreement_failed_ignored",
+      "number": "106980095533",
+      "received": "2026-10-25 10:00:00",
+      "body": "【建设银行】您尾号9170的龙卡信用卡人民币账户本期约定还款应扣人民币3512.80元，实际扣款未成功。该卡本期账单还需还款人民币3512.80元。",
+      "expect": {"_skip": true}
+    },
+    {
+      "name": "bocom_overdue_ignored",
+      "number": "95559",
+      "received": "2026-10-20 10:00:00",
+      "body": "您尾号2349交行信用卡人民币账户已逾期，2026-10-19账单应还款额为32074.55，当前最低还款额为15011.29。",
+      "expect": {"_skip": true}
+    },
+    {
+      "name": "spdb_verification_ignored",
+      "number": "95528",
+      "received": "2026-10-29 10:00:00",
+      "body": "动态验证码446498，您正在财付通开通快捷支付功能，签约后扣款无需银行卡密码。请勿泄露验证码，谨防诈骗。【浦发银行】",
+      "expect": {"_skip": true}
+    }
+  ]
+}

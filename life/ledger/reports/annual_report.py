@@ -17,9 +17,14 @@ def generate_annual_report(db: Database, year: int,
     flows = fetch_year_flows(db, book, year)
 
     consumption = [f for f in flows if f["tx_type"] == "consumption"]
-    income = [f for f in flows if f["tx_type"] == "income"]
+    # 退款按分类识别（账本不产生 tx_type='refund'）：单独冲减消费，不计收入
+    refunds = [f for f in flows
+               if f["direction"] == "inflow"
+               and (f.get("category_name") or "") == "收入-退款"]
+    income = [f for f in flows
+              if f["tx_type"] == "income"
+              and (f.get("category_name") or "") != "收入-退款"]
     fees = [f for f in flows if f["tx_type"] == "fee"]
-    refunds = [f for f in flows if f["tx_type"] == "refund"]
     transfers = [f for f in flows if f["tx_type"] == "transfer"]
 
     spend = sum_dir(consumption, "outflow") - sum_dir(refunds, "inflow")
@@ -55,11 +60,13 @@ def generate_annual_report(db: Database, year: int,
     for f in flows:
         m = monthly[f["tx_date"][:7]]
         m["n"] += 1
-        if f["tx_type"] == "income" and f["direction"] == "inflow":
+        if (f["tx_type"] == "income" and f["direction"] == "inflow"
+                and (f.get("category_name") or "") != "收入-退款"):
             m["inc"] += f["amount"]
         elif f["tx_type"] == "consumption" and f["direction"] == "outflow":
             m["spend"] += f["amount"]
-        elif f["tx_type"] == "refund" and f["direction"] == "inflow":
+        elif (f["direction"] == "inflow"
+              and (f.get("category_name") or "") == "收入-退款"):
             m["spend"] -= f["amount"]
         elif f["tx_type"] == "fee" and f["direction"] == "outflow":
             m["spend"] += f["amount"]

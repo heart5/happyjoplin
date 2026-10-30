@@ -40,6 +40,14 @@ import pathmagic
 with pathmagic.context():
     from func.logme import log
 
+from life.bank_tx_kind import (
+    CARD_REPAYMENT,
+    category_for_kind,
+    classify_tx_kind,
+    is_income_kind,
+    strip_txn_suffix,
+)
+
 # 添加 joplinai 路径以便导入 WeChatClient
 JOPLINAI = Path(__file__).resolve().parent.parent.parent / "joplinai"
 if str(JOPLINAI) not in sys.path:
@@ -87,7 +95,8 @@ RE_WXPAY_RECEIPT = re.compile(
 RE_BANK_AMOUNT = re.compile(r"交易金额[：:]\s*([\d]+\.?\d*)")  # 交易金额：210.00
 RE_BANK_MERCHANT = re.compile(r"交易商户[：:]\s*(.+?)(?:\n|$)")
 RE_BANK_CARD = re.compile(
-    r"(?:尾号|交易卡号[：:]?)\s*(\d{4})\s*(储蓄卡|借记卡|信用卡)?")
+    r"(?:尾号|交易卡号[：:]?)\s*(?:[^\d\n]{0,6}[（(]?)?\s*(\d{4})"
+    r"\s*(储蓄卡|借记卡|信用卡)?")
 RE_BANK_TX_TYPE = re.compile(r"交易类型[：:]\s*([^\n\r]+)")
 RE_BANK_SUMMARY = re.compile(r"摘\s*要[：:]\s*([^\n\r]+)")
 RE_BANK_PARTY = re.compile(r"交易对象[：:]\s*([^\n\r]+)")
@@ -214,13 +223,13 @@ def _extract_merchant(content: str) -> str:
     """从微信支付凭证/回执中提取商户名。"""
     m = RE_WXPAY_RECEIPT.search(content)
     if m:
-        return m.group(2).strip()
+        return _normalize_merchant(m.group(2))
     for key in ("Merchant Name", "Shop Name", "服务商家", "Service商家", "Service",
                 "商品名称", "扣费项目", "扣费服务", "扣费内容",
                 "Product Details", "Item"):
         m = re.search(rf"{key}\s*([^|\]|\n]+)", content)
         if m and m.group(1).strip():
-            return m.group(1).strip()
+            return _normalize_merchant(m.group(1))
     return ""
 
 
@@ -263,8 +272,8 @@ def _detect_payment_method(content: str) -> str:
 
 
 _RE_PAYMENT_METHOD = re.compile(
-    r"(?:付款方式|支付方式)\s*([^\n\]|()（）]+?)\s*(?:[(（]\s*(\d{4})\s*[)）])?"
-    r"\s*(?=[\]|，,;；\n]|$)")
+    r"(?:付款方式|支付方式)\s*[：:]?\s*([^\n\]|()（）]+?)\s*"
+    r"(?:[(（]\s*(?:尾号)?\s*(\d{4})\s*[)）])?\s*(?=[\]|，,;；\n]|$)")
 _RE_PAID_BY = re.compile(
     r"(?:Paid by|Auto-renewed by|Deducted by)\s+([^\n(￥¥]+?)\s*"
     r"(?:\((\d{4})\))?\s*(?=[￥¥\]\n]|$)", re.IGNORECASE)
@@ -312,16 +321,60 @@ def _refund_method(content: str) -> tuple:
 
 RE_BANK_MERCHANT_INLINE = re.compile(
     r"在([^\n，,。；;]{2,30}?)(?:消费|支出|扣款|付款|支付)[\d￥¥]?")
+RE_BANK_MERCHANT_FIELD = re.compile(
+    r"(?:商户名称|交易商户|商户)[：:]\s*([^\n|\]]+)")
+RE_BANK_AMOUNT_FIELD = re.compile(
+    r"交易金额[：:]\s*(?:人民币|￥|¥)?\s*(-?[\d,]+\.?\d*)")
+RE_BANK_AGREEMENT = re.compile(r"从约定账户成功扣款人民币(\d+\.?\d*)元")
+
+_SERVICE_AMOUNT_PATS = (
+    re.compile(r"支付金额[：:]\s*(?:人民币|￥|¥)?\s*([\d,]+\.?\d*)"),
+    re.compile(r"还款金额[：:]\s*(?:人民币|￥|¥)?\s*([\d,]+\.?\d*)"),
+    re.compile(r"扣款人民币([\d,]+\.?\d*)元"),
+    re.compile(r"缴费(?:金额)?[：:]?\s*(?:人民币|￥|¥)?\s*([\d,]+\.?\d*)元"),
+)
+
+_RE_MERCHANT_PREFIX = re.compile(r"^(?:支付宝-)+|^(?:财付通-|微信支付-)+|^（特约）")
+_RE_MERCHANT_SUFFIX = re.compile(r"(?:-消费|-快捷支付|消费)$")
+
+
+def _parse_bank_amount(content: str) -> float:
+    """交易金额字段优先，避免误取可用额度/余额。"""
+    m = RE_BANK_AMOUNT_FIELD.search(content)
+    if m:
+        return float(m.group(1).replace(",", ""))
+    for pat in _SERVICE_AMOUNT_PATS:
+        m = pat.search(content)
+        if m:
+            return float(m.group(1).replace(",", ""))
+    return _parse_amount(content)
+
+
+def _normalize_merchant(name: str) -> str:
+    """去渠道前缀/后缀；渠道自身也作为商户兜底（支付宝/微信扫码）。"""
+    if not name:
+        return ""
+    raw = name.strip()
+    out = _RE_MERCHANT_PREFIX.sub("", raw)
+    out = _RE_MERCHANT_SUFFIX.sub("", out).strip(" -—")
+    if "扫二维码付款" in out or "扫二维码付款" in raw:
+        return "微信扫码"
+    if not out or out in ("消费", "财付通微信支付", "微信支付"):
+        return "支付宝" if raw.startswith("支付宝") else ""
+    return out
 
 
 def _extract_bank_merchant(content: str) -> str:
-    """从银行交易提醒中提取商户名。"""
+    """从银行交易提醒/公众号通知中提取商户名。"""
+    m = RE_BANK_MERCHANT_FIELD.search(content)
+    if m and m.group(1).strip():
+        return _normalize_merchant(m.group(1))
     m = RE_BANK_MERCHANT.search(content)
     if m:
-        return m.group(1).strip()
+        return _normalize_merchant(m.group(1))
     m = RE_BANK_MERCHANT_INLINE.search(content)
     if m:
-        return m.group(1).strip()
+        return _normalize_merchant(m.group(1))
     return ""
 
 
@@ -347,6 +400,27 @@ def _is_bank_sender(sender: str) -> bool:
 
 _RE_REPAY_AMOUNT = re.compile(r"还款金额[:：]\s*[￥¥]?\s*([\d,]+\.?\d*)")
 _RE_REPAY_FEE = re.compile(r"还款手续费[:：]\s*[￥¥]?\s*([\d,]+\.?\d*)")
+
+
+_RE_PAID_TRANSFER = re.compile(
+    r"other party has received the money|对方已收款|转账给", re.IGNORECASE)
+
+
+def _is_paid_transfer(content: str) -> bool:
+    """paid 回执备注「对方已收款」= 转给个人，不是商户消费。"""
+    return bool(_RE_PAID_TRANSFER.search(content))
+
+
+def _service_event(sender: str, content: str) -> dict:
+    """服务号/公众号交易通知模板：命中返回事件字段，否则空 dict。"""
+    # 美团钱包：支付成功提醒[..支付金额：23.10元..支付方式：浦发银行信用卡(3669)]
+    if sender == "美团钱包" and "支付成功提醒" in content:
+        amt = _parse_bank_amount(content)
+        if amt > 0:
+            pm, suffix = _payment_info(content)
+            return {"amount": amt, "merchant": "美团", "payment_method": pm,
+                    "card_suffix": suffix, "source": "paid"}
+    return {}
 
 
 def _is_repayment_paid(messages: list, idx: int, paid_amount: float) -> bool:
@@ -457,6 +531,16 @@ def _collect_finance_events(messages: list) -> list:
                     evt["merchant"] = "信用卡还款"
                     evt["category"] = "内部-转账"
                     evt["payment_method"] = "零钱"
+                elif _is_paid_transfer(content):
+                    # 转给个人：英文回执无商户，直接记转账（支出）
+                    evt["source"] = "transfer_paid"
+                    evt["direction"] = "支出"
+                    evt["category"] = "社交-转账"
+                    evt["merchant"] = "微信转账"
+                    pm, suffix = _payment_info(content)
+                    evt["payment_method"] = pm
+                    if suffix:
+                        evt["card_suffix"] = suffix
                 else:
                     evt["source"] = "paid"
                     pm, suffix = _payment_info(content)
@@ -480,6 +564,14 @@ def _collect_finance_events(messages: list) -> list:
                         evt["card_suffix"] = suffix
                     events.append(evt)
                     continue
+            continue
+
+        # ── 服务号/公众号交易通知（美团钱包等）──
+        svc = _service_event(sender, content)
+        if svc:
+            evt.update(svc)
+            evt["direction"] = "支出"
+            events.append(evt)
             continue
 
         # ── 转账卡片（工作号 Sharing 消息，双侧同额各一条）──
@@ -556,27 +648,73 @@ def _collect_finance_events(messages: list) -> list:
 
         # ── 银行/信用卡消息 ──
         if _is_bank_sender(sender):
-            # 先走跳过关键词（还款/账单/分期/失败/退款/退税等），过滤非消费
-            is_skip = any(kw in content for kw in _RE_BANK_SKIP_KW)
-            if is_skip:
+            # 约定账户自动扣款 = 信用卡还款的账户侧（含“还款”字样，须先于过滤）
+            m_agree = RE_BANK_AGREEMENT.search(content)
+            if m_agree:
+                evt["amount"] = float(m_agree.group(1))
+                evt["direction"] = "收入"
+                evt["source"] = "bank_income"
+                evt["org"] = sender
+                evt["merchant"] = "信用卡还款"
+                evt["category"] = "内部-转账"
+                m_card = RE_BANK_CARD.search(content)
+                if m_card:
+                    evt["card_suffix"] = m_card.group(1)
+                events.append(evt)
                 continue
 
-            # “交易类型”字段优先；否则才用正文关键词。
+            # “交易类型”字段优先；否则才用摘要/交易对象/正文关键词。
             # 交易对象里的“消费金融”不能把收入通知误判成消费。
             m_type = RE_BANK_TX_TYPE.search(content)
             explicit = m_type.group(1).strip() if m_type else ""
-            is_refund = any(k in explicit for k in ("退货", "退款", "冲正"))
-            if explicit:
-                is_income = is_refund or any(
-                    k in explicit for k in ("收入", "转入", "存入", "入账"))
-                is_transfer = any(k in explicit for k in ("转入", "转出", "转账", "汇款"))
+            m_sum = RE_BANK_SUMMARY.search(content)
+            summary = m_sum.group(1).strip() if m_sum else ""
+            m_party = RE_BANK_PARTY.search(content)
+            party = m_party.group(1).strip() if m_party else ""
+            party = re.sub(r"^\d+\*+\d+\s*", "", party)
+
+            kind, _kw = classify_tx_kind(explicit or summary or party)
+            evt["tx_kind"] = kind or ""
+            is_refund = kind == "refund"
+            is_cc_repay = kind == CARD_REPAYMENT
+            is_transfer = kind == "transfer"
+            debit_acct = any(k in content for k in (
+                "储蓄卡", "借记卡", "储蓄账户", "您账户"))
+            credit_acct = "信用卡" in content
+
+            # 交易金额字段优先，避免误取“可用额度/余额”；农行等把收支
+            # 符号写在金额里（负数=支出），须先于关键词判定方向。
+            m_amt_field = RE_BANK_AMOUNT_FIELD.search(content)
+            amt_signed = (float(m_amt_field.group(1).replace(",", ""))
+                          if m_amt_field else None)
+
+            # 提醒/账单/失败类跳过；但带“交易金额”的还款/退款是真实交易
+            is_skip = any(kw in content for kw in _RE_BANK_SKIP_KW)
+            if is_skip and not (
+                    kind in (CARD_REPAYMENT, "refund") and amt_signed is not None):
+                continue
+
+            if amt_signed is not None and amt_signed < 0:
+                is_income, is_expense = False, True
+            elif kind:
+                is_income = is_cc_repay or is_income_kind(kind) or is_transfer
                 is_expense = not is_income
             else:
                 is_income = any(kw in content for kw in _RE_BANK_INCOME_KW)
                 is_expense = (not is_income) and any(
                     kw in content for kw in _RE_BANK_CONSUME_KW)
-                is_transfer = ("转账" in content or "汇款" in content) and not any(
-                    kw in content for kw in _RE_BANK_CONSUME_KW)
+                # 借记卡“交易金额”为正且无其它线索 → 入账
+                if (not (is_income or is_expense) and amt_signed is not None
+                        and amt_signed > 0 and debit_acct and not credit_acct):
+                    is_income = True
+            if is_cc_repay:
+                # 还款腿方向：储蓄账户出、信用卡入
+                if any(k in content for k in ("还款支出", "支出人民币")):
+                    is_income, is_expense = False, True
+                elif debit_acct and not credit_acct:
+                    is_income, is_expense = False, True
+                else:
+                    is_income, is_expense = True, False
             if not (is_income or is_expense):
                 continue
 
@@ -584,37 +722,53 @@ def _collect_finance_events(messages: list) -> list:
             if m_card:
                 evt["card_suffix"] = m_card.group(1)
 
-            # 用 RE_BANK_AMOUNT 提取交易金额，避免误取“可用额度”
-            m = RE_BANK_AMOUNT.search(content)
-            amt = float(m.group(1)) if m else _parse_amount(content)
+            amt = (abs(amt_signed) if amt_signed is not None
+                   else _parse_bank_amount(content))
             if amt <= 0:
                 continue
             evt["amount"] = amt
             evt["direction"] = "收入" if is_income else "支出"
             evt["source"] = "bank_income" if is_income else "bank_expense"
             evt["org"] = sender
-            evt["merchant"] = _extract_bank_merchant(content) or sender
 
-            m_sum = RE_BANK_SUMMARY.search(content)
-            summary = m_sum.group(1).strip() if m_sum else ""
-            m_party = RE_BANK_PARTY.search(content)
-            party = m_party.group(1).strip() if m_party else ""
-            party = re.sub(r"^\d+\*+\d+\s*", "", party)
+            merchant = _extract_bank_merchant(content)
+            if kind == "income" and (not merchant or merchant == sender):
+                merchant = strip_txn_suffix(summary or explicit) or merchant
+            evt["merchant"] = merchant or sender
+
             transfer_hint = any(k in (summary + party) for k in (
                 "转账", "汇入", "银联入账", "提现", "转存"))
             loan_hint = any(k in (summary + party) for k in (
                 "放款", "消费金融", "借款到账", "贷款发放"))
 
-            if is_income:
-                if is_refund:
-                    evt["category"] = "收入-退款"
-                elif loan_hint:
+            kind_cat = category_for_kind(kind, evt["merchant"])
+            if is_cc_repay:
+                evt["category"] = "内部-转账"
+                evt["merchant"] = "信用卡还款"
+            elif is_refund:
+                evt["category"] = "收入-退款"
+            elif is_transfer:
+                evt["category"] = (
+                    "内部-转账" if "白晔峰" in content else "社交-转账")
+            elif kind == "income":
+                if kind_cat == "收入-工资" or not transfer_hint:
+                    evt["category"] = kind_cat
+                else:
+                    evt["category"] = (
+                        "内部-转账" if "白晔峰" in content else "社交-转账")
+                    evt["merchant"] = party or evt["merchant"]
+            elif kind_cat:
+                evt["category"] = kind_cat
+            elif is_income:
+                if loan_hint:
                     evt["category"] = "借贷-放款"
                     evt["merchant"] = party or evt["merchant"]
                 elif transfer_hint:
                     evt["category"] = (
                         "内部-转账" if "白晔峰" in content else "社交-转账")
                     evt["merchant"] = party or evt["merchant"]
+                else:
+                    evt["category"] = "收入-其他"
             elif "白晔峰" in content:
                 evt["category"] = "内部-转账"
             elif is_transfer or transfer_hint:
@@ -654,16 +808,30 @@ def _find_companions(events: list, start_idx: int, used: list) -> list:
     companions = []
     n = len(events)
 
-    for j in range(start_idx + 1, n):
+    # 银行通知常先于微信回执到达，须双向查找同一窗口内的事件
+    window = []
+    j = start_idx - 1
+    while j >= 0:
+        ts = _parse_time_seconds(events[j]["time"])
+        if ts > 0 and base_ts - ts > _MERGE_WINDOW:
+            break
+        if ts > 0:
+            window.append(j)
+        j -= 1
+    j = start_idx + 1
+    while j < n:
+        ts = _parse_time_seconds(events[j]["time"])
+        if ts > 0 and ts - base_ts > _MERGE_WINDOW:
+            break
+        if ts > 0:
+            window.append(j)
+        j += 1
+    window.sort()
+
+    for j in window:
         if used[j]:
             continue
         other = events[j]
-        other_ts = _parse_time_seconds(other["time"])
-        if other_ts <= 0:
-            continue
-        diff = other_ts - base_ts
-        if diff > _MERGE_WINDOW:
-            break
         if abs(other["amount"] - evt["amount"]) >= 0.01:
             continue
 
@@ -674,6 +842,9 @@ def _find_companions(events: list, start_idx: int, used: list) -> list:
                 if pms[0] and pms[1] and pms[0] != pms[1]:
                     continue
                 companions.append(j)
+        # 微信退款回执 + 银行退款通知 = 同一笔退款
+        elif evt["source"] == "refund" and other["source"] == "bank_income":
+            companions.append(j)
 
     return companions
 
@@ -750,6 +921,30 @@ def parse_finance_messages(messages: list) -> list:
         uniq.append(evt)
     events = uniq
 
+    # 转账卡片/退款回执的时间表：同一笔交易的两条通知只记一次
+    card_transfer_times = [
+        (round(e["amount"], 2), e["time"])
+        for e in events if e["source"] == "transfer"
+    ]
+    refund_receipt_times = [
+        (round(e["amount"], 2), e["time"])
+        for e in events if e["source"] == "refund"
+    ]
+
+    def _has_near(times: list, evt: dict) -> bool:
+        amt = round(evt["amount"], 2)
+        ts = _parse_time_seconds(evt["time"])
+        for c_amt, c_time in times:
+            if c_amt != amt:
+                continue
+            c_ts = _parse_time_seconds(c_time)
+            if ts <= 0 or c_ts <= 0 or abs(ts - c_ts) <= 600:
+                return True
+        return False
+
+    def _is_card_transfer(evt: dict) -> bool:
+        return _has_near(card_transfer_times, evt)
+
     n = len(events)
     used = [False] * n
     records = []
@@ -789,12 +984,35 @@ def parse_finance_messages(messages: list) -> list:
             used[i] = True
             continue
 
+        # 微信 paid 转账回执（“对方已收款”无商户）：记转账而非消费；
+        # 与转账卡片同额同笔时以卡片为准，避免双计
+        if evt["source"] == "transfer_paid":
+            used[i] = True
+            if _is_card_transfer(evt):
+                continue
+            records.append({
+                "time": evt["time"], "amount": evt["amount"],
+                "merchant": evt["merchant"] or "微信转账",
+                "direction": "支出", "category": "社交-转账",
+                "source": "transfer_paid",
+                "payment_method": evt.get("payment_method", ""),
+                "card_suffix": evt.get("card_suffix", ""),
+                "source_text": evt.get("source_text", ""), "raw": evt["raw"],
+                "source_ids": [evt["raw"].get("id")],
+            })
+            continue
+
         # transfer 由 pass 2 按 (sender, amount, 日期) 分组去重
         if evt["source"] == "transfer":
             continue
 
-        # bank_income 直接产生收入记录（无对应微信支付通知）
+        # bank_income 直接产生收入记录（无对应微信支付通知）；
+        # 银行退款通知与微信退款回执同笔时以回执为准，避免双计
         if evt["source"] == "bank_income":
+            if (evt.get("category") == "收入-退款"
+                    and _has_near(refund_receipt_times, evt)):
+                used[i] = True
+                continue
             records.append({
                 "time": evt["time"], "sender": evt["raw"].get("sender", ""),
                 "amount": evt["amount"], "merchant": evt["merchant"] or evt["raw"].get("sender", ""),

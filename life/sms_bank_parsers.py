@@ -44,6 +44,11 @@ import pathmagic
 with pathmagic.context():
     from func.logme import log
 
+from life.bank_tx_kind import (
+    CARD_REPAYMENT, REFUND, TRANSFER,
+    category_for_kind, classify_tx_kind, tx_detail_for_kind,
+)
+
 logger = log
 
 __all__ = ["ParsedSMS", "dispatch", "register_bank", "register_fallback"]
@@ -622,12 +627,25 @@ def _parse_ccb(body: str, number: str) -> Optional[ParsedSMS]:
                              _skip=True)
 
     # --- 格式8：借记卡 → 信用卡还款 ---
+    # --- 约定账户自动扣款 → 信用卡还款入账（卡侧这条腿）---
+    m_agree = re.search(
+        r"您尾号(\d{4})的龙卡信用卡.*?从约定账户成功扣款人民币([\d,]+\.?\d*)元", body)
+    if m_agree:
+        return ParsedSMS(
+            amount=float(m_agree.group(2).replace(",", "")), direction="收入",
+            card_suffix=m_agree.group(1),
+            merchant="信用卡还款", counterparty="建设银行", bank_name="建设银行",
+            category="内部-转账",
+            tx_type_detail="repayment_in",
+        )
+
     m_card_repay = re.search(r"您尾号(\d{4})的储蓄卡.*?向白晔峰信用卡卡号还款支出人民币(\d+\.?\d*)元", body)
     if m_card_repay:
         return ParsedSMS(
             amount=float(m_card_repay.group(2)), direction="支出",
             card_suffix=m_card_repay.group(1),
             merchant="信用卡还款", counterparty="建设银行", bank_name="建设银行",
+            category="内部-转账",
             tx_type_detail="transfer",  # 储蓄卡→信用卡，内部转账
         )
 
@@ -791,23 +809,29 @@ def _parse_abc(body: str, number: str) -> Optional[ParsedSMS]:
         signed = float(m_income.group(3))
         amt = abs(signed)
         txn_type = m_income.group(2)
+        # 交易类型自由文本：工资/奖励、代付/转存、网银在线、支付宝……
+        kind, _kw = classify_tx_kind(txn_type)
         # "向您尾号…账户完成" = 对方转入；负金额 = 支出；其余正金额 = 收入
-        if "向您尾号" in body:
-            direction, detail_type = "收入", "transfer_in"
-        elif signed < 0:
-            direction = "支出"
-            detail_type = "transfer_out" if "向" in body else "consumption"
-        else:
+        if "向您尾号" in body or signed >= 0:
             direction = "收入"
-            detail_type = "salary" if "奖金" in txn_type else "income"
+            if kind == TRANSFER:
+                category, detail_type = "收入-转账", "transfer_in"
+            elif kind == REFUND:
+                category, detail_type = "收入-退款", "income"
+            else:
+                category = category_for_kind(kind, txn_type) or "收入-其他"
+                detail_type = ("salary" if category == "收入-工资" else "income")
+        else:
+            direction = "支出"
+            detail_type = "transfer_out" if kind == TRANSFER or "向" in body \
+                else "consumption"
+            category = ("内部-转账" if kind == TRANSFER and "白晔峰" in body
+                        else "社交-转账" if kind == TRANSFER else "未分类-其他")
         return ParsedSMS(
             amount=amt, direction=direction,
             card_suffix=m_income.group(1),
             merchant=txn_type, counterparty="", bank_name="农业银行",
-            category=("收入-工资" if detail_type == "salary"
-                      else "收入-转账" if detail_type == "transfer_in"
-                      else "未分类-其他"),
-            tx_type_detail=detail_type,
+            category=category, tx_type_detail=detail_type,
         )
 
     # --- 格式2 + 6：转支 / 支出 ---
@@ -973,6 +997,40 @@ def _parse_spdb(body: str, number: str) -> Optional[ParsedSMS]:
     return ParsedSMS(amount=0, direction="支出", card_suffix="",
                      merchant="", counterparty="", bank_name="浦发银行",
                      _skip=True)
+
+
+# ══════════════════════════════════════════
+#  运营商缴费 (10000/10001 电信, 10010 联通, 10086 移动)
+# ══════════════════════════════════════════
+
+_TELECOM_CARRIER = {
+    "10000": "中国电信", "10001": "中国电信",
+    "10010": "中国联通", "10086": "中国移动",
+}
+_RE_TELECOM_PAY = re.compile(
+    r"(?:成功缴费|缴费成功|成功充值|充值成功|成功交纳|交纳成功)"
+    r"[^\d]{0,6}?([\d.]+)\s*元")
+
+
+def _parse_telecom(body: str, number: str) -> Optional[ParsedSMS]:
+    """运营商缴费/充值成功提醒 → 通讯-话费；营销/余额提醒跳过。"""
+    carrier = _TELECOM_CARRIER.get(number[:5])
+    if not carrier:
+        return None
+    m = _RE_TELECOM_PAY.search(body)
+    if not m:
+        return ParsedSMS(amount=0, direction="支出", card_suffix="",
+                         merchant="", counterparty="", bank_name=carrier,
+                         _skip=True)
+    return ParsedSMS(
+        amount=abs(float(m.group(1))), direction="支出", card_suffix="",
+        merchant=carrier, counterparty=carrier, bank_name=carrier,
+        category="通讯-话费", tx_type_detail="consumption",
+    )
+
+
+for _telecom_prefix in _TELECOM_CARRIER:
+    register_bank(_telecom_prefix)(_parse_telecom)
 
 
 # ── 兜底解析器 ──

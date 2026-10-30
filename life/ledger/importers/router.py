@@ -450,7 +450,7 @@ class FlowRouter:
 
         # 银行短信能识别还款/贷款等特殊类型时，优先采用短信侧口径
         sms_type = self._sms_tx_type_from_record(sms)
-        wx_type = self._wechat_tx_type(cat_name, direction)
+        wx_type = self._wechat_tx_type(cat_name, direction, merchant)
         if sms_type in ("credit_card_repayment", "loan_disbursement",
                         "loan_repayment", "fee"):
             tx_type = sms_type
@@ -524,7 +524,7 @@ class FlowRouter:
             amount=round(evt.get("amount", 0), 2),
             account_id=account.id if account else None,
             direction=direction,
-            tx_type=self._wechat_tx_type(cat_name, direction),
+            tx_type=self._wechat_tx_type(cat_name, direction, merchant),
             category_id=self._get_category_id(cat_name),
             merchant=merchant,
             counterparty=merchant,
@@ -920,11 +920,14 @@ class FlowRouter:
     def _source_prefix(self, evt: dict) -> str:
         return "wx2" if self._event_source(evt) == "wechat_work" else "wxmain"
 
-    def _wechat_tx_type(self, category: str, direction: str) -> str:
+    def _wechat_tx_type(self, category: str, direction: str,
+                        merchant: str = "") -> str:
         if category == "借贷-放款":
             return "loan_disbursement"
         if category == "借贷-还款":
             return "loan_repayment"
+        if category == "内部-转账" and "信用卡还款" in (merchant or ""):
+            return "credit_card_repayment"
         if category.startswith("内部-") or category in ("社交-转账", "收入-转账"):
             return "transfer"
         if category.startswith("收入-") or direction == "inflow":

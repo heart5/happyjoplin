@@ -99,12 +99,34 @@ def cmd_sync(args):
         argv.append("--force")
     if args.dry_run:
         argv.append("--dry-run")
+    if not args.reclassify:
+        argv.append("--no-reclassify")
     return sync_main(argv)
 
 
 def cmd_import_all(args):
     from .sync import main as sync_main
     return sync_main(["--month", args.month, "--books", args.books])
+
+
+def cmd_doctor(args):
+    from .doctor import main as doctor_main
+    argv = ["--books", args.books, "--months", str(args.months)]
+    if args.month:
+        argv += ["--month", args.month]
+    if args.from_month:
+        argv += ["--from-month", args.from_month]
+    if args.to_month:
+        argv += ["--to-month", args.to_month]
+    if args.publish:
+        argv.append("--publish")
+    if args.force:
+        argv.append("--force")
+    if args.dry_run:
+        argv.append("--dry-run")
+    if args.json:
+        argv.append("--json")
+    return doctor_main(argv)
 
 
 def cmd_status(args):
@@ -275,6 +297,9 @@ def main(argv=None):
     p_sync.add_argument("--backfill", action="store_true")
     p_sync.add_argument("--force", action="store_true")
     p_sync.add_argument("--dry-run", dest="dry_run", action="store_true")
+    p_sync.add_argument("--no-reclassify", dest="reclassify",
+                        action="store_false",
+                        help="同步后不按分类表重映射未分类流水")
 
     p_import = sub.add_parser("import")
     p_import_sub = p_import.add_subparsers(dest="source")
@@ -355,6 +380,17 @@ def main(argv=None):
     p_pub.add_argument("--force", action="store_true")
     p_pub.add_argument("--dry-run", dest="dry_run", action="store_true")
 
+    p_doc = sub.add_parser("doctor", help="数据体检（只读，可发布）")
+    p_doc.add_argument("--month")
+    p_doc.add_argument("--months", type=int, default=3)
+    p_doc.add_argument("--from-month", dest="from_month")
+    p_doc.add_argument("--to-month", dest="to_month")
+    p_doc.add_argument("--books", default="personal,work")
+    p_doc.add_argument("--publish", action="store_true")
+    p_doc.add_argument("--force", action="store_true")
+    p_doc.add_argument("--dry-run", dest="dry_run", action="store_true")
+    p_doc.add_argument("--json", action="store_true")
+
     args = parser.parse_args(argv)
 
     cmd_map = {
@@ -374,6 +410,7 @@ def main(argv=None):
         ("report", "credit-cards"): cmd_report_credit_cards,
         ("report", "accounts"): cmd_report_accounts,
         ("publish", None): cmd_publish,
+        ("doctor", None): cmd_doctor,
     }
     key = (args.cmd, getattr(args, "action", None)
            or getattr(args, "source", None)
