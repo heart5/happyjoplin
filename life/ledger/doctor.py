@@ -60,8 +60,12 @@ def _is_unclassified(flow: dict) -> bool:
 
 
 def _text_of(flow: dict) -> str:
-    return " ".join(str(x) for x in (
-        flow["merchant"], flow["counterparty"], flow["raw_data"]) if x)
+    """语义线索只看商户/对手方；两者都缺时退回原始文本。
+
+    原始回执常带「去报销」这类用户备注，混进来会把正常消费误报成收入。
+    """
+    core = " ".join(str(x) for x in (flow["merchant"], flow["counterparty"]) if x)
+    return core or (flow["raw_data"] or "")
 
 
 def _blank_source() -> dict:
@@ -70,6 +74,7 @@ def _blank_source() -> dict:
 
 
 def _acc_spend(stat: dict, flow: dict):
+    stat["n"] += 1
     if flow["tx_type"] != "consumption" or flow["direction"] != "outflow":
         return
     stat["cons_n"] += 1
@@ -120,7 +125,9 @@ def collect(db: Database, books: tuple, months: list) -> dict:
                 transfer_suspects.append(f)
             elif _SUSPECT_INCOME.search(text):
                 income_suspects.append(f)
-        if f["account_id"] and f["tx_type"] != "adjustment":
+        if (f["account_id"]
+                and f["tx_type"] not in ("adjustment", "transfer",
+                                         "loan_disbursement", "loan_repayment")):
             key = (f["book"], f["account_id"], f["tx_date"], f["direction"],
                    round(f["amount"], 2))
             dup_groups[key].append(f)

@@ -220,6 +220,7 @@ class FlowRouter:
         self._reclassify_internal_transfers(flows)
         self._reclassify_loan_bank_legs(flows)
         self._reclassify_bank_repayments(flows, hints)
+        self._pair_repayment_legs(flows)
         self._reclassify_wallet_topups(flows)
         self._apply_flow_overrides(flows)
         flows.sort(key=lambda f: (f.tx_date or "", f.tx_time or ""))
@@ -992,10 +993,32 @@ class FlowRouter:
         else:
             flows.append(result)
 
+    def _pair_repayment_legs(self, flows: list):
+        """储蓄账户扣款 + 信用卡还款入账 同日同额 → 扣款腿记为还款转出。
+
+        建行「从约定账户成功扣款」只通知卡侧入账；对应的储蓄账户扣款
+        没有商户，会被记成消费，等于把还款重复算进支出。
+        """
+        keys = {(f.tx_date, round(f.amount, 2)) for f in flows
+                if f.tx_type == "credit_card_repayment"
+                and f.direction == "inflow"}
+        if not keys:
+            return
+        cat = self._get_category_id("内部-转账")
+        for f in flows:
+            mer = f.merchant or ""
+            if (f.tx_type != "consumption" or f.direction != "outflow"
+                    or (f.tx_date, round(f.amount, 2)) not in keys
+                    or not any(b in mer for b in get_bank_names())):
+                continue
+            f.tx_type = "credit_card_repayment"
+            f.merchant = "信用卡还款"
+            f.category_id = cat
+
     # ── 跨来源去重（同卡同额同向）──
 
     _DUP_SKIP_TYPES = ("transfer", "loan_disbursement", "loan_repayment",
-                       "credit_card_repayment", "fee", "adjustment")
+                       "fee", "adjustment")
 
     _RE_TXT_TIME_FULL = re.compile(
         r"(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2})[时:：](\d{1,2})"
