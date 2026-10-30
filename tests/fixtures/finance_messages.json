@@ -654,6 +654,33 @@
         "tx_type_detail": "income",
         "card_suffix": "9929"
       }
+    },
+    {
+      "name": "bocom_guarantee_gateway_loan",
+      "number": "95559",
+      "body": "【交通银行】您尾号*5631的卡09月01日03:01在易宝支付大和融担网上支付1801.78元，现余额1198.22元",
+      "expect": {
+        "_skip": false,
+        "amount": 1801.78,
+        "direction": "支出",
+        "category": "借贷-还款",
+        "merchant": "易宝支付大和融担",
+        "tx_type_detail": "loan_repayment",
+        "card_suffix": "5631"
+      }
+    },
+    {
+      "name": "cmb_online_jd_lender_loan",
+      "number": "95555",
+      "body": "【招商银行】您账户9929于09月01日18:22在网银在线-宿迁达润信息科技有限公司(京…快捷支付1356.92元",
+      "expect": {
+        "_skip": false,
+        "amount": 1356.92,
+        "direction": "支出",
+        "category": "借贷-还款",
+        "tx_type_detail": "loan_repayment",
+        "card_suffix": "9929"
+      }
     }
   ]
 }
