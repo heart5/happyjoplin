@@ -14,8 +14,14 @@ __all__ = ["generate_credit_cards_report"]
 
 _RE_TAIL = re.compile(r"尾号\s*(\d{4})")
 _RE_AVAILABLE = re.compile(
-    r"当前可用额度(?:人民币)?\s*(-?\d+(?:\.\d+)?)\s*元")
+    r"(?:当前)?可用额度(?:人民币)?\s*(-?\d+(?:\.\d+)?)\s*元")
 _RE_OVER = re.compile(r"已超过信用额度\s*(\d+(?:\.\d+)?)\s*元")
+_RE_MINIMUM = re.compile(
+    r"最低还款(?:额)?(?:为)?(?:人民币|￥|¥)?\s*([\d,]+\.?\d*)")
+_RE_REMAINING = re.compile(
+    r"(?:当期剩余应还|账单剩余应还金额|还需还款)[^\d￥¥$]{0,8}"
+    r"(?:人民币|￥|¥)?\s*([\d,]+\.?\d*)")
+_RE_DUE = re.compile(r"到期还款日(?:为)?\s*(\d{1,2})月(\d{1,2})日")
 
 
 def _recent_months(anchor: datetime, count: int = 3) -> list:
@@ -27,8 +33,26 @@ def _recent_months(anchor: datetime, count: int = 3) -> list:
     return out
 
 
+def _signals_from_body(body: str) -> dict:
+    """从单条银行短信提取额度/账单/还款日线索。"""
+    out = {}
+    if "可用额度" in body:
+        m = _RE_AVAILABLE.search(body)
+        if m:
+            out["available"] = float(m.group(1))
+    for key, pattern in (("over", _RE_OVER), ("minimum", _RE_MINIMUM),
+                         ("remaining_due", _RE_REMAINING)):
+        m = pattern.search(body)
+        if m:
+            out[key] = float(m.group(1).replace(",", ""))
+    m = _RE_DUE.search(body)
+    if m:
+        out["due_date"] = f"{int(m.group(1)):02d}月{int(m.group(2)):02d}日"
+    return out
+
+
 def _available_credit(days: int = 45) -> dict:
-    """从最近短信提取各卡最新可用额度（尽力而为，失败返回空）。"""
+    """从最近短信提取各卡最新额度与还款信息（尽力而为，失败返回空）。"""
     try:
         from ..cloudcfg import get_sms_api_url
         from life.sms_finance import _get_sms_api_key
@@ -47,29 +71,17 @@ def _available_credit(days: int = 45) -> dict:
         return {}
 
     latest = {}
-    over = {}
     for msg in sorted(data.get("records", []),
                       key=lambda m: m.get("received") or "", reverse=True):
         body = msg.get("body") or ""
         tail = _RE_TAIL.search(body)
         if not tail:
             continue
-        suffix = tail.group(1)
-        if "可用额度" in body:
-            m = _RE_AVAILABLE.search(body)
-            if m and suffix not in latest:
-                latest[suffix] = {
-                    "available": float(m.group(1)),
-                    "as_of": (msg.get("received") or "")[:10],
-                }
-        m = _RE_OVER.search(body)
-        if m and suffix not in over:
-            over[suffix] = {
-                "over": float(m.group(1)),
-                "as_of": (msg.get("received") or "")[:10],
-            }
-    for suffix, info in over.items():
-        latest.setdefault(suffix, {}).update(info)
+        info = latest.setdefault(tail.group(1), {})
+        for key, value in _signals_from_body(body).items():
+            info.setdefault(key, value)
+        if info:
+            info.setdefault("as_of", (msg.get("received") or "")[:10])
     return latest
 
 
@@ -151,25 +163,27 @@ def generate_credit_cards_report(db: Database, as_of: str = None,
     lines.append("")
 
     if credit:
-        lines += ["## 短信额度观察", "",
-                  "| 尾号 | 可用额度 | 超限金额 | 短信日期 |",
-                  "|------|------|------|------|"]
+        lines += ["## 短信额度与还款观察", "",
+                  "| 尾号 | 可用额度 | 超限金额 | 剩余应还 | 最低还款 | 到期还款日 | 短信日期 |",
+                  "|------|------|------|------|------|------|------|"]
         for c in cards:
             tail = c["card_suffix"]
             info = credit.get(tail)
             if not info:
                 continue
-            avail = info.get("available")
-            over = info.get("over")
             lines.append(
-                f"| {tail} | {money(avail) if avail is not None else '—'} | "
-                f"{money(over) if over else '—'} | {info.get('as_of', '—')} |")
+                f"| {tail} | {money(info['available']) if 'available' in info else '—'} | "
+                f"{money(info['over']) if 'over' in info else '—'} | "
+                f"{money(info['remaining_due']) if 'remaining_due' in info else '—'} | "
+                f"{money(info['minimum']) if 'minimum' in info else '—'} | "
+                f"{info.get('due_date', '—')} | {info.get('as_of', '—')} |")
         lines.append("")
-        lines.append("*可用额度取最近一条含「当前可用额度」的短信；负数或超限表示已超信用额度。*")
+        lines.append("*各项取最近一条相关短信的数值；负数额度或超限表示已超信用额度，"
+                     "账单金额与最低还款来自银行提醒短信，仅作参考。*")
         lines.append("")
     else:
-        lines += ["## 短信额度观察", "",
-                  "未获取到额度短信（可稍后重试或检查短信 API）。", ""]
+        lines += ["## 短信额度与还款观察", "",
+                  "未获取到额度/还款短信（可稍后重试或检查短信 API）。", ""]
 
     lines += ["## 通知额度与还款观察", ""]
     sig_rows = []

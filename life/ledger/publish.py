@@ -24,6 +24,7 @@ BOOK_TITLES = {"personal": "个人", "work": "工作号"}
 # 报告正文含实时生成时间；md5 计算前归一化，避免每次重发
 _TS_RE = re.compile(
     r"((?:生成|生成时间|更新时间)[：:]\s*)\d{4}-\d{2}-\d{2} \d{2}:\d{2}")
+_CHART_RE = re.compile(r"\{\{chart:([\w-]+)\}\}")
 
 
 def _sanitize(body: str) -> str:
@@ -80,7 +81,8 @@ class JoplinPublisher:
         return None
 
     def publish(self, title: str, body: str, notebook: str = SYSTEM_NOTEBOOK,
-                force: bool = False, dry_run: bool = False) -> str:
+                force: bool = False, dry_run: bool = False,
+                chart_paths: dict = None) -> str:
         body = _sanitize(body)
         digest = _stable_digest(body)
         stored_digest = self.cfg.get(title, "md5", fallback=None)
@@ -93,21 +95,55 @@ class JoplinPublisher:
             return "dry-run"
 
         # func.jpfuncs 首次导入时连接 Joplin；延迟到真正发布时
-        from func.jpfuncs import createnote, updatenote_body
+        from func.jpfuncs import (
+            createnote, getnote, jpapi, prune_removed_resources,
+            updatenote_body, upsertresource,
+        )
 
         parent_id = self._notebook_id(notebook)
         note = self._find_note(title, parent_id)
 
         if note is not None:
-            updatenote_body(note.id, body)
-            self._save_state(title, note.id, digest)
-            log.info(f"已更新笔记《{title}》（{note.id}）于《{notebook}》")
-            return "updated"
+            note_id = note.id
+            old_body = getnote(note_id).body or ""
+            created = False
+        else:
+            skeleton = _CHART_RE.sub(
+                lambda m: f"_（图表上传中：{m.group(1)}）_", body)
+            note_id = createnote(title, skeleton, parent_id=parent_id)
+            old_body = ""
+            created = True
 
-        note_id = createnote(title, body, parent_id=parent_id)
+        final_body = body
+        if chart_paths:
+            replacement = {}
+            for label, path in chart_paths.items():
+                try:
+                    resource_id = upsertresource(
+                        old_body, str(path), label,
+                        title=f"finance_{label}.png")
+                    if f":/{resource_id}" not in old_body:
+                        jpapi.add_resource_to_note(
+                            resource_id=resource_id, note_id=note_id)
+                    replacement[label] = f"![{label}](:/{resource_id})"
+                except Exception as exc:
+                    log.warning(f"图表上传失败 {label}：{exc}")
+                    replacement[label] = f"_（图表上传失败：{label}）_"
+            final_body = _CHART_RE.sub(
+                lambda m: replacement.get(
+                    m.group(1), f"_（图表缺失：{m.group(1)}）_"), body)
+        else:
+            final_body = _CHART_RE.sub(
+                lambda m: f"_（图表缺失：{m.group(1)}）_", body)
+
+        updatenote_body(note_id, _sanitize(final_body))
+        prune_removed_resources(old_body, final_body, exclude_note_id=note_id)
         self._save_state(title, note_id, digest)
-        log.info(f"已创建笔记《{title}》（{note_id}）于《{notebook}》")
-        return "created"
+        if created:
+            log.info(f"已创建笔记《{title}》（{note_id}）于《{notebook}》")
+            return "created"
+        log.info(f"已更新笔记《{title}》（{note_id}）于《{notebook}》")
+        return "updated"
 
 
 # ── 报告生成与发布 ──
@@ -134,6 +170,7 @@ def _flow_count(db: Database, book: str, start: str, end: str) -> int:
 def publish_month(db: Database, publisher: JoplinPublisher, month_key: str,
                   books=("personal", "work"), force=False, dry_run=False) -> dict:
     from .reports.monthly import generate_monthly_report
+    from .reports.charts import build_monthly_charts
 
     year, month = int(month_key[:4]), int(month_key[5:7])
     results = {}
@@ -144,7 +181,15 @@ def publish_month(db: Database, publisher: JoplinPublisher, month_key: str,
             results[title] = "empty"
             continue
         body = generate_monthly_report(db, year, month, book=book)
-        results[title] = publisher.publish(title, body, force=force, dry_run=dry_run)
+        charts = {}
+        if not dry_run:
+            chart_dir = Path.home() / "tmp" / "finance_charts" / month_key / book
+            try:
+                charts = build_monthly_charts(db, book, year, month, chart_dir)
+            except Exception:
+                log.warning(f"《{title}》图表生成失败", exc_info=True)
+        results[title] = publisher.publish(title, body, force=force,
+                                           dry_run=dry_run, chart_paths=charts)
     return results
 
 

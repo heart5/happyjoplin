@@ -15,6 +15,29 @@ __all__ = ["generate_monthly_report", "BOOK_LABELS"]
 BOOK_LABELS = {"personal": "个人", "work": "工作号"}
 
 
+def _shift_month(year: int, month: int, delta: int) -> tuple:
+    index = year * 12 + (month - 1) + delta
+    return index // 12, index % 12 + 1
+
+
+def _month_spend(db, book: str, year: int, month: int) -> float:
+    start, end = month_bounds(f"{year:04d}-{month:02d}")
+    flows = fetch_flows(db, book, start, end)
+    spend = sum_dir([f for f in flows if f["tx_type"] == "consumption"],
+                    "outflow")
+    refund = sum_dir([f for f in flows
+                      if f["direction"] == "inflow"
+                      and (f.get("category_name") or "") == "收入-退款"],
+                     "inflow")
+    return spend - refund
+
+
+def _change(cur: float, prev: float) -> str:
+    if not prev:
+        return "—"
+    return f"{(cur - prev) / prev:+.1%}"
+
+
 def _account_balances(db, book: str, year: int, month: int) -> tuple:
     """返回（已锚定账户本月余额, 未锚定账户数）。
 
@@ -80,8 +103,16 @@ def generate_monthly_report(db: Database, year: int, month: int,
     lines.append("")
 
     lines += ["## 一、本月概览", "", "| 指标 | 数值 |", "|------|------|"]
+    py, pm = _shift_month(year, month, -1)
+    ly, lm = _shift_month(year, month, -12)
+    prev_spend = _month_spend(db, book, py, pm)
+    year_spend = _month_spend(db, book, ly, lm)
     lines.append(f"| 收入 | {money(income_total)} |")
     lines.append(f"| 消费 | {money(spend)} |")
+    lines.append(f"| 消费环比 | {_change(spend, prev_spend)}"
+                 f"（上月 {money(prev_spend)}） |")
+    lines.append(f"| 消费同比 | {_change(spend, year_spend)}"
+                 f"（去年同月 {money(year_spend)}） |")
     if refunds:
         lines.append(f"| 退款 | {money(sum_dir(refunds, 'inflow'))}（已冲减消费） |")
     lines.append(f"| 手续费 | {money(fee_total)} |")
@@ -96,22 +127,44 @@ def generate_monthly_report(db: Database, year: int, month: int,
 
     cats = by_category(consumption, "outflow")
     if cats:
-        lines += ["## 二、消费分类", "", "| 分类 | 金额 | 占比 |", "|------|------|------|"]
+        lines += ["## 二、消费分类与每日支出", "",
+                  "| 分类 | 金额 | 占比 |", "|------|------|------|"]
         for name, amt in cats:
             lines.append(f"| {name} | {money(amt)} | {pct(amt, spend)} |")
-        lines.append("")
+        lines += ["", "{{chart:cat_donut}}", "", "### 每日支出", "",
+                  "{{chart:daily_spend}}", ""]
 
     merchants = defaultdict(float)
     for f in consumption:
         if f["direction"] == "outflow" and f.get("merchant"):
             merchants[f["merchant"]] += f["amount"]
     if merchants:
+        top = sorted(merchants.items(), key=lambda x: -x[1])[:10]
         lines += ["## 三、消费商户 Top 10", "",
                   "| 排名 | 商户 | 金额 |", "|------|------|------|"]
-        for i, (name, amt) in enumerate(
-                sorted(merchants.items(), key=lambda x: -x[1])[:10], 1):
+        for i, (name, amt) in enumerate(top, 1):
             lines.append(f"| {i} | {name} | {money(amt)} |")
-        lines.append("")
+        pstart, pend = month_bounds(f"{py:04d}-{pm:02d}")
+        prev_flows = fetch_flows(db, book, pstart, pend)
+        prev_merchants = defaultdict(float)
+        for f in prev_flows:
+            if (f["tx_type"] == "consumption" and f["direction"] == "outflow"
+                    and f.get("merchant")):
+                prev_merchants[f["merchant"]] += f["amount"]
+        prev_top = {name for name, _ in
+                    sorted(prev_merchants.items(), key=lambda x: -x[1])[:10]}
+        cur_top = {name for name, _ in top}
+        new_names = [n for n in cur_top - prev_top]
+        gone_names = [n for n in prev_top - cur_top]
+        if new_names or gone_names:
+            parts = []
+            if new_names:
+                parts.append("新晋 " + "、".join(sorted(new_names)))
+            if gone_names:
+                parts.append("退出 " + "、".join(sorted(gone_names)))
+            lines.append("")
+            lines.append("*较上月 Top 10：" + "；".join(parts) + "。*")
+        lines += ["", "{{chart:merchant_bar}}", ""]
 
     inc_cats = by_category(income, "inflow")
     if inc_cats:
@@ -180,18 +233,22 @@ def generate_monthly_report(db: Database, year: int, month: int,
                 f"{money(r['closing_balance'])} |")
         lines.append("")
         lines.append("*仅列已设余额锚点的账户（锚点来自余额/账单短信）。*")
+        if liabilities:
+            lines += ["", "### 负债结构", "", "{{chart:debt}}", ""]
     else:
         lines.append("本月早于所有账户的余额锚点，暂无可用余额数据。")
     if unanchored:
         lines.append(f"另有 {unanchored} 个未锚定账户未列入（流水不足以推算真实余额）。")
     lines.append("")
 
+    lines += ["## 七、近 12 个月收支趋势", "", "{{chart:month_trend}}", ""]
+
     unmatched = sum(1 for f in flows if not f.get("account_id"))
     uncategorized = sum(
         1 for f in flows
         if f["tx_type"] == "consumption"
         and (f.get("category_name") or "未分类-其他") == "未分类-其他")
-    lines += ["## 七、数据质量", ""]
+    lines += ["## 八、数据质量", ""]
     lines.append(f"- 未匹配账户：{unmatched} 笔")
     lines.append(f"- 未分类消费：{uncategorized} 笔")
     for r in _import_rows(db, book, f"{year:04d}-{month:02d}"):
