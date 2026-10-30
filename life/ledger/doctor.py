@@ -59,13 +59,20 @@ def _is_unclassified(flow: dict) -> bool:
     return (flow["category_name"] or "") in ("", "未分类-其他")
 
 
-def _text_of(flow: dict) -> str:
-    """语义线索只看商户/对手方；两者都缺时退回原始文本。
+_SCAN_HINT = re.compile(r"交易类型|摘要|交易对象|商户")
 
-    原始回执常带「去报销」这类用户备注，混进来会把正常消费误报成收入。
+
+def _text_of(flow: dict) -> str:
+    """语义线索只看商户/对手方；两者都缺时才有条件退回原始文本。
+
+    原始回执常带「去报销」这类用户备注，混进来会把正常消费误报成收入，
+    所以只在原文含银行字段（交易类型/摘要/交易对象/商户）时才扫描。
     """
     core = " ".join(str(x) for x in (flow["merchant"], flow["counterparty"]) if x)
-    return core or (flow["raw_data"] or "")
+    if core:
+        return core
+    raw = flow["raw_data"] or ""
+    return raw if _SCAN_HINT.search(raw) else ""
 
 
 def _blank_source() -> dict:

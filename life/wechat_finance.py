@@ -444,7 +444,7 @@ def _is_repayment_paid(messages: list, idx: int, paid_amount: float) -> bool:
 def _collect_finance_events(messages: list) -> list:
     """Phase 1: 遍历所有消息，收集原始财务事件。
 
-    每条事件含 time, amount, source(paid/voucher/bank_expense/bank_income/transfer/redpacket),
+    每条事件含 time, amount, source(paid/voucher/bank_expense/bank_income/transfer),
     merchant, direction, payment_method 等字段。
     """
     events = []
@@ -776,16 +776,9 @@ def _collect_finance_events(messages: list) -> list:
             events.append(evt)
             continue
 
-        # ── 红包消息 ──
-        if "红包" in content:
-            amt = _parse_amount(content)
-            if amt > 0:
-                evt["amount"] = amt
-                evt["source"] = "redpacket"
-                evt["direction"] = "收入" if "收款" in content or "收到" in content else "支出"
-                evt["category"] = "社交-红包"
-                events.append(evt)
-                continue
+        # 红包不在这里解析：真实收发红包走微信支付回执/银行短信，
+        # 聊天里的「红包」多是公众号营销（「最高￥400交通补贴」之类），
+        # 按关键词取金额会造出假的支出流水。
 
     # 按时间排序（空时间放最后）
     events.sort(key=lambda e: e["time"] or "9999")

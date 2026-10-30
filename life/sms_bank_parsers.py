@@ -291,6 +291,17 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
             category="收入-转账", tx_type_detail="transfer_in",
         )
 
+    # 退款到账（原路退回，如「在财付通-微信支付-微信红包退款199.00元」）
+    m_refund = re.search(r"在(.{2,80}?)(?:退款|退货)(\d+\.?\d*)元", body)
+    if m_refund:
+        merchant = _strip_trailing(m_refund.group(1))
+        return ParsedSMS(
+            amount=float(m_refund.group(2)), direction="收入",
+            card_suffix=card_suffix, merchant=merchant, counterparty=merchant,
+            bank_name="招商银行",
+            category="收入-退款", tx_type_detail="income",
+        )
+
     # ══════════════ 贷款还款 ══════════════
 
     # 格式5：扣款归还个贷 → 贷款还款
@@ -498,6 +509,18 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
         return ParsedSMS(amount=0, direction="支出", card_suffix="",
                          merchant="", counterparty="", bank_name="交通银行",
                          _skip=True)
+
+    # --- 退款到账（原路退回）→ 收入 ---
+    m_refund = re.search(r"在(.{2,80}?)(?:退款|退货)(\d+\.?\d*)元", body)
+    if m_refund:
+        merchant = _strip_trailing(m_refund.group(1))
+        m_card = re.search(r"[尾账户号][\*#]?(\d{4})", body)
+        return ParsedSMS(
+            amount=float(m_refund.group(2)), direction="收入",
+            card_suffix=m_card.group(1) if m_card else "",
+            merchant=merchant, counterparty=merchant, bank_name="交通银行",
+            category="收入-退款", tx_type_detail="income",
+        )
 
     # --- 信用卡消费：您尾号2349交行信用卡DD日HH时MM分成功消费人民币X.XX元 ---
     m_cc_consume = re.search(r"您尾号(\d{4})交行信用卡.*?成功消费人民币(\d+\.?\d*)元", body)

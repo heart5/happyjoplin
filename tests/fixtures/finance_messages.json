@@ -375,6 +375,20 @@
         }
       ],
       "expect": []
+    },
+    {
+      "name": "redpacket_marketing_ignored",
+      "messages": [
+        {
+          "id": 20,
+          "time": "2026-05-09 10:00:00",
+          "send": false,
+          "sender": "南方航空",
+          "type": "Sharing",
+          "content": "心愿旅行开售，提前预约享好价机票！\n还享最高￥400交通补贴！\n🧧888里程红包限量派发中，速领"
+        }
+      ],
+      "expect": []
     }
   ],
   "sms_cases": [
@@ -624,6 +638,20 @@
         "category": "社交-转账",
         "merchant": "支付宝-**峰",
         "tx_type_detail": "transfer_out",
+        "card_suffix": "9929"
+      }
+    },
+    {
+      "name": "cmb_wechat_redpacket_refund",
+      "number": "95555",
+      "body": "【招商银行】您账户9929于01月10日11:42在财付通-微信支付-微信红包退款199.00元",
+      "expect": {
+        "_skip": false,
+        "amount": 199.0,
+        "direction": "收入",
+        "category": "收入-退款",
+        "merchant": "财付通-微信支付-微信红包",
+        "tx_type_detail": "income",
         "card_suffix": "9929"
       }
     }

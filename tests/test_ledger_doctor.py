@@ -50,6 +50,23 @@ def test_collect_counts(tmp_path):
     assert [b["source"] for b in stats["bad_batches"]] == ["wechat_work"]
 
 
+def test_paid_receipt_remark_not_income_suspect(tmp_path):
+    db = _db(tmp_path)
+    bank = db.fetchone(
+        "SELECT id FROM accounts WHERE identity_key='doc-bank'")["id"]
+    db.execute(
+        "INSERT INTO account_flows (book,tx_date,amount,account_id,direction,"
+        "tx_type,merchant,source,raw_data,dedup_key)"
+        " VALUES ('personal','2026-10-04',293.61,?,'outflow','consumption',"
+        "'','wechat_main',?,'k9')",
+        (bank, '{"wechat": "¥293.61 paid, 去报销.[Paid by NJCB Debit Card]"}'))
+    assert collect(db, ("personal",), ["2026-10"])["income_suspects"] == []
+
+    db.execute("UPDATE account_flows SET raw_data=? WHERE dedup_key='k9'",
+               ('{"sms": "交易类型：工资 金额：9000.00"}',))
+    assert len(collect(db, ("personal",), ["2026-10"])["income_suspects"]) == 1
+
+
 def test_render_contains_sections(tmp_path):
     body = render(collect(_db(tmp_path), ("personal", "work"), ["2026-10"]))
     assert body.startswith("# 财务数据体检")
