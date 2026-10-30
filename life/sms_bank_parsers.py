@@ -45,7 +45,7 @@ with pathmagic.context():
     from func.logme import log
 
 from life.bank_tx_kind import (
-    CARD_REPAYMENT, REFUND, TRANSFER,
+    CARD_REPAYMENT, INCOME, REFUND, TRANSFER,
     category_for_kind, classify_tx_kind, tx_detail_for_kind,
 )
 
@@ -345,11 +345,13 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
         amount = float(m_deduct.group(1))
         merchant = _strip_trailing(m_deduct.group(2))
         is_loan = "个贷" in body or "贷款" in body
+        is_ins = any(k in merchant for k in ("保险", "人寿", "财险", "养老"))
         return ParsedSMS(
             amount=amount, direction="支出", card_suffix=card_suffix,
             merchant=merchant, counterparty=merchant, bank_name="招商银行",
             is_loan=is_loan,
-            category="借贷-还款" if is_loan else "未分类-其他",
+            category=("借贷-还款" if is_loan else
+                      "保险-人寿" if is_ins else "未分类-其他"),
             tx_type_detail="deduction",
         )
 
@@ -362,17 +364,33 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
             tx_type_detail="fee",
         )
 
+    # 扣款其他(中国平安人寿保险股份有限)，人民币X.XX → 保险费
+    m_deduct_paren = re.search(r"扣款其他[（(](.+?)[）)][，,]\s*人民币(\d+\.?\d*)", body)
+    if m_deduct_paren:
+        merchant = _strip_trailing(m_deduct_paren.group(1))
+        is_ins = any(k in merchant for k in ("保险", "人寿", "财险", "养老"))
+        return ParsedSMS(
+            amount=float(m_deduct_paren.group(2)), direction="支出",
+            card_suffix=card_suffix, merchant=merchant, counterparty=merchant,
+            bank_name="招商银行",
+            category="保险-人寿" if is_ins else "未分类-其他",
+            tx_type_detail="consumption",
+        )
+
     # 格式3：在【XX】快捷支付 → 消费支出
     m_quick = re.search(r"在【(.+?)】快捷支付(\d+\.?\d*)元", body)
     if m_quick:
         amount = float(m_quick.group(2))
         merchant = m_quick.group(1)
         is_transfer = "转账" in merchant
+        is_repay = "还款" in merchant and not is_transfer
         return ParsedSMS(
             amount=amount, direction="支出", card_suffix=card_suffix,
             merchant=merchant, counterparty=merchant, bank_name="招商银行",
-            category="社交-转账" if is_transfer else "未分类-其他",
-            tx_type_detail="transfer_out" if is_transfer else "consumption",
+            category=("内部-转账" if is_repay else
+                      "社交-转账" if is_transfer else "未分类-其他"),
+            tx_type_detail=("repayment_out" if is_repay else
+                            "transfer_out" if is_transfer else "consumption"),
         )
 
     # 银联在线支付扣款 → 消费支出（商户在括号内）
@@ -393,11 +411,14 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
         amount = float(m_online_pay.group(2))
         merchant = _strip_trailing(m_online_pay.group(1))
         is_transfer = "转账" in merchant
+        is_repay = "还款" in merchant and not is_transfer
         return ParsedSMS(
             amount=amount, direction="支出", card_suffix=card_suffix,
             merchant=merchant, counterparty=merchant, bank_name="招商银行",
-            category="社交-转账" if is_transfer else "未分类-其他",
-            tx_type_detail="transfer_out" if is_transfer else "consumption",
+            category=("内部-转账" if is_repay else
+                      "社交-转账" if is_transfer else "未分类-其他"),
+            tx_type_detail=("repayment_out" if is_repay else
+                            "transfer_out" if is_transfer else "consumption"),
         )
 
     # 格式13：本行ATM无卡取款
@@ -532,21 +553,24 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
             tx_type_detail="loan_repayment" if is_loan_repay else "transfer_out",
         )
 
-    # --- 格式6：网上支付/快捷支付 → 支出（可能为贷款还款）---
+    # --- 格式6：网上支付/快捷支付 → 支出（可能为贷款/信用卡还款）---
     m_online = re.search(
         r"您尾号\*?(\d{4})的卡.*?在(.+?)(?:网上支付|快捷支付)(\d+\.?\d*)元", body)
     if m_online:
         merchant = _strip_trailing(m_online.group(2))
         is_loan = any(k in merchant for k in _LOAN_MERCHANT_KW)
         is_transfer = "转账" in merchant
+        is_repay = "还款" in merchant and not is_loan and not is_transfer
         return ParsedSMS(
             amount=float(m_online.group(3)), direction="支出",
             card_suffix=m_online.group(1),
             merchant=merchant, counterparty=merchant, bank_name="交通银行",
             is_loan=is_loan,
             category=("借贷-还款" if is_loan else
+                      "内部-转账" if is_repay else
                       "社交-转账" if is_transfer else "未分类-其他"),
             tx_type_detail=("loan_repayment" if is_loan else
+                            "repayment_out" if is_repay else
                             "transfer_out" if is_transfer else "consumption"),
         )
 
@@ -563,19 +587,36 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
         card_suffix = m_card2.group(1)
 
     if amount > 0:
-        direction = "收入" if any(kw in body for kw in ["转入", "存入", "汇入"]) else "支出"
+        kind, kw = classify_tx_kind(body)
+        income_in = any(k in body for k in ["转入", "存入", "汇入", "收款"])
+        direction = "收入" if (kind in (INCOME, REFUND) or income_in) else "支出"
         detail = "unknown"
         if re.search(r"(转出|转入|转账|汇款)", body):
             detail = "transfer_out" if direction == "支出" else "transfer_in"
+        category = "未分类-其他"
+        if direction == "收入":
+            if kind == REFUND:
+                category, detail = "收入-退款", "income"
+            elif kind == INCOME:
+                category = category_for_kind(INCOME, body) or "收入-其他"
+                detail = "income"
+            elif "基金" in body or "理财" in body:
+                category, detail = "收入-理财", "income"
+            else:
+                category = "收入-转账"
+                detail = "transfer_in"
+        elif detail != "unknown":
+            category = "社交-转账"
         m_party = re.search(r"对方户名[：:]?\s*(.*?)(?:，|。|$)", body)
         counterparty = _strip_trailing(m_party.group(1)) if m_party else ""
+        if counterparty and "白晔峰" in counterparty:
+            category = "内部-转账"
         return ParsedSMS(
             amount=amount, direction=direction,
             card_suffix=card_suffix,
-            merchant=counterparty or ("转账" if detail != "unknown" else ""),
+            merchant=counterparty or kw or ("转账" if detail != "unknown" else ""),
             counterparty=counterparty, bank_name="交通银行",
-            category=("内部-转账" if "白晔峰" in counterparty else
-                      "社交-转账" if detail != "unknown" else "未分类-其他"),
+            category=category,
             tx_type_detail=detail,
         )
 

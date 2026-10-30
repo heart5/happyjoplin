@@ -620,7 +620,7 @@ class FlowRouter:
     def _sms_tx_type(self, detail: str, category: str, f_dir: str) -> str:
         if detail == "loan_repayment":
             return "loan_repayment"
-        if detail == "repayment_in":
+        if detail in ("repayment_in", "repayment_out"):
             return "credit_card_repayment"
         if detail == "fee":
             return "fee"
