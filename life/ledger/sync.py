@@ -199,6 +199,13 @@ def _read_wechat_db(db_path: str, table: str, month_key: str,
     return [dict(r) for r in rows]
 
 
+def _coerce_send(val) -> bool:
+    """send 统一口径：true/1/"1"/"true" 视为发送，其余接收。"""
+    if isinstance(val, str):
+        return val.strip().lower() in ("1", "true")
+    return bool(val)
+
+
 def _wechat_source(month_key: str, db_path: str, table: str,
                    prefix: str, use_msg_id: bool = False) -> tuple:
     rows = _read_wechat_db(db_path, table, month_key, use_msg_id)
@@ -215,7 +222,7 @@ def _wechat_source(month_key: str, db_path: str, table: str,
         messages.append({
             "id": rid,
             "time": t,
-            "send": bool(r.get("send")),
+            "send": _coerce_send(r.get("send")),
             "sender": r.get("sender") or "",
             "type": r.get("type") or "",
             "content": r.get("content") or "",
