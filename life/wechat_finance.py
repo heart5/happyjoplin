@@ -673,7 +673,11 @@ def _collect_finance_events(messages: list) -> list:
             party = m_party.group(1).strip() if m_party else ""
             party = re.sub(r"^\d+\*+\d+\s*", "", party)
 
-            kind, _kw = classify_tx_kind(explicit or summary or party)
+            # 交易类型与摘要要**合并**判断：建行通知常写成「交易类型：支出 +
+            # 摘要：跨行转出」，只看交易类型会把它当消费（19 年 25 万那条就是）。
+            # 摘要里的「转出/转支/汇出」比泛化的「支出」更有判别力。
+            kind, _kw = classify_tx_kind(
+                " ".join(x for x in (explicit, summary, party) if x))
             evt["tx_kind"] = kind or ""
             is_refund = kind == "refund"
             is_cc_repay = kind == CARD_REPAYMENT
@@ -697,8 +701,22 @@ def _collect_finance_events(messages: list) -> list:
             if amt_signed is not None and amt_signed < 0:
                 is_income, is_expense = False, True
             elif kind:
-                is_income = is_cc_repay or is_income_kind(kind) or is_transfer
-                is_expense = not is_income
+                if is_transfer and not (is_cc_repay or is_income_kind(kind)):
+                    # 转账要按上下文定方向：只看「是转账」就当收入，会把
+                    # 「交易类型：支出 + 摘要：跨行转出」判成转入（19 年多笔 2 万级）。
+                    text_dir = f"{explicit} {summary}"
+                    if any(k in text_dir for k in ("支出", "转出", "转支",
+                                                   "汇出", "取出")):
+                        is_income, is_expense = False, True
+                    elif any(k in text_dir for k in ("收入", "转入", "存入",
+                                                     "汇入", "收款")):
+                        is_income, is_expense = True, False
+                    else:
+                        is_income, is_expense = False, True
+                else:
+                    is_income = (is_cc_repay or is_income_kind(kind)
+                                 or is_transfer)
+                    is_expense = not is_income
             else:
                 is_income = any(kw in content for kw in _RE_BANK_INCOME_KW)
                 is_expense = (not is_income) and any(
