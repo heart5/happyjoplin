@@ -39,6 +39,7 @@ from .cloudcfg import (
     get_work_wechat_table,
     get_alipay_csv_path,
     get_wechat_bill_dir,
+    get_wechat_bill_main_dir,
 )
 from life.wechat_finance import (
     parse_finance_messages,
@@ -59,11 +60,11 @@ TZ = timezone(timedelta(hours=8))
 # 它混入 import_batches.md5 的比对值，使旧月份在下次同步时自动重建，
 # 不再出现「改了解析器但历史月永远不重算」的静默偏差（2026-11-12）。
 # 递增后建议跑一次 `sync --backfill --force` 做全量回填。
-PARSER_VERSION = "2026-11-12.3"  # 接入支付宝 + 工作号微信官方账单
+PARSER_VERSION = "2026-11-13.1"  # 接入支付宝 + 工作号/主号微信官方账单
 
 BOOK_SOURCES = {
     "personal": ("sms", "wechat_main", "wechat_work", "notification", "alipay",
-                 "wechat_bill"),
+                 "wechat_bill", "wechat_bill_main"),
     "work": ("wechat_work", "wechat_bill"),
 }
 
@@ -71,7 +72,8 @@ BOOK_SOURCES = {
 _CARD_PM_KW = ("信用卡", "储蓄卡", "借记卡", "银行")
 
 EARLIEST_MONTH = {
-    "personal": "2022-08",
+    # 个人账套：主号微信账单从 2013-10 起（微信支付上线），比原 2022-08 早 9 年
+    "personal": "2013-10",
     "work": "2024-01",
 }
 
@@ -132,7 +134,8 @@ def _is_card_paid(rec: dict) -> bool:
     return any(kw in pm for kw in _CARD_PM_KW)
 
 
-_LEDGER_WECHAT_SOURCES = ("wechat_main", "wechat_work", "wechat_bill")
+_LEDGER_WECHAT_SOURCES = ("wechat_main", "wechat_work", "wechat_bill",
+                          "wechat_bill_main")
 
 
 def _split_work_events(records: list, book: str,
@@ -284,7 +287,19 @@ def fetch_alipay(month_key: str) -> tuple:
 def fetch_wechat_bill(month_key: str) -> tuple:
     """工作号微信官方账单：按月切片。"""
     start, end = month_bounds(month_key)
-    events, total, digest = parse_wechat_bill_dir(get_wechat_bill_dir())
+    events, total, digest = parse_wechat_bill_dir(
+        get_wechat_bill_dir(), source="wechat_bill",
+        wallet_name="工作号微信零钱", id_prefix="wcbill")
+    rows = [e for e in events if start <= (e.get("time") or "")[:10] < end]
+    return rows, total, f"{digest}:{month_key}"
+
+
+def fetch_wechat_bill_main(month_key: str) -> tuple:
+    """主号微信官方账单（2013-10 起，按年 xlsx）：按月切片。"""
+    start, end = month_bounds(month_key)
+    events, total, digest = parse_wechat_bill_dir(
+        get_wechat_bill_main_dir(), source="wechat_bill_main",
+        wallet_name="微信零钱", id_prefix="wcm")
     rows = [e for e in events if start <= (e.get("time") or "")[:10] < end]
     return rows, total, f"{digest}:{month_key}"
 
@@ -296,6 +311,7 @@ FETCHERS = {
     "notification": fetch_notifications,
     "alipay": fetch_alipay,
     "wechat_bill": fetch_wechat_bill,
+    "wechat_bill_main": fetch_wechat_bill_main,
 }
 
 # 可选数据源：拉取失败时降级为「沿用既有流水、只重建成功来源」，
@@ -420,12 +436,16 @@ class FinanceSync:
             }
 
         wechat_events = []
-        for s in ("wechat_main", "wechat_work", "wechat_bill"):
+        for s in ("wechat_main", "wechat_work", "wechat_bill",
+                  "wechat_bill_main"):
             if s not in payloads:
                 continue
             recs = payloads[s][0]
             if s in ("wechat_work", "wechat_bill"):
                 recs = _split_work_events(recs, book, default_source=s)
+            elif s == "wechat_bill_main":
+                # 主号账单直接进个人账套，但要保留来源以便追溯与按源重建
+                recs = [dict(r, _source=s) for r in recs]
             wechat_events.extend(recs)
         sms_records = payloads["sms"][0] if "sms" in payloads else []
         notification_events = (payloads["notification"][0]

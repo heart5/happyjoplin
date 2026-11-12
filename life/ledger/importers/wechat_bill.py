@@ -1,23 +1,25 @@
 # 微信支付官方账单（xlsx）→ 账本事件
 #
-# 来源：微信 App「我 → 服务 → 钱包 → 账单 → 常见问题 → 下载账单」，导出为 xlsx。
-# 表头在第 17 行左右（前面是昵称/时间范围/汇总/注），11 列：
+# 来源：微信 App「我 → 服务 → 钱包 → 账单 → 常见问题 → 下载账单」，导出为 xlsx，
+# 一份最多一个自然年，表头在第 17 行左右（前面是昵称/时间范围/汇总/注），11 列：
 #   交易时间,交易类型,交易对方,商品,收/支,金额(元),支付方式,当前状态,交易单号,商户单号,备注
 #
-# 用途：工作号（wx2）聊天记录只能看到「有推送回执」的支付，官方账单才是全量。
-# 实测 2024-01~2026-11：账单 515 笔，而工作账套只有 249 笔。
+# 两个账号共用本解析器，差异只在「零钱归哪个账套」：
+#   * 工作号（wx2，昵称「白晔峰【贵州酱酒】」）→ 账套 work
+#   * 主号（wcmain，昵称「白晔峰」）        → 账套 personal
 #
 # 口径（2026-11-12 接入）：
-#   * 「支出 / 收入」入账；「/」是中性交易（零钱充值/提现/零钱通存取/司法冻结），
+#   * 「支出 / 收入」入账；「/」是中性交易（零钱充值/提现/信用卡还款/理财通），
 #     属账户内部搬运，入账会重复计算，跳过。
 #   * 资金渠道按「支付方式」判定：
-#       零钱 / 零钱通        → 工作账套的零钱（微信账单里工作号零钱付款）
-#       各银行/信用卡(尾号)  → 归**个人账套**（与现有设计一致：工作号卡付并入个人）
-#     因此银行卡付款的行不会重复进工作账套，而是交给个人账套的去重链处理。
+#       零钱 / 零钱通        → 该账号的微信零钱
+#       各银行/信用卡(尾号)  → **个人账套**（工作号卡付并入个人，主号本来就是个人）
+#     因此银行卡付款的行不会进工作账套，交给个人账套的去重链处理。
 #   * 退款在账单里是独立的「收入」行（类型含「-退款」，或状态「已退款/已全额退款」），
 #     记 `收入-退款`，月报会冲减消费 —— 否则支出保留原额会虚增消费。
-#   * 「已全额退款」的支出行仍然入账（保留当时的支出），由同额退款行冲减，
-#     与既有口径一致（不丢时间线）。
+#   * 「二维码收款 / 群收款」是**收款**，不是转出：记 `收入-转账`（转账性质，
+#     不计入「收入」统计），避免把收款流水当成工资类收入。
+#   * 主号账单从 2013-10 起，比账本原起点（2022-08）早 9 年，属历史补全。
 
 import glob
 import hashlib
@@ -32,16 +34,17 @@ _SKIP_DIRECTIONS = {"/", ""}
 _BAD_STATUS = {"冻结中", "已撤销"}
 
 _RE_SUFFIX = re.compile(r"\((\d{4})\)")
-_RE_REFUND_STATUS = re.compile(r"已退款.*?¥?(\d+\.?\d*)?")
 
-# 交易类型 → 账本分类（未命中再由商户/商品关键词细化）
+# 收款类交易类型：钱进零钱，但性质是转账/经营收款，不算「收入」
+_INCOME_COLLECT_TYPES = ("二维码收款", "群收款")
+
 _TYPE_CATEGORY = {
     "商户消费": "未分类-其他",
     "扫二维码付款": "未分类-其他",
     "转账": "社交-转账",
+    "二维码收款": "收入-转账",
+    "群收款": "收入-转账",
     "信用卡还款": "内部-转账",
-    "零钱提现": None,          # 中性，不会走到这里
-    "零钱充值": None,
     "微信红包（单发）": "社交-红包",
     "微信红包（群红包）": "社交-红包",
     "微信红包": "社交-红包",
@@ -93,21 +96,19 @@ _DETAIL_RULES = (
     ("火锅", "餐饮-正餐"),
     ("深度求索", "技术-云服务"),
     ("凯辉", "购物-便利店"),
-    ("便利店", "购物-便利店"),
 )
 
 
-def method_hint(payment_method: str) -> dict:
+def method_hint(payment_method: str, wallet_name: str = "微信零钱") -> dict:
     """支付方式 → 资金渠道。
 
-    kind: wallet（工作号零钱/零钱通，入工作账套）
+    kind: wallet（该账号的微信零钱，入本账号账套）
           bank / credit_card（归个人账套）
           unknown
     """
     raw = (payment_method or "").strip()
     if raw in ("零钱", "零钱通", "零钱通(零钱)", ""):
-        return {"kind": "wallet", "name": "工作号微信零钱", "suffix": "",
-                "raw": raw}
+        return {"kind": "wallet", "name": wallet_name, "suffix": "", "raw": raw}
     mm = _RE_SUFFIX.search(raw)
     suffix = mm.group(1) if mm else ""
     name = _RE_SUFFIX.sub("", raw).strip()
@@ -131,6 +132,8 @@ def _category_for(row: dict, direction: str) -> str:
     goods = " ".join(str(row.get(k) or "") for k in ("商品", "交易对方", "备注"))
     if is_refund(row) and direction == "收入":
         return "收入-退款"
+    if ttype in _INCOME_COLLECT_TYPES and direction == "收入":
+        return "收入-转账"
     if ttype == "信用卡还款":
         return "内部-转账"
     if "红包" in ttype:
@@ -147,6 +150,8 @@ def _tx_type_detail(row: dict, direction: str) -> str:
     ttype = row.get("交易类型") or ""
     if is_refund(row) and direction == "收入":
         return "income"
+    if ttype in _INCOME_COLLECT_TYPES:
+        return "transfer_in"
     if ttype == "信用卡还款":
         return "repayment_out" if direction == "支出" else "repayment_in"
     if ttype == "转账" or "红包" in ttype:
@@ -182,8 +187,10 @@ def _iter_rows(path: str):
         yield _clean_row(dict(zip(hdr, r)))
 
 
-def parse_wechat_bill_files(paths: list) -> list:
-    """账单 xlsx 列表 → 账本事件（已按 orders 去重）。"""
+def parse_wechat_bill_files(paths: list, source: str = "wechat_bill",
+                            wallet_name: str = "微信零钱",
+                            id_prefix: str = "wcbill") -> list:
+    """账单 xlsx 列表 → 账本事件（已按交易单号去重）。"""
     events = []
     seen = set()
     for p in paths:
@@ -213,10 +220,10 @@ def parse_wechat_bill_files(paths: list) -> list:
                 continue
             seen.add(sid)
 
-            hint = method_hint(row.get("支付方式"))
+            hint = method_hint(row.get("支付方式"), wallet_name)
             if hint["kind"] == "unknown" and direction_ch == "收入":
-                # 收款类账单「支付方式」为 /，钱进工作号零钱
-                hint = {"kind": "wallet", "name": "工作号微信零钱",
+                # 收款类账单「支付方式」为 /，钱进本账号零钱
+                hint = {"kind": "wallet", "name": wallet_name,
                         "suffix": "", "raw": row.get("支付方式") or "/"}
             cat = _category_for(row, direction_ch)
             merchant = str(row.get("交易对方") or "").strip() or \
@@ -230,8 +237,8 @@ def parse_wechat_bill_files(paths: list) -> list:
                 "category": cat,
                 "payment_method": hint["name"],
                 "card_suffix": hint["suffix"],
-                "source": "wechat_bill",
-                "source_event_id": f"wcbill:{sid}",
+                "source": source,
+                "source_event_id": f"{id_prefix}:{sid}",
                 "tx_type_detail": _tx_type_detail(row, direction_ch),
                 "counterparty": merchant,
                 "source_text": " | ".join(str(row.get(k) or "") for k in
@@ -252,7 +259,9 @@ def parse_wechat_bill_files(paths: list) -> list:
     return events
 
 
-def parse_wechat_bill_dir(dir_path: str) -> tuple:
+def parse_wechat_bill_dir(dir_path: str, source: str = "wechat_bill",
+                          wallet_name: str = "微信零钱",
+                          id_prefix: str = "wcbill") -> tuple:
     """目录下所有 xlsx → (事件, 原始行数, md5)。"""
     d = Path(dir_path)
     if not d.is_dir():
@@ -260,7 +269,9 @@ def parse_wechat_bill_dir(dir_path: str) -> tuple:
     paths = sorted(glob.glob(str(d / "*.xlsx")))
     if not paths:
         raise RuntimeError(f"微信账单目录没有 xlsx：{d}")
-    events = parse_wechat_bill_files(paths)
+    events = parse_wechat_bill_files(paths, source=source,
+                                     wallet_name=wallet_name,
+                                     id_prefix=id_prefix)
     digest = hashlib.md5(
         "|".join(f"{e['source_event_id']}:{e['amount']}:{e['time']}"
                  for e in events).encode()

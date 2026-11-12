@@ -115,6 +115,7 @@ _DEFAULT_SMS_DB = "~/work/joplin-message-center/data/sms_received.db"
 _DEFAULT_WX2_DB = "~/work/joplin-message-center/data/wx2_chat.db"
 _DEFAULT_ALIPAY_CSV = "/data/codebase/happyjoplin/data/alipay/alipay-full.csv"
 _DEFAULT_WECHAT_BILL_DIR = "/data/codebase/happyjoplin/data/wechat-bill"
+_DEFAULT_WECHAT_BILL_MAIN_DIR = "/data/codebase/happyjoplin/data/wechat-bill-main"
 _DEFAULT_MAIN_WECHAT_TABLE = "wc_白晔峰"
 _DEFAULT_WORK_WECHAT_TABLE = "chatitems"
 
@@ -233,6 +234,10 @@ def get_wx2_db_path() -> str:
 
 def get_wechat_bill_dir() -> str:
     return _path("wechat_bill_dir", _DEFAULT_WECHAT_BILL_DIR)
+
+
+def get_wechat_bill_main_dir() -> str:
+    return _path("wechat_bill_main_dir", _DEFAULT_WECHAT_BILL_MAIN_DIR)
 
 
 def get_alipay_csv_path() -> str:
