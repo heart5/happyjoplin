@@ -61,14 +61,16 @@ class TransactionManager:
                       month_key: str = "", rebuild: bool = True,
                       notification_events: list = None,
                       notification_signals: list = None,
-                      clear_sources: list = None) -> dict:
+                      clear_sources: list = None,
+                      alipay_events: list = None) -> dict:
         """归并导入：先清当月非手工流水，再写入。
 
         clear_sources 为 None 时清全部自动来源；否则只清指定来源
         （单源降级重建时保留降级来源的既有流水，避免半份快照）。
         """
         flows = self.router.route_events(
-            wechat_events, sms_records, notification_events or [])
+            wechat_events, sms_records, notification_events or [],
+            alipay_events=alipay_events or [])
         inserted = self._save_flows(
             flows, clear_month=month_key if rebuild else None,
             notification_signals=notification_signals,
@@ -96,7 +98,8 @@ class TransactionManager:
 
     def _clear_month(self, conn, month_key: str, sources: list = None) -> int:
         start, end = month_bounds(month_key)
-        srcs = sources or ['sms', 'wechat_main', 'wechat_work', 'notification']
+        srcs = sources or ['sms', 'wechat_main', 'wechat_work',
+                           'notification', 'alipay']
         marks = ",".join("?" * len(srcs))
         cur = conn.execute(
             f"""DELETE FROM account_flows

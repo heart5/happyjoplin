@@ -37,6 +37,7 @@ from .cloudcfg import (
     get_wx2_db_path,
     get_main_wechat_table,
     get_work_wechat_table,
+    get_alipay_csv_path,
 )
 from life.wechat_finance import (
     parse_finance_messages,
@@ -45,6 +46,7 @@ from life.wechat_finance import (
 )
 from life.sms_finance import parse_sms_records, _get_sms_api_key
 from .notifications import fetch_notifications
+from .importers.alipay import parse_alipay_csv
 from .reclassify import reclassify_unclassified
 
 __all__ = ["FinanceSync", "sync_range", "main", "PARSER_VERSION"]
@@ -55,10 +57,10 @@ TZ = timezone(timedelta(hours=8))
 # 它混入 import_batches.md5 的比对值，使旧月份在下次同步时自动重建，
 # 不再出现「改了解析器但历史月永远不重算」的静默偏差（2026-11-12）。
 # 递增后建议跑一次 `sync --backfill --force` 做全量回填。
-PARSER_VERSION = "2026-11-12.1"  # 交行存现/招行收到汇款/非柜面限额边界修复
+PARSER_VERSION = "2026-11-12.2"  # 接入支付宝官方明细（花呗/余额支付补全）
 
 BOOK_SOURCES = {
-    "personal": ("sms", "wechat_main", "wechat_work", "notification"),
+    "personal": ("sms", "wechat_main", "wechat_work", "notification", "alipay"),
     "work": ("wechat_work",),
 }
 
@@ -259,11 +261,20 @@ def fetch_work_wechat(month_key: str) -> tuple:
     )
 
 
+def fetch_alipay(month_key: str) -> tuple:
+    """支付宝官方明细：按月切片（同一份全量 CSV，按时间过滤）。"""
+    start, end = month_bounds(month_key)
+    events, total, digest = parse_alipay_csv(get_alipay_csv_path())
+    rows = [e for e in events if start <= (e.get("time") or "")[:10] < end]
+    return rows, total, f"{digest}:{month_key}"
+
+
 FETCHERS = {
     "sms": fetch_sms,
     "wechat_main": fetch_main_wechat,
     "wechat_work": fetch_work_wechat,
     "notification": fetch_notifications,
+    "alipay": fetch_alipay,
 }
 
 # 可选数据源：拉取失败时降级为「沿用既有流水、只重建成功来源」，
@@ -398,6 +409,8 @@ class FinanceSync:
         sms_records = payloads["sms"][0] if "sms" in payloads else []
         notification_events = (payloads["notification"][0]
                                if "notification" in payloads else [])
+        alipay_events = (payloads["alipay"][0]
+                         if "alipay" in payloads else [])
         notification_signals = (payloads["notification"][3]
                                 if "notification" in payloads else [])
         try:
@@ -405,6 +418,7 @@ class FinanceSync:
                 wechat_events, sms_records, month_key,
                 notification_events=notification_events,
                 notification_signals=notification_signals,
+                alipay_events=alipay_events,
                 clear_sources=clear_sources)
         except Exception as e:
             log.error(f"[{book}] {month_key} 入库失败：{e}")

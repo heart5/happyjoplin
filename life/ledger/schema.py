@@ -1,6 +1,6 @@
 # 个人财务系统 — 数据库 Schema（finance.db，复式账本）
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 ACCOUNT_FLOWS_SQL = """
 CREATE TABLE IF NOT EXISTS account_flows (
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS account_flows (
     description     TEXT,
     counterparty    TEXT,
     source          TEXT    NOT NULL
-                    CHECK(source IN ('sms','wechat_main','wechat_work','notification','manual')),
+                    CHECK(source IN ('sms','wechat_main','wechat_work','notification','manual','alipay')),
     source_event_id TEXT,
     dedup_key       TEXT    NOT NULL UNIQUE,
     source_group_id TEXT,
@@ -286,7 +286,8 @@ def _migrate_flows_source(conn):
     if row is None:
         return
     sql = row[0] or ""
-    if "'notification'" in sql:
+    # v4（2026-11-12）追加 'alipay' 来源，同样只能靠重建 CHECK 实现
+    if "'notification'" in sql and "'alipay'" in sql:
         return
 
     cols = ", ".join(_ACCOUNT_FLOWS_COLUMNS)
