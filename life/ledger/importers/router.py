@@ -971,13 +971,14 @@ class FlowRouter:
 
     @staticmethod
     def _is_wechat_source(src: str) -> bool:
-        return src in ("wechat_main", "wechat_work")
+        return src in ("wechat_main", "wechat_work", "wechat_bill")
 
     def _wechat_prefix(self) -> str:
         return "wx2" if self.book == "work" else "wxmain"
 
     def _source_prefix(self, evt: dict) -> str:
-        return "wx2" if self._event_source(evt) == "wechat_work" else "wxmain"
+        return ("wx2" if self._event_source(evt) in ("wechat_work", "wechat_bill")
+                else "wxmain")
 
     def _wechat_tx_type(self, category: str, direction: str,
                         merchant: str = "") -> str:

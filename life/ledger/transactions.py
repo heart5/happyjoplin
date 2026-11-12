@@ -99,7 +99,7 @@ class TransactionManager:
     def _clear_month(self, conn, month_key: str, sources: list = None) -> int:
         start, end = month_bounds(month_key)
         srcs = sources or ['sms', 'wechat_main', 'wechat_work',
-                           'notification', 'alipay']
+                           'notification', 'alipay', 'wechat_bill']
         marks = ",".join("?" * len(srcs))
         cur = conn.execute(
             f"""DELETE FROM account_flows
