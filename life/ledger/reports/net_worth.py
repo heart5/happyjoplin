@@ -21,15 +21,26 @@ def generate_net_worth_report(db: Database, date_str: str,
     lines = [f"# 净资产报告 — {date_str}", ""]
     lines.append(f"> 口径：{title_book} ｜ 生成：{now_text()}")
     lines.append("")
-    lines.append(f"> 仅统计已设余额锚点的账户：纳入 {snap['included_accounts']} 个，"
-                 f"未纳入 {snap['skipped_accounts']} 个。"
+    included = snap['included_accounts']
+    skipped = snap['skipped_accounts']
+    total = included + skipped
+    coverage = included / total if total else 0.0
+    lines.append(f"> 仅统计已设余额锚点的账户：纳入 {included} 个，"
+                 f"未纳入 {skipped} 个（覆盖率 {coverage:.0%}）。"
                  f"未锚定账户的流水不足以推算真实余额，不参与合计。")
     lines.append("")
+    # 覆盖率过低时，总资产/净资产数字没有引用价值，明确警示而非静默给出结论
+    if coverage < 0.8:
+        lines.append(f"> ⚠️ **数据不完整**：当前仅 {coverage:.0%} 的账户设了余额锚点，"
+                     f"下列「总资产 / 净资产」不能代表真实财务状况。"
+                     f"请先用 `accounts anchor` 为主力储蓄卡/支付钱包补锚点。")
+        lines.append("")
 
     lines += ["## 一、总览", "", "| 指标 | 数值 |", "|------|------|"]
     lines.append(f"| 总资产 | {money(snap['total_assets'])} |")
     lines.append(f"| 总负债 | {money(snap['total_liabilities'])} |")
-    lines.append(f"| **净资产（已锚定账户）** | **{money(snap['net_worth'])}** |")
+    nw_label = "净资产（已锚定账户）" if coverage >= 0.8 else "净资产（已锚定账户·不可引用）"
+    lines.append(f"| **{nw_label}** | **{money(snap['net_worth'])}** |")
     lines.append("")
 
     details = snap["details"]
@@ -55,6 +66,7 @@ def generate_net_worth_report(db: Database, date_str: str,
     trend = db.fetchall(
         """SELECT snapshot_date, total_assets, total_liabilities, net_worth
            FROM net_worth_snapshots WHERE book=?
+             AND total_assets >= 0 AND total_liabilities >= 0
            ORDER BY snapshot_date DESC LIMIT 12""",
         (book,),
     )

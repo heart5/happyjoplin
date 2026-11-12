@@ -60,13 +60,19 @@ class TransactionManager:
     def import_merged(self, wechat_events: list, sms_records: list,
                       month_key: str = "", rebuild: bool = True,
                       notification_events: list = None,
-                      notification_signals: list = None) -> dict:
-        """归并导入：先清当月非手工流水，再写入。"""
+                      notification_signals: list = None,
+                      clear_sources: list = None) -> dict:
+        """归并导入：先清当月非手工流水，再写入。
+
+        clear_sources 为 None 时清全部自动来源；否则只清指定来源
+        （单源降级重建时保留降级来源的既有流水，避免半份快照）。
+        """
         flows = self.router.route_events(
             wechat_events, sms_records, notification_events or [])
         inserted = self._save_flows(
             flows, clear_month=month_key if rebuild else None,
-            notification_signals=notification_signals)
+            notification_signals=notification_signals,
+            clear_sources=clear_sources)
         by_source = {}
         for f in flows:
             by_source[f.source] = by_source.get(f.source, 0) + 1
@@ -88,18 +94,21 @@ class TransactionManager:
             f.source_event_id = f"manual:{uuid.uuid4().hex}"
         return self._save_flows([f])
 
-    def _clear_month(self, conn, month_key: str) -> int:
+    def _clear_month(self, conn, month_key: str, sources: list = None) -> int:
         start, end = month_bounds(month_key)
+        srcs = sources or ['sms', 'wechat_main', 'wechat_work', 'notification']
+        marks = ",".join("?" * len(srcs))
         cur = conn.execute(
-            """DELETE FROM account_flows
+            f"""DELETE FROM account_flows
                WHERE book=? AND tx_date>=? AND tx_date<?
-                 AND source IN ('sms','wechat_main','wechat_work','notification')""",
-            (self.book, start, end),
+                 AND source IN ({marks})""",
+            (self.book, start, end, *srcs),
         )
         return cur.rowcount
 
     def _save_flows(self, flows: list, clear_month: str = None,
-                    notification_signals: list = None) -> int:
+                    notification_signals: list = None,
+                    clear_sources: list = None) -> int:
         rows = []
         for f in flows:
             d = self._flow_to_dict(f)
@@ -112,8 +121,9 @@ class TransactionManager:
         written = 0
         with self.db.transaction() as conn:
             if clear_month:
-                cleared = self._clear_month(conn, clear_month)
-                log.info(f"[{self.book}] 重建 {clear_month}：清除 {cleared} 条流水")
+                cleared = self._clear_month(conn, clear_month, clear_sources)
+                log.info(f"[{self.book}] 重建 {clear_month}：清除 {cleared} 条流水"
+                         + (f"（仅 {clear_sources}）" if clear_sources else ""))
             for d in rows:
                 cur = conn.execute(
                     f"INSERT INTO account_flows ({','.join(d.keys())}) "
@@ -252,14 +262,22 @@ class TransactionManager:
                     "is_liability": liabilities,
                 }
         net_worth = total_assets - total_liabilities
-        self.db.upsert("net_worth_snapshots", {
-            "book": book,
-            "snapshot_date": date_str,
-            "total_assets": round(total_assets, 2),
-            "total_liabilities": round(total_liabilities, 2),
-            "net_worth": round(net_worth, 2),
-            "details": json.dumps(details, ensure_ascii=False),
-        }, conflict_cols=["book", "snapshot_date"])
+        # 负的资产/负债合计一定是「账户没锚点却用历史流水硬滚」产生的伪值，
+        # 不落库、不进历史趋势，避免污染净资产报告（2026-11-12）。
+        valid = total_assets >= 0 and total_liabilities >= 0
+        if valid:
+            self.db.upsert("net_worth_snapshots", {
+                "book": book,
+                "snapshot_date": date_str,
+                "total_assets": round(total_assets, 2),
+                "total_liabilities": round(total_liabilities, 2),
+                "net_worth": round(net_worth, 2),
+                "details": json.dumps(details, ensure_ascii=False),
+            }, conflict_cols=["book", "snapshot_date"])
+        else:
+            log.warning(f"净资产快照 {date_str} 含负资产/负债合计"
+                        f"（assets={total_assets:.2f} liab={total_liabilities:.2f}），"
+                        f"丢弃不入库；请检查账户锚点")
         return {
             "book": book, "date": date_str,
             "total_assets": round(total_assets, 2),

@@ -888,6 +888,14 @@ def _build_record(primary: dict, companions: list) -> dict:
         if pm not in ("零钱", "微信支付"):
             record["merchant"] = pm
 
+    # 微信支付回执（paid/voucher）本身不带商户字段，属数据源限制而非
+    # 「待人工归类」。单列为「未分类-回执」，与真正需要处理的「未分类-其他」
+    # 区分开，避免把体检未分类率永久拖在 100%（2026-11-12）。
+    if (not record["merchant"]
+            and record.get("source") in ("paid", "voucher")
+            and record.get("category") == "未分类-其他"):
+        record["category"] = "未分类-回执"
+
     return record
 
 

@@ -56,7 +56,16 @@ def _next_month(month_key: str) -> str:
 def _is_unclassified(flow: dict) -> bool:
     if not flow["category_id"]:
         return True
-    return (flow["category_name"] or "") in ("", "未分类-其他")
+    name = flow["category_name"] or ""
+    # 「未分类-回执」= 微信支付回执本身无商户字段，属数据源限制，
+    # 不计入需人工处理的未分类率，单独统计（2026-11-12）。
+    if name == "未分类-回执":
+        return False
+    return name in ("", "未分类-其他")
+
+
+def _is_receipt_unclassified(flow: dict) -> bool:
+    return (flow["category_name"] or "") == "未分类-回执"
 
 
 _SCAN_HINT = re.compile(r"交易类型|摘要|交易对象|商户")
@@ -77,6 +86,7 @@ def _text_of(flow: dict) -> str:
 
 def _blank_source() -> dict:
     return {"n": 0, "cons_n": 0, "spend": 0.0, "uncat_n": 0, "uncat_amt": 0.0,
+            "receipt_n": 0, "receipt_amt": 0.0,
             "empty_m_n": 0, "empty_m_amt": 0.0}
 
 
@@ -86,6 +96,9 @@ def _acc_spend(stat: dict, flow: dict):
         return
     stat["cons_n"] += 1
     stat["spend"] += flow["amount"]
+    if _is_receipt_unclassified(flow):
+        stat["receipt_n"] += 1
+        stat["receipt_amt"] += flow["amount"]
     if _is_unclassified(flow):
         stat["uncat_n"] += 1
         stat["uncat_amt"] += flow["amount"]
@@ -139,12 +152,25 @@ def collect(db: Database, books: tuple, months: list) -> dict:
                    round(f["amount"], 2))
             dup_groups[key].append(f)
 
+    def _same_merchant(v: list) -> bool:
+        """组内商户名归一后是否一致——一致才可能是真重复。
+
+        同日同额但商户明显不同（如两家便利店各 25 元）是两笔真实消费，
+        不算疑似重复（2026-11-12）。
+        """
+        names = {(r["merchant"] or "").strip() for r in v}
+        names.discard("")
+        return len(names) <= 1
+
     duplicates = [
         {"key": k, "rows": v,
-         "cross_source": len({r["source"] for r in v}) > 1}
+         "cross_source": len({r["source"] for r in v}) > 1,
+         "high_confidence": _same_merchant(v)}
         for k, v in dup_groups.items() if len(v) > 1
     ]
-    duplicates.sort(key=lambda d: (not d["cross_source"], -len(d["rows"]),
+    # 高置信（同商户）排前面，低置信降为提示
+    duplicates.sort(key=lambda d: (not d["high_confidence"],
+                                   not d["cross_source"], -len(d["rows"]),
                                    d["key"][2]))
 
     unanchored = db.fetchall(
@@ -177,6 +203,8 @@ def collect(db: Database, books: tuple, months: list) -> dict:
     cons_n = sum(s["cons_n"] for s in by_source.values())
     uncat_n = sum(s["uncat_n"] for s in by_source.values())
     uncat_amt = sum(s["uncat_amt"] for s in by_source.values())
+    receipt_n = sum(s["receipt_n"] for s in by_source.values())
+    receipt_amt = sum(s["receipt_amt"] for s in by_source.values())
     empty_m_n = sum(s["empty_m_n"] for s in by_source.values())
 
     return {
@@ -188,6 +216,8 @@ def collect(db: Database, books: tuple, months: list) -> dict:
         "uncat_n": uncat_n,
         "uncat_amt": uncat_amt,
         "uncat_rate": uncat_n / cons_n if cons_n else 0.0,
+        "receipt_n": receipt_n,
+        "receipt_amt": receipt_amt,
         "empty_merchant_n": empty_m_n,
         "by_source": sorted(by_source.items()),
         "by_month": sorted(by_month.items()),
@@ -224,26 +254,31 @@ def render(stats: dict) -> str:
     lines.append(f"- 消费支出：{money(stats['spend'])}")
     lines.append(f"- 消费未分类：{stats['uncat_n']} 笔 {money(stats['uncat_amt'])}"
                  f"（占消费 {stats['uncat_rate']:.1%}）")
+    lines.append(f"- 支付回执无商户（数据源限制，不计入未分类率）："
+                 f"{stats['receipt_n']} 笔 {money(stats['receipt_amt'])}")
     lines.append(f"- 疑似转账记为消费：{len(stats['transfer_suspects'])} 笔")
     lines.append(f"- 疑似收入记为支出：{len(stats['income_suspects'])} 笔")
     lines.append(f"- 未匹配账户：{len(stats['unmatched'])} 笔")
-    cross_dups = sum(1 for d in stats["duplicates"] if d["cross_source"])
+    cross_dups = sum(1 for d in stats["duplicates"]
+                     if d["cross_source"] and d["high_confidence"])
+    hard_dups = sum(1 for d in stats["duplicates"] if d["high_confidence"])
     lines.append(f"- 疑似重复：{len(stats['duplicates'])} 组"
-                 f"（其中跨来源 {cross_dups} 组）")
+                 f"（高置信 {hard_dups} 组，其中跨来源 {cross_dups} 组；"
+                 "低置信=同日同额不同商户，多为真实多笔消费）")
     status = ("达标" if not stats["transfer_suspects"] and cross_dups == 0
               and stats["uncat_rate"] < uncat_target else "待处理")
     lines.append(f"- 判定：**{status}**（未分类率目标 <{uncat_target:.0%}，"
-                 "转账误记与跨来源重复目标 0）")
+                 "转账误记与高置信跨来源重复目标 0）")
     lines.append("")
 
     lines += ["## 一、分类与商户质量", "",
-              "| 账套 | 来源 | 流水 | 消费支出 | 未分类 | 未分类额 | 空商户 |",
-              "|------|------|------|------|------|------|------|"]
+              "| 账套 | 来源 | 流水 | 消费支出 | 未分类 | 未分类额 | 回执无商户 | 空商户 |",
+              "|------|------|------|------|------|------|------|------|"]
     for (book, source), s in stats["by_source"]:
         lines.append(
             f"| {book} | {_SOURCE_LABELS.get(source, source)} | {s['n']} | "
             f"{money(s['spend'])} | {s['uncat_n']} | {money(s['uncat_amt'])} | "
-            f"{s['empty_m_n']} |")
+            f"{s['receipt_n']} | {s['empty_m_n']} |")
     lines.append("")
 
     lines += ["## 二、月度走势", "",
@@ -300,14 +335,16 @@ def render(stats: dict) -> str:
                                        for r in d["rows"]}))
             merchants = "、".join(sorted({(r["merchant"] or "—")[:12]
                                           for r in d["rows"]}))
-            flag = "**跨来源**" if d["cross_source"] else "同来源"
+            src_flag = "**跨来源**" if d["cross_source"] else "同来源"
+            conf = "高置信" if d["high_confidence"] else "低置信(商户不同)"
             lines.append(
                 f"| {tx_date} | {book} | {name} | "
                 f"{'收入' if direction == 'inflow' else '支出'} | "
                 f"{money(amount)} | {len(d['rows'])} | {sources} | "
-                f"{merchants}（{flag}） |")
+                f"{merchants}（{src_flag}·{conf}） |")
         lines.append("")
-        lines.append("*同日同额的真实多笔消费也会出现在这里，按摘要人工判断。*")
+        lines.append("*高置信=商户归一后一致，可能是真重复需核对；"
+                     "低置信=同日同额但商户不同，多为真实多笔消费。*")
     else:
         lines.append("无。")
     lines.append("")
@@ -332,7 +369,8 @@ def render(stats: dict) -> str:
                          f"{r['year']}-{r['month']:02d} | "
                          f"{money(r['closing_balance'])} |")
         lines.append("")
-        lines.append("*负债类账户余额为负可能是符号口径问题，储蓄/支付类为负需核对。*")
+        lines.append("*未锚定账户的余额是用历史流水硬滚的估值（`is_estimated=1`），"
+                     "负数不代表真实透支，只说明缺锚点；已锚定账户出现负余额才需核对。*")
     else:
         lines.append("无。")
     lines.append("")

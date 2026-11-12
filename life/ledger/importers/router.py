@@ -577,6 +577,10 @@ class FlowRouter:
             account = self.acct_mgr.get_alipay(self.book)
         if account is None and ("微信" in source_text or "零钱" in source_text):
             account = self.acct_mgr.get_wechat_wallet(self.book)
+        # 运营商缴费成功提醒（中国电信等）无支付渠道，过去 account_id 恒为 NULL。
+        # 这类小额话费默认走微信零钱，避免长期污染「未匹配账户」指标（2026-11-12）。
+        if account is None and category == "通讯-话费":
+            account = self.acct_mgr.get_wechat_wallet(self.book)
 
         # 零钱充值/提现：银行腿 + 钱包腿
         if "零钱充值" in source_text and f_dir == "outflow":

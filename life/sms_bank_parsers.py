@@ -227,8 +227,8 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
         return ParsedSMS(amount=0, direction="支出", card_suffix="",
                          merchant="", counterparty="", bank_name="招商银行",
                          _skip=True)
-    # 跳过营销类额度广告
-    if "预授信" in body:
+    # 跳过营销类额度广告、非柜面限额调整（非交易；2026-11-12 修复）
+    if "预授信" in body or re.search(r"非柜面.{0,12}限额|限额调整为", body):
         return ParsedSMS(amount=0, direction="支出", card_suffix="",
                          merchant="", counterparty="", bank_name="招商银行",
                          _skip=True)
@@ -252,6 +252,22 @@ def _parse_cmb(body: str, number: str) -> Optional[ParsedSMS]:
         card_suffix = m.group(1)
 
     # ══════════════ 收入类 ══════════════
+
+    # 收到汇款（含付方/备注）：普通转账收入；备注含「放款/贷款」则是贷款放款。
+    # 2026-11-12 修复：招联消费金融放款 9000/6000 过去被读成消费支出。
+    m_remit = re.search(
+        r"收到汇款人民币(\d+\.?\d*)[，,].*?付方(.+?)(?:[，,。]|账号|$)", body)
+    if m_remit:
+        amount = float(m_remit.group(1))
+        counterparty = _strip_trailing(m_remit.group(2))
+        is_loan = bool(re.search(r"(放款|贷款|借款)", body))
+        return ParsedSMS(
+            amount=amount, direction="收入", card_suffix=card_suffix,
+            merchant=counterparty or "汇款收入", counterparty=counterparty,
+            bank_name="招商银行", is_loan=is_loan,
+            category="借贷-放款" if is_loan else "收入-转账",
+            tx_type_detail="loan_disbursement" if is_loan else "transfer_in",
+        )
 
     # 格式4 + 格式6：他行实时转入 / 本行转入 → 收入
     m_in = re.search(r"他行实时转入人民币(\d+\.?\d*).*?付方(.+?)(?:[。.，\s]|关闭|收益|砸|领|$)", body)
@@ -579,6 +595,17 @@ def _parse_comm(body: str, number: str) -> Optional[ParsedSMS]:
             bank_name="交通银行",
             category="内部-转账" if "白晔峰" in cp else "社交-转账",
             tx_type_detail="transfer_out",
+        )
+
+    # --- 柜面存现 → 收入（2026-11-12 修复：过去被兜底读成 30 万消费支出）---
+    m_cash_dep = re.search(
+        r"您尾号\*?(\d{4})的卡.*?柜面.*?存现(\d+\.?\d*)元", body)
+    if m_cash_dep:
+        return ParsedSMS(
+            amount=float(m_cash_dep.group(2)), direction="收入",
+            card_suffix=m_cash_dep.group(1),
+            merchant="柜面存现", counterparty="", bank_name="交通银行",
+            category="收入-其他", tx_type_detail="deposit",
         )
 
     # --- 格式2：贵账户转出 → 支出 ---
@@ -1132,11 +1159,14 @@ _RE_SOFT_NON_TX = re.compile(
     r"温馨提醒|温馨提示|保单|保费|如已|请及时|点击|套餐|验证码|拒收|储值账户)")
 
 # 运营商账单/余额提醒、保险缴费提醒、额度调整/分期营销：无论如何都不是流水
+# 2026-11-12：银行「非柜面渠道转出限额 / 支出限额调整为日限额X元」不是交易，
+# 过去被交行/招行解析器读成 10 万 / 16.04 万的支出，故在硬排除层统一拦掉。
 _RE_HARD_NON_TX = re.compile(
     r"(余额不足|可用余额|积分兑换|积分超过|网龄回馈|话费账单|账单已送达|"
     r"消费项目|套餐及|即将缴费|即将交费|储值账户|"
     r"额度已?(?:调至|调整|提升|降低)|综合信用评估|分期还款方案|"
     r"已分\d+期|账单分期|分期后.{0,20}无须还款|"
+    r"非柜面.{0,12}(?:限额|额度)|(?:日|年)限额\d|限额调整为|"
     r"验证码|密码序号|动态密码|动态口令|切勿泄露|语音用尽|已用尽)")
 
 

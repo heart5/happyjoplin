@@ -47,9 +47,15 @@ from life.sms_finance import parse_sms_records, _get_sms_api_key
 from .notifications import fetch_notifications
 from .reclassify import reclassify_unclassified
 
-__all__ = ["FinanceSync", "sync_range", "main"]
+__all__ = ["FinanceSync", "sync_range", "main", "PARSER_VERSION"]
 
 TZ = timezone(timedelta(hours=8))
+
+# 解析器版本：任何解析/归类规则变更后必须递增。
+# 它混入 import_batches.md5 的比对值，使旧月份在下次同步时自动重建，
+# 不再出现「改了解析器但历史月永远不重算」的静默偏差（2026-11-12）。
+# 递增后建议跑一次 `sync --backfill --force` 做全量回填。
+PARSER_VERSION = "2026-11-12.1"  # 交行存现/招行收到汇款/非柜面限额边界修复
 
 BOOK_SOURCES = {
     "personal": ("sms", "wechat_main", "wechat_work", "notification"),
@@ -260,6 +266,29 @@ FETCHERS = {
     "notification": fetch_notifications,
 }
 
+# 可选数据源：拉取失败时降级为「沿用既有流水、只重建成功来源」，
+# 不再让整月 failed（2026-11-12；11/3、11/4 通知 API SSL 超时即此场景）。
+OPTIONAL_SOURCES = ("notification",)
+_FETCH_RETRIES = 3
+_FETCH_BACKOFF = (2, 8)  # 秒
+
+
+def _fetch_with_retry(source: str, month_key: str):
+    """带指数退避的数据源拉取；全失败抛最后一次异常。"""
+    import time
+    last = None
+    for attempt in range(_FETCH_RETRIES):
+        try:
+            return FETCHERS[source](month_key)
+        except Exception as e:  # noqa: BLE001 - 需要捕获所有网络/解析异常以重试
+            last = e
+            if attempt < _FETCH_RETRIES - 1:
+                wait = _FETCH_BACKOFF[min(attempt, len(_FETCH_BACKOFF) - 1)]
+                log.warning(f"[{month_key}] {source} 拉取失败（第 {attempt + 1} 次）："
+                           f"{e}，{wait}s 后重试")
+                time.sleep(wait)
+    raise last
+
 
 # ── 同步 ──
 
@@ -285,6 +314,14 @@ class FinanceSync:
             (book, source, period),
         )
 
+    @staticmethod
+    def _batch_md5(source: str, raw_digest: str) -> str:
+        """批次指纹 = 原始数据 md5 + 解析器版本。
+
+        仅对依赖解析的数据源加版本；纯原始计数类数据源不加，避免无意义重建。
+        """
+        return f"{raw_digest}:{PARSER_VERSION}"
+
     def _mark(self, book: str, source: str, period: str, md5: str,
               status: str, row_count: int, error: str = None):
         now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
@@ -304,28 +341,40 @@ class FinanceSync:
                    dry_run: bool = False, reclassify: bool = True) -> dict:
         sources = BOOK_SOURCES[book]
         payloads = {}
-        failed = False
+        degraded = []
 
         for source in sources:
             try:
-                records, count, digest, *extra = FETCHERS[source](month_key)
+                records, count, digest, *extra = _fetch_with_retry(source, month_key)
                 signals = extra[0] if extra else []
             except Exception as e:
+                if source in OPTIONAL_SOURCES:
+                    # 可选源失败：沿用既有流水，本轮不重建也不标记 failed
+                    degraded.append(source)
+                    log.warning(f"[{book}] {month_key} {source} 拉取失败，"
+                               f"降级沿用既有流水：{e}")
+                    continue
                 log.error(f"[{book}] {month_key} {source} 拉取失败：{e}")
                 if not dry_run:
                     self._mark(book, source, month_key, "", "failed", 0, str(e)[:500])
-                failed = True
-                continue
+                return {"book": book, "month": month_key, "status": "failed",
+                        "failed_source": source}
             payloads[source] = (records, count, digest, signals)
             log.info(f"[{book}] {month_key} {source}: {len(records)}/{count} 条"
                      + (f"（信号 {len(signals)} 条）" if signals else ""))
 
-        if failed:
-            return {"book": book, "month": month_key, "status": "failed"}
+        if not payloads:
+            return {"book": book, "month": month_key, "status": "skipped",
+                    "reason": "全部数据源不可用"}
 
+        # 降级时：只清/重建成功拉取的来源，保留降级来源既有流水
+        clear_sources = (list(payloads.keys()) if degraded else None)
+
+        # md5 比对混入解析器版本：解析器升级后旧月份自动失效重建。
         unchanged = all(
             (b := self._batch(book, source, month_key))
-            and b["status"] == "ok" and b["md5"] == digest
+            and b["status"] == "ok"
+            and b["md5"] == self._batch_md5(source, digest)
             for source, (_, _, digest, _) in payloads.items()
         )
         if unchanged and not force:
@@ -355,18 +404,20 @@ class FinanceSync:
             result = self.tx_mgr(book).import_merged(
                 wechat_events, sms_records, month_key,
                 notification_events=notification_events,
-                notification_signals=notification_signals)
+                notification_signals=notification_signals,
+                clear_sources=clear_sources)
         except Exception as e:
             log.error(f"[{book}] {month_key} 入库失败：{e}")
-            for source in sources:
+            for source in payloads:
                 self._mark(book, source, month_key,
                            payloads[source][2], "failed", 0, str(e)[:500])
             return {"book": book, "month": month_key, "status": "failed",
                     "error": str(e)}
 
-        for source in sources:
+        for source in payloads:
             _, count, digest, _ = payloads[source]
-            self._mark(book, source, month_key, digest, "ok", count)
+            self._mark(book, source, month_key,
+                       self._batch_md5(source, digest), "ok", count)
 
         if reclassify:
             try:
@@ -379,12 +430,16 @@ class FinanceSync:
         year, month = int(month_key[:4]), int(month_key[5:7])
         self.tx_mgr(book).calculate_all_balances(year, month, book=book)
 
-        return {
-            "book": book, "month": month_key, "status": "ok",
+        res = {
+            "book": book, "month": month_key,
+            "status": "degraded" if degraded else "ok",
             "flows": result["total_flows"],
             "parsed": result["parsed_flows"],
             "sources": {s: len(p[0]) for s, p in payloads.items()},
         }
+        if degraded:
+            res["degraded_sources"] = degraded
+        return res
 
     def sync_range(self, months: list, books: list, force: bool = False,
                    dry_run: bool = False, reclassify: bool = True) -> list:
@@ -440,7 +495,11 @@ def main(argv=None) -> int:
     elif args.from_month:
         months = _month_list(args.from_month, args.to_month or now_month)
     else:
-        months = [_prev_month(now_month), now_month]
+        # 默认重建当月 + 前两个月，给迟到数据（补发短信/通知延迟/微信补录）
+        # 一个自动回填窗口（2026-11-12 由 2 个月扩到 3 个月）。
+        m1 = _prev_month(now_month)
+        m2 = _prev_month(m1)
+        months = [m2, m1, now_month]
 
     sync = FinanceSync()
     results = sync.sync_range(months, books, force=args.force,
