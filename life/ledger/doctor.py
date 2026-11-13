@@ -395,12 +395,14 @@ def render(stats: dict) -> str:
     else:
         lines.append("无。")
     lines.append("")
-    lines.append(f"### 僵尸账户（0 流水且无锚点，可考虑停用）— {len(zombie)} 个")
+    lines.append(f"### 未使用账户（0 流水且无锚点，保留备用）— {len(zombie)} 个")
     lines.append("")
     if zombie:
         for a in zombie:
             suffix = f"（尾号 {a['card_suffix']}）" if a["card_suffix"] else ""
             lines.append(f"- [{a['book']}] {a['name']} · {a['type']}{suffix}")
+        lines.append("")
+        lines.append("*用户决定：**不停用**，保留备用（2026-11-13）。*")
     else:
         lines.append("无。")
     lines.append("")
@@ -443,8 +445,9 @@ def render(stats: dict) -> str:
             lines.append(f"| {s['label']} | {s['path']} | {s['mtime']} | "
                          f"{s['age_days']} 天{flag} |")
     lines.append("")
-    lines.append(f"*超过 {_SOURCE_STALE_DAYS} 天未刷新会标 ⚠；这些文件靠手工导出，"
-                 "不参与每日 sync，过期意味着账本缺近段支付宝/微信账单数据。*")
+    lines.append(f"*超过 {_SOURCE_STALE_DAYS} 天未刷新会标 ⚠。这些文件**只能手工导出**"
+                 "（支付宝/微信无对外接口，用户 2026-11-13 确认），不参与每日 sync；"
+                 "本检查只作提醒，过期意味着账本缺近段数据。*")
     lines.append("")
 
     lines += ["", "---", f"*生成时间：{now_text()} ｜ 数据来源：finance.db*", ""]

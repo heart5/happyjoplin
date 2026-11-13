@@ -1,6 +1,7 @@
 # 个人财务系统 — 账户管理（book 感知）
 
 import re
+from datetime import datetime, timedelta
 from typing import Optional
 
 from .db import Database
@@ -228,12 +229,51 @@ class AccountManager:
     def deactivate(self, account_id: int):
         self.db.update("accounts", {"is_active": 0}, {"id": account_id})
 
-    def set_anchor(self, account_id: int, balance: float, date_str: str):
-        """设置余额锚点：date_str 起从该余额滚算（含之后的流水）。"""
+    def set_anchor(self, account_id: int, balance: float, date_str: str,
+                   reason: str = None):
+        """设置余额锚点：date_str 起从该余额滚算（含之后的流水）。
+
+        变动记入 adjustment_log 留痕（锚点直接影响净资产，必须可追溯）。
+        """
+        before = self.db.fetchone(
+            "SELECT opening_balance, opening_date FROM accounts WHERE id=?",
+            (account_id,))
         self.db.update("accounts", {
             "opening_balance": round(float(balance), 2),
             "opening_date": date_str,
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }, {"id": account_id})
+        if before and (before["opening_date"] != date_str
+                       or abs((before["opening_balance"] or 0) - balance) > 0.005):
+            self.db.insert("adjustment_log", {
+                "flow_id": None,
+                "field": "anchor",
+                "old_value": f"{before['opening_date'] or '—'} "
+                             f"{before['opening_balance'] or 0:,.2f}",
+                "new_value": f"{date_str} {float(balance):,.2f}",
+                "reason": reason or "手动设置余额锚点",
+            })
+
+    def anchor_many(self, items: list, as_of: str, anchor_date: str = None,
+                    reason: str = None, dry_run: bool = False) -> list:
+        """批量设置锚点。items = [(account_id, balance), ...]。
+
+        `as_of` 是余额观察日；锚点日期默认取其**次日**——余额里已含观察日
+        当天的流水，若不后移会把当天流水重复计入。
+        """
+        if anchor_date is None:
+            obs = datetime.strptime(as_of, "%Y-%m-%d")
+            anchor_date = (obs + timedelta(days=1)).strftime("%Y-%m-%d")
+        results = []
+        for account_id, balance in items:
+            acct = self.get_account(account_id)
+            if acct is None:
+                results.append((account_id, None, "账户不存在"))
+                continue
+            if not dry_run:
+                self.set_anchor(account_id, balance, anchor_date, reason=reason)
+            results.append((account_id, acct.name, "ok"))
+        return results
 
     # ── 辅助 ──
 

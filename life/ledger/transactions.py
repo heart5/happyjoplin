@@ -175,13 +175,23 @@ class TransactionManager:
     # ── 余额 ──
 
     def calculate_monthly_balance(self, account_id: int, year: int,
-                                  month: int) -> AccountBalance:
+                                  month: int):
+        """计算账户某月余额；锚点晚于该月时返回 None（无法回溯）。
+
+        锚点含义是「该日期起按此余额滚算」。若锚点设在今天，用它去算历史月份
+        会把今天的余额硬当成历史余额（且 `is_estimated=0` 标成已校准），
+        污染历史月报/年报的账户余额表。故锚点 >= 该月末时不计算、不落库，
+        由报告按「未覆盖」处理（2026-11-13）。
+        """
         acct = self.acct_mgr.get_account(account_id)
         if acct is None:
             return AccountBalance(account_id, year, month, 0, 0, 0, 0, True)
 
         start = f"{year:04d}-{month:02d}-01"
         end = f"{year + 1:04d}-01-01" if month == 12 else f"{year:04d}-{month + 1:02d}-01"
+
+        if acct.opening_date and acct.opening_date >= end:
+            return None
 
         opening = acct.opening_balance or 0.0
         if acct.is_liability:
@@ -234,7 +244,9 @@ class TransactionManager:
     def calculate_all_balances(self, year: int, month: int, book: str = None) -> list:
         results = []
         for acct in self.acct_mgr.list_accounts(book=book):
-            results.append(self.calculate_monthly_balance(acct.id, year, month))
+            bal = self.calculate_monthly_balance(acct.id, year, month)
+            if bal is not None:      # 锚点晚于该月的账户不参与
+                results.append(bal)
         return results
 
     # ── 净资产 ──
@@ -253,6 +265,9 @@ class TransactionManager:
                     skipped += 1
                     continue
                 bal = self.calculate_monthly_balance(acct.id, year, month)
+                if bal is None:      # 锚点晚于本次快照日期，不参与
+                    skipped += 1
+                    continue
                 value = bal.closing_balance
                 if acct.is_liability:
                     total_liabilities += value

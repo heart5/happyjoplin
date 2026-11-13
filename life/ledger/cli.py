@@ -76,10 +76,104 @@ def cmd_accounts_add(args):
 
 def cmd_accounts_anchor(args):
     acct_mgr = AccountManager(_db())
-    acct_mgr.set_anchor(args.account, args.balance, args.date)
+    acct_mgr.set_anchor(args.account, args.balance, args.date,
+                        reason=args.reason)
     acct = acct_mgr.get_account(args.account)
     print(f"锚点已设置: [{acct.id}] {acct.name} "
           f"{acct.opening_date} 起余额 {acct.opening_balance:,.2f}")
+
+
+def _read_anchor_file(path: str) -> list:
+    """读取锚点文件，返回 [(账户ID, 余额), ...]。
+
+    支持两种格式：
+      ① 两列简式：`账户ID,余额`
+      ② 带表头的填表模板：自动识别 `id` / `balance` 列名（列顺序不限）
+    空余额（留空=不处理）、`#` 注释行、空行一律跳过，便于直接用导出模板。
+    """
+    import csv as _csv
+    items = []
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        sep = "\t" if sample.count("\t") > sample.count(",") else ","
+        rows = [r for r in _csv.reader(f, delimiter=sep)
+                if r and any(c.strip() for c in r)]
+        # 先剔除注释行，再认表头（模板首行是 `#` 说明，不是表头）
+        rows = [r for r in rows if not r[0].lstrip().startswith("#")]
+        if not rows:
+            return items
+
+        id_idx, bal_idx = 0, 1
+        header = [c.strip().lower() for c in rows[0]]
+        by_header = any(c in ("balance", "余额", "真实余额") for c in header)
+        if by_header:
+            for i, name in enumerate(header):
+                if name in ("id", "账户id", "account_id"):
+                    id_idx = i
+                elif name in ("balance", "余额", "真实余额"):
+                    bal_idx = i
+            rows = rows[1:]           # 去掉表头
+
+        for row in rows:
+            if len(row) <= max(id_idx, bal_idx):
+                continue
+            key = row[id_idx].strip()
+            # 两列简式下 `¥1,234.50` 会被逗号拆成多格，需要拼回
+            raw = (row[bal_idx] if by_header
+                   else "".join(row[bal_idx:])).strip()
+            if not key or not raw:
+                continue
+            try:
+                items.append((int(key),
+                              float(raw.replace(",", "").replace("¥", "").strip())))
+            except ValueError:
+                print(f"跳过无法解析的行: {row}")
+    return items
+
+
+def cmd_accounts_anchor_batch(args):
+    db = _db()
+    acct_mgr = AccountManager(db)
+    items = _read_anchor_file(args.file)
+    if not items:
+        print("文件中没有可用的「账户ID,余额」数据。")
+        return 1
+
+    as_of = args.as_of or datetime.now().strftime("%Y-%m-%d")
+    obs = datetime.strptime(as_of, "%Y-%m-%d")
+    anchor_date = args.date or (obs + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    print(f"余额观察日 {as_of} → 锚点日期 {anchor_date}"
+          f"（+1 天，避免当天流水重复计入）")
+    print(f"{'ID':<6}{'账户':<26}{'类型':<12}{'余额':>14}  说明")
+    print("-" * 78)
+    for account_id, balance in items:
+        acct = acct_mgr.get_account(account_id)
+        if acct is None:
+            print(f"{account_id:<6}{'—':<26}{'':<12}{balance:>14,.2f}  ⚠ 账户不存在")
+            continue
+        note = "欠款/负债" if acct.is_liability else "余额"
+        old = (f"{acct.opening_date} {acct.opening_balance:,.2f}"
+               if acct.opening_date else "未锚定")
+        print(f"{acct.id:<6}{acct.name:<26}{acct.type:<12}{balance:>14,.2f}"
+              f"  {note}（原 {old}）")
+
+    if args.dry_run:
+        print("\n--dry-run：未写入。")
+        return 0
+
+    acct_mgr.anchor_many(items, as_of=as_of, anchor_date=anchor_date,
+                         reason=args.reason)
+    print(f"\n已写入 {len(items)} 个账户锚点，日期 {anchor_date}。")
+
+    # 立即重算当月与去年同月，便于核对净资产
+    year, month = obs.year, obs.month
+    tx_mgr = TransactionManager(db, book="personal")
+    for b in ("personal", "work"):
+        tx_mgr.calculate_all_balances(year, month, book=b)
+    print(f"已重算 {year}-{month:02d} 账户余额。")
+    return 0
 
 
 # ── sync ──
@@ -288,6 +382,17 @@ def main(argv=None):
     p_anchor.add_argument("--balance", type=float, required=True)
     p_anchor.add_argument("--date", required=True,
                           help="从该日期起按此余额滚算（通常为余额短信次日）")
+    p_anchor.add_argument("--reason", help="调整原因（记入 adjustment_log）")
+
+    p_anchor_batch = p_accts_sub.add_parser(
+        "anchor-batch", help="从 CSV/TSV（账户ID,余额）批量设置锚点")
+    p_anchor_batch.add_argument("--file", required=True)
+    p_anchor_batch.add_argument("--as-of", dest="as_of",
+                                help="余额观察日 YYYY-MM-DD（默认今天）")
+    p_anchor_batch.add_argument("--date", help="锚点日期（默认=观察日+1 天）")
+    p_anchor_batch.add_argument("--reason")
+    p_anchor_batch.add_argument("--dry-run", dest="dry_run",
+                                action="store_true")
 
     p_sync = sub.add_parser("sync")
     p_sync.add_argument("--month")
@@ -397,6 +502,7 @@ def main(argv=None):
         ("accounts", "list"): cmd_accounts_list,
         ("accounts", "add"): cmd_accounts_add,
         ("accounts", "anchor"): cmd_accounts_anchor,
+        ("accounts", "anchor-batch"): cmd_accounts_anchor_batch,
         ("sync", None): cmd_sync,
         ("import", "all"): cmd_import_all,
         ("status", None): cmd_status,
