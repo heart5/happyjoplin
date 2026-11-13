@@ -1162,10 +1162,14 @@ class FlowRouter:
                     continue
                 for b in group:
                     if (b is a or id(b) in dead
-                            or not self._is_wechat_source(b.source)
-                            or b.source == a.source):
+                            or not self._is_wechat_source(b.source)):
                         continue
-                    if self._time_diff_seconds(mt[id(a)], mt[id(b)]) <= 300:
+                    # 同源也要合并：同一家银行会给同一笔交易推两条不同格式的
+                    # 提醒（「光大银行信用卡」/「中国光大银行」各一条，只差 1 秒），
+                    # 过去用 b.source == a.source 跳过，导致 19 年多笔 1.4 万重复。
+                    same_src = (b.source == a.source)
+                    diff = self._time_diff_seconds(mt[id(a)], mt[id(b)])
+                    if diff <= (120 if same_src else 300):
                         self._absorb(a, b)
                         dead.add(id(b))
             for a in group:

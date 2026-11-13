@@ -678,6 +678,12 @@ def _collect_finance_events(messages: list) -> list:
             # 摘要里的「转出/转支/汇出」比泛化的「支出」更有判别力。
             kind, _kw = classify_tx_kind(
                 " ".join(x for x in (explicit, summary, party) if x))
+            # 摘要只是建行内部业务码（纯数字，如 111761）时没有任何消费语义，
+            # 仅凭「交易类型：支出」判消费会把周转/还款算成消费。
+            # 这类无法判定的按转账处理（宁可少算消费，不可虚增）。
+            if (kind == "consumption" and summary
+                    and re.fullmatch(r"\d{4,}", summary.strip())):
+                kind = "transfer"
             evt["tx_kind"] = kind or ""
             is_refund = kind == "refund"
             is_cc_repay = kind == CARD_REPAYMENT
