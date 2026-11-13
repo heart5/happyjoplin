@@ -8,7 +8,19 @@ from ..transactions import month_bounds
 __all__ = [
     "fetch_flows", "fetch_year_flows", "money", "pct",
     "sum_dir", "debt_total", "month_label", "now_text", "by_category",
+    "SOURCE_LABELS", "source_label",
 ]
+
+# 账本来源统一中文标签（doctor / publish.status 共用）
+SOURCE_LABELS = {
+    "sms": "短信", "wechat_main": "主号微信", "wechat_work": "工作号微信",
+    "notification": "通知", "manual": "手工", "alipay": "支付宝",
+    "wechat_bill": "工作号账单", "wechat_bill_main": "主号账单",
+}
+
+
+def source_label(source: str) -> str:
+    return SOURCE_LABELS.get(source, source)
 
 _FLOW_SELECT = (
     "SELECT af.*, a.name AS account_name, a.type AS account_type,"

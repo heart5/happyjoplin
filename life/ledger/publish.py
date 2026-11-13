@@ -14,6 +14,7 @@ with pathmagic.context():
     from func.logme import log
 
 from .db import Database
+from .reports.common import source_label
 
 SYSTEM_NOTEBOOK = "财务管理/系统账本"
 CARD_NOTEBOOK = "财务管理/银行卡"
@@ -252,14 +253,14 @@ def publish_status(db: Database, publisher: JoplinPublisher,
     if failed:
         lines += ["## 失败批次", ""]
         for r in failed:
-            lines.append(f"- [{r['book']}] {r['period']} {r['source']}："
+            lines.append(f"- [{r['book']}] {r['period']} {source_label(r['source'])}："
                          f"{(r['error'] or '')[:200]}")
         lines.append("")
     lines += ["## 最近导入批次", "",
               "| 月份 | 账套 | 来源 | 状态 | 原始条数 | 完成时间 |",
               "|------|------|------|------|------|------|"]
     for r in rows:
-        lines.append(f"| {r['period']} | {r['book']} | {r['source']} | "
+        lines.append(f"| {r['period']} | {r['book']} | {source_label(r['source'])} | "
                      f"{r['status']} | {r['row_count']} | "
                      f"{r['finished_at'] or '—'} |")
     lines.append("")

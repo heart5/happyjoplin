@@ -6,10 +6,11 @@ import re
 import sys
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 
 from .db import Database
 from .publish import JoplinPublisher, SYSTEM_NOTEBOOK
-from .reports.common import money, now_text
+from .reports.common import money, now_text, source_label
 
 __all__ = ["collect", "render", "publish_report", "main"]
 
@@ -19,12 +20,10 @@ _SUSPECT_TRANSFER = re.compile(
 _SUSPECT_INCOME = re.compile(
     r"工资|奖金|绩效|补贴|报销|利息|收益|分红|退款|代发")
 
-_SOURCE_LABELS = {
-    "sms": "短信", "wechat_main": "主号微信",
-    "wechat_work": "工作号微信", "notification": "通知", "manual": "手工",
-}
-
 _TOP_N = 20
+
+# 静态数据源（手工刷新的 CSV/xlsx）超过该天数未更新时在体检中提示
+_SOURCE_STALE_DAYS = 45
 
 
 def _recent_months(count: int) -> list:
@@ -123,6 +122,36 @@ def _fetch_flows(db, books: tuple, start: str, end: str) -> list:
     )
 
 
+def _source_freshness(data_dir: Path) -> list:
+    """静态数据源（支付宝 CSV / 微信账单 xlsx）的新鲜度。
+
+    这些文件靠手工导出刷新，不参与每日 sync；过期意味着账本缺近段数据。
+    每个目录取最新一个文件，报告其 mtime 与距今天数。
+    """
+    dirs = [
+        ("支付宝明细", "alipay", "*.csv"),
+        ("工作号账单", "wechat-bill", "*.xlsx"),
+        ("主号账单", "wechat-bill-main", "*.xlsx"),
+    ]
+    result = []
+    for label, subdir, pattern in dirs:
+        files = sorted((data_dir / subdir).glob(pattern))
+        if not files:
+            result.append({"label": label, "path": f"data/{subdir}/",
+                           "exists": False, "age_days": None})
+            continue
+        path = files[-1]
+        mtime = datetime.fromtimestamp(path.stat().st_mtime)
+        age_days = (datetime.now() - mtime).days
+        result.append({
+            "label": label, "path": f"data/{subdir}/{path.name}",
+            "exists": True, "mtime": mtime.strftime("%Y-%m-%d %H:%M"),
+            "age_days": age_days,
+            "stale": age_days > _SOURCE_STALE_DAYS,
+        })
+    return result
+
+
 def collect(db: Database, books: tuple, months: list) -> dict:
     start, end = f"{months[0]}-01", f"{_next_month(months[-1])}-01"
     flows = _fetch_flows(db, books, start, end)
@@ -174,9 +203,12 @@ def collect(db: Database, books: tuple, months: list) -> dict:
                                    d["key"][2]))
 
     unanchored = db.fetchall(
-        "SELECT book, name, type, card_suffix FROM accounts"
-        " WHERE is_active=1 AND (opening_date IS NULL OR opening_date='')"
-        " ORDER BY book, type, id")
+        """SELECT a.book, a.name, a.type, a.card_suffix,
+                  (SELECT COUNT(*) FROM account_flows f
+                    WHERE f.account_id = a.id) AS flow_count
+           FROM accounts a
+           WHERE a.is_active=1 AND (a.opening_date IS NULL OR a.opening_date='')
+           ORDER BY a.book, a.type, a.id""")
 
     bound = int(months[-1][:4]) * 100 + int(months[-1][5:7])
     negative = db.fetchall(
@@ -228,13 +260,14 @@ def collect(db: Database, books: tuple, months: list) -> dict:
         "unanchored": unanchored,
         "negative_balances": negative,
         "bad_batches": batches,
+        "data_sources": _source_freshness(Path(db.db_path).parent),
     }
 
 
 def _flow_rows(rows: list, limit: int = _TOP_N) -> list:
     rows = sorted(rows, key=lambda r: -r["amount"])[:limit]
     return [
-        f"| {r['tx_date']} | {r['book']} | {_SOURCE_LABELS.get(r['source'], r['source'])}"
+        f"| {r['tx_date']} | {r['book']} | {source_label(r['source'])}"
         f" | {money(r['amount'])} | {(r['merchant'] or r['counterparty'] or '—')[:40]} |"
         for r in rows
     ]
@@ -276,7 +309,7 @@ def render(stats: dict) -> str:
               "|------|------|------|------|------|------|------|------|"]
     for (book, source), s in stats["by_source"]:
         lines.append(
-            f"| {book} | {_SOURCE_LABELS.get(source, source)} | {s['n']} | "
+            f"| {book} | {source_label(source)} | {s['n']} | "
             f"{money(s['spend'])} | {s['uncat_n']} | {money(s['uncat_amt'])} | "
             f"{s['receipt_n']} | {s['empty_m_n']} |")
     lines.append("")
@@ -315,7 +348,7 @@ def render(stats: dict) -> str:
             d = "收入" if r["direction"] == "inflow" else "支出"
             lines.append(
                 f"| {r['tx_date']} | {r['book']} | "
-                f"{_SOURCE_LABELS.get(r['source'], r['source'])} | {d} | "
+                f"{source_label(r['source'])} | {d} | "
                 f"{money(r['amount'])} | "
                 f"{(r['merchant'] or r['counterparty'] or '—')[:40]} |")
         if len(unmatched) > _TOP_N:
@@ -331,7 +364,7 @@ def render(stats: dict) -> str:
         for d in stats["duplicates"][:_TOP_N]:
             book, account_id, tx_date, direction, amount = d["key"]
             name = d["rows"][0]["account_name"] or f"#{account_id}"
-            sources = "/".join(sorted({_SOURCE_LABELS.get(r["source"], r["source"])
+            sources = "/".join(sorted({source_label(r["source"])
                                        for r in d["rows"]}))
             merchants = "、".join(sorted({(r["merchant"] or "—")[:12]
                                           for r in d["rows"]}))
@@ -350,10 +383,22 @@ def render(stats: dict) -> str:
     lines.append("")
 
     lines += ["## 五、账户与余额", ""]
-    lines.append(f"### 未锚定账户 — {len(stats['unanchored'])} 个")
+    zombie = [a for a in stats["unanchored"] if a["flow_count"] == 0]
+    pending = [a for a in stats["unanchored"] if a["flow_count"] > 0]
+    lines.append(f"### 待锚定账户（有流水，缺真实余额）— {len(pending)} 个")
     lines.append("")
-    if stats["unanchored"]:
-        for a in stats["unanchored"]:
+    if pending:
+        for a in pending:
+            suffix = f"（尾号 {a['card_suffix']}）" if a["card_suffix"] else ""
+            lines.append(f"- [{a['book']}] {a['name']} · {a['type']}{suffix}"
+                         f"（{a['flow_count']} 笔）")
+    else:
+        lines.append("无。")
+    lines.append("")
+    lines.append(f"### 僵尸账户（0 流水且无锚点，可考虑停用）— {len(zombie)} 个")
+    lines.append("")
+    if zombie:
+        for a in zombie:
             suffix = f"（尾号 {a['card_suffix']}）" if a["card_suffix"] else ""
             lines.append(f"- [{a['book']}] {a['name']} · {a['type']}{suffix}")
     else:
@@ -385,6 +430,23 @@ def render(stats: dict) -> str:
                          f"{(r['error'] or '—')[:60]} |")
     else:
         lines.append("无。")
+    lines.append("")
+
+    lines += ["## 七、静态数据源新鲜度", "",
+              "| 数据源 | 最新文件 | 最后刷新 | 距今 |",
+              "|------|------|------|------|"]
+    for s in stats["data_sources"]:
+        if not s["exists"]:
+            lines.append(f"| {s['label']} | {s['path']} | — | 未找到 |")
+        else:
+            flag = " ⚠ 需刷新" if s["stale"] else ""
+            lines.append(f"| {s['label']} | {s['path']} | {s['mtime']} | "
+                         f"{s['age_days']} 天{flag} |")
+    lines.append("")
+    lines.append(f"*超过 {_SOURCE_STALE_DAYS} 天未刷新会标 ⚠；这些文件靠手工导出，"
+                 "不参与每日 sync，过期意味着账本缺近段支付宝/微信账单数据。*")
+    lines.append("")
+
     lines += ["", "---", f"*生成时间：{now_text()} ｜ 数据来源：finance.db*", ""]
     return "\n".join(lines)
 

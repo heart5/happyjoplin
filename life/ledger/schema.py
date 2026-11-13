@@ -171,15 +171,6 @@ CREATE TABLE IF NOT EXISTS net_worth_snapshots (
     UNIQUE(book, snapshot_date)
 );
 
--- 商户分类映射
-CREATE TABLE IF NOT EXISTS merchant_category_map (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    merchant    TEXT    NOT NULL UNIQUE,
-    category_id INTEGER NOT NULL REFERENCES categories(id),
-    priority    INTEGER DEFAULT 0,
-    created_at  TEXT    DEFAULT (datetime('now','localtime'))
-);
-
 -- 调整日志
 CREATE TABLE IF NOT EXISTS adjustment_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -356,11 +347,20 @@ def _migrate_adjustment_log(conn):
         conn.execute("PRAGMA foreign_keys=ON")
 
 
+def _migrate_drop_merchant_map(conn):
+    """清理死表 merchant_category_map（从未有代码读写，0 行）。
+
+    幂等：DROP IF EXISTS，新库不存在、旧库删空表，均无数据迁移风险。
+    """
+    conn.execute("DROP TABLE IF EXISTS merchant_category_map")
+
+
 def init_db(conn):
     """初始化数据库：建表 + 迁移 + 种子数据。"""
     conn.executescript(SCHEMA_SQL)
     _migrate_flows_source(conn)
     _migrate_adjustment_log(conn)
+    _migrate_drop_merchant_map(conn)
 
     existing = {r["name"] for r in conn.execute("SELECT name FROM categories").fetchall()}
     for name, direction in SEED_CATEGORIES:
